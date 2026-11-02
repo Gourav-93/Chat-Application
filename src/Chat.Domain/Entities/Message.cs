@@ -20,5 +20,5 @@ public class Message
     // Navigation properties
     public Conversation Conversation { get; set; } = null!; // Navigation property for the conversation to which the message belongs
 
-    public ChatUser Sender { get; set; } = null!; // Navigation property for the user who sent the message
+    public User Sender { get; set; } = null!; // Navigation property for the user who sent the message
 }
