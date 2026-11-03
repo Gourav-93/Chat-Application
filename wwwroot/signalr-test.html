@@ -1,0 +1,97 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SignalR Connection Test</title>
+</head>
+<body>
+    <h2>Real-Time Chat - Connection Test</h2>
+
+    <label>JWT Token:</label>
+    <br />
+    <input type="text" id="token" placeholder="Enter your JWT token" style="width: 400px;" />
+
+    <br /><br />
+
+    <button onclick="connect()">Connect</button>
+    <button onclick="disconnect()">Disconnect</button>
+
+    <h3>Connection Status:</h3>
+    <p id="status">Disconnected</p>
+
+    <h3>Connection ID:</h3>
+    <p id="connectionId">Not connected</p>
+
+    <h3>Logs:</h3>
+    <ul id="logs"></ul>
+
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@10.0.0/dist/browser/signalr.min.js"></script>
+
+    <script>
+        let connection = null;
+
+        function log(message) {
+            const li = document.createElement("li");
+            li.textContent = message;
+            document.getElementById("logs").appendChild(li);
+        }
+
+        async function connect() {
+            const token = document.getElementById("token").value.trim();
+
+            if (!token) {
+                alert("Please enter your JWT token.");
+                return;
+            }
+
+            connection = new signalR.HubConnectionBuilder()
+                .withUrl("/hubs/chat", {
+                    accessTokenFactory: () => token
+                })
+                .withAutomaticReconnect()
+                .build();
+
+            connection.onclose(error => {
+                document.getElementById("status").textContent = "Disconnected";
+                log("Connection closed.");
+            });
+
+            connection.onreconnecting(error => {
+                document.getElementById("status").textContent = "Reconnecting";
+                log("Reconnecting...");
+            });
+
+            connection.onreconnected(connectionId => {
+                document.getElementById("status").textContent = "Connected";
+                document.getElementById("connectionId").textContent = connectionId;
+                log("Reconnected successfully.");
+            });
+
+            try {
+                await connection.start();
+
+                document.getElementById("status").textContent = "Connected";
+                document.getElementById("connectionId").textContent =
+                    connection.connectionId;
+
+                log("Connected successfully!");
+                log("Connection ID: " + connection.connectionId);
+            }
+            catch (error) {
+                document.getElementById("status").textContent = "Connection failed";
+                log("Error: " + error);
+                console.error(error);
+            }
+        }
+
+        async function disconnect() {
+            if (connection) {
+                await connection.stop();
+                document.getElementById("status").textContent = "Disconnected";
+                document.getElementById("connectionId").textContent = "Not connected";
+                log("Disconnected manually.");
+            }
+        }
+    </script>
+</body>
+</html>

@@ -93,6 +93,11 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+//test
+//visulization- https://localhost:YOUR_PORT/signalr-test.html
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // Swagger UI
 if (app.Environment.IsDevelopment())
 {
