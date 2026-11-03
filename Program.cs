@@ -1,6 +1,4 @@
-using Microsoft.EntityFrameworkCore;
 using Chat.Api.Hubs;
-using Chat.Infrastructure.Data;
 var builder = WebApplication.CreateBuilder(args);
 
 // Register OpenAPI services.
@@ -29,5 +27,7 @@ app.UseHttpsRedirection();
 
 app.MapHub<ChatHub>("/hubs/chat");
 
+
+app.MapHub<ChatHub>("/hubs/chat");
 
 app.Run();
