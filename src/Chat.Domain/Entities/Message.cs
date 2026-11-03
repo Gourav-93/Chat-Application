@@ -7,7 +7,7 @@ public class Message
 
     public int ConversationId { get; set; } // Foreign key referencing the conversation to which the message belongs
 
-    public int SenderId { get; set; } // Foreign key referencing the user who sent the message
+    public Guid SenderId { get; set; } // Foreign key referencing the user who sent the message
 
     public string Text { get; set; } = string.Empty; // The content of the message
 
