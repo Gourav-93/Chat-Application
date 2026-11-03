@@ -12,9 +12,9 @@ public class Conversation
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow; // Timestamp of when the conversation was created
 
     // Navigation properties
-    public ChatUser UserA { get; set; } = null!; // Navigation property for the first user in the conversation
+    public User UserA { get; set; } = null!; // Navigation property for the first user in the conversation
 
-    public ChatUser UserB { get; set; } = null!; // Navigation property for the second user in the conversation
+    public User UserB { get; set; } = null!; // Navigation property for the second user in the conversation
 
     public ICollection<Message> Messages { get; set; } = new List<Message>();// Collection of messages in the conversation
 }
