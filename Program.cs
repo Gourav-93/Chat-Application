@@ -1,12 +1,11 @@
-
 using Microsoft.EntityFrameworkCore;
+using Chat.Api.Hubs;
 using Chat.Infrastructure.Data;
-
-// Create the application builder.
 var builder = WebApplication.CreateBuilder(args);
 
 // Register OpenAPI services.
 builder.Services.AddOpenApi();
+builder.Services.AddSignalR();
 
 // Register ChatDbContext and configure SQL Server connection.
 builder.Services.AddDbContext<ChatDbContext>(options =>
@@ -18,6 +17,7 @@ builder.Services.AddDbContext<ChatDbContext>(options =>
 // Build the application.
 var app = builder.Build();
 
+
 // Enable OpenAPI in the Development environment.
 if (app.Environment.IsDevelopment())
 {
@@ -27,5 +27,7 @@ if (app.Environment.IsDevelopment())
 // Enable HTTPS redirection.
 app.UseHttpsRedirection();
 
-// Run the application.
+app.MapHub<ChatHub>("/hubs/chat");
+
+
 app.Run();
