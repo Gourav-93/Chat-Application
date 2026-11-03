@@ -9,3 +9,5 @@ obj/
 
 # Other temporary files
 *.log
+
+appsettings.json
