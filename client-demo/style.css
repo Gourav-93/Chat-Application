@@ -1,0 +1,135 @@
+/* Basic Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f2f4f7;
+  min-height: 100vh;
+}
+
+/* Login Page */
+#login-page {
+  width: 350px;
+  margin: 100px auto;
+  padding: 30px;
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+#login-page h2 {
+  margin-bottom: 10px;
+}
+
+#login-page p {
+  color: #666;
+  margin-bottom: 25px;
+}
+
+/* Input Fields */
+input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+/* Buttons */
+button {
+  width: 100%;
+  padding: 12px;
+  background-color: #2878d0;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #1c5fa8;
+}
+
+/* Chat Page */
+#chat-page {
+  width: 600px;
+  height: 550px;
+  margin: 50px auto;
+  background-color: white;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+/* Chat Header */
+#chat-page header {
+  padding: 20px;
+  background-color: #2878d0;
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#connection-status {
+  font-size: 13px;
+}
+
+/* Messages Area */
+#messages-container {
+  height: 400px;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+/* Message Input */
+#message-form {
+  display: flex;
+  gap: 10px;
+  padding: 15px;
+  border-top: 1px solid #ddd;
+}
+
+#message-form input {
+  margin-bottom: 0;
+}
+
+#message-form button {
+  width: 100px;
+}
+
+/* Individual Messages */
+.message {
+  max-width: 70%;
+  padding: 10px 14px;
+  margin-bottom: 15px;
+  border-radius: 10px;
+}
+
+.message p {
+  margin-bottom: 5px;
+}
+
+.message span {
+  font-size: 11px;
+  color: #666;
+}
+
+/* Received Message */
+.received {
+  background-color: #e8e8e8;
+  margin-right: auto;
+}
+
+/* Sent Message */
+.sent {
+  background-color: #d1e7ff;
+  margin-left: auto;
+}

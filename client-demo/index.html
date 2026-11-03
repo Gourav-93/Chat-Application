@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat Application</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Login Page -->
+    <div id="login-page">
+      <h2>Welcome</h2>
+      <p>Login to continue chatting</p>
+
+      <form id="login-form">
+        <input type="text" id="username" placeholder="Enter Username" />
+
+        <input type="password" id="password" placeholder="Enter Password" />
+
+        <button type="submit">Login</button>
+      </form>
+    </div>
+
+    <!-- Chat Page -->
+    <div id="chat-page" hidden>
+      <!-- Chat Header -->
+      <header>
+        <h2>Chat Application</h2>
+        <span id="connection-status">Disconnected</span>
+      </header>
+
+      <!-- Messages Area -->
+      <div id="messages-container">
+        <div id="messages">
+          <!-- Messages will appear here -->
+        </div>
+
+        <!-- <div id="typing-indicator"> -->
+        <!-- Typing status will appear here -->
+        <!-- </div> -->
+
+        <div id="messages">
+          <!-- Received Message -->
+          <div class="message received">
+            <p>Hello! How are you?</p>
+            <span>10:30 AM</span>
+          </div>
+
+          <!-- Sent Message -->
+          <div class="message sent">
+            <p>I'm good. How about you?</p>
+            <span>10:31 AM</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Message Input -->
+      <form id="message-form">
+        <input type="text" id="message-input" placeholder="Type a message..." />
+
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </body>
+</html>
