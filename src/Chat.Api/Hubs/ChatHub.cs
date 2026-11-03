@@ -28,4 +28,13 @@ public partial class ChatHub : Hub
 
         await base.OnConnectedAsync();
     }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        Console.WriteLine(
+            $"Connection disconnected: {Context.ConnectionId}"
+        );
+
+        await base.OnDisconnectedAsync(exception);
+    }
 }
