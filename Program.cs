@@ -98,7 +98,7 @@ var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 // testing Complete
-// Response User 
+// Response  
 // User dffd5f10-78a1-4476-bbf9-5f3824fa94f2 connected to group user-dffd5f10-78a1-4476-bbf9-5f3824fa94f2
 // Connection disconnected: yDQNW-psXqS03VW1FPk7fg
 

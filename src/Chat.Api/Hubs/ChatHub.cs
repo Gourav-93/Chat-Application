@@ -8,6 +8,7 @@ public partial class ChatHub : Hub
     {
         // Get the authenticated user's ID
         var userId = Context.UserIdentifier;
+        Console.WriteLine(userId);
 
         if (string.IsNullOrWhiteSpace(userId))
         {
@@ -24,6 +25,9 @@ public partial class ChatHub : Hub
 
         Console.WriteLine(
             $"User {userId} connected to group {groupName}"
+        );
+         Console.WriteLine(
+             Context.ConnectionId
         );
 
         await base.OnConnectedAsync();
