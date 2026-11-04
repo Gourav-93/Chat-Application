@@ -6,6 +6,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Chat.Api.Hubs;
 using Chat.Infrastructure.Data;
+using Chat.Application.Services;
+using Chat.Application.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +36,7 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 // SignalR
+builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddSignalR();
 
 // Database connection

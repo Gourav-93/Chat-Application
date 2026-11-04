@@ -1,5 +1,4 @@
 namespace Chat.Application.Interfaces;
-
 public interface IPresenceTracker
 {
     Task<bool> UserConnected(
