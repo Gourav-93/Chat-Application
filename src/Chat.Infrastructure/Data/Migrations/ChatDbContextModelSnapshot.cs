@@ -91,8 +91,14 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("IsMobileVerified")
+                        .HasColumnType("bit");
+
                     b.Property<DateTime?>("LastSeenAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("MobileNumber")
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()
@@ -103,6 +109,10 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("MobileNumber")
+                        .IsUnique()
+                        .HasFilter("[MobileNumber] IS NOT NULL");
 
                     b.ToTable("Users");
                 });

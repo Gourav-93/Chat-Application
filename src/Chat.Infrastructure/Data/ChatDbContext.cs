@@ -57,5 +57,10 @@ public class ChatDbContext : DbContext
         modelBuilder.Entity<Conversation>()
             .HasIndex(c => new { c.UserAId, c.UserBId })
             .IsUnique();
+
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.MobileNumber)
+            .IsUnique()
+            .HasFilter("[MobileNumber] IS NOT NULL");
     }
 }
