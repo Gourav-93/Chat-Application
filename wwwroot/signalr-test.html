@@ -1,182 +1,809 @@
-<!doctype html>
-<html>
-  <head>
-    <title>SignalR Connection Test</title>
-  </head>
-  <body>
-    <h2>Real-Time Chat - Connection Test</h2>
-
-    <label>JWT Token:</label>
-    <br />
-    <input
-      type="text"
-      id="token"
-      placeholder="Enter your JWT token"
-      style="width: 400px"
-    />
-
-    <br /><br />
-
-    <button onclick="connect()">Connect</button>
-    <button onclick="disconnect()">Disconnect</button>
-
-    <h3>Connection Status:</h3>
-    <p id="status">Disconnected</p>
-
-    <h3>Connection ID:</h3>
-    <p id="connectionId">Not connected</p>
-
-    <!-- ADDED: Send Message -->
-    <h3>Send Message</h3>
-    <input type="number" id="conversationId" placeholder="Conversation ID" />
-    <input type="text" id="messageText" placeholder="Enter your message" />
-    <button onclick="sendMessage()">Send</button>
-
-    <!-- ADDED: Received Messages -->
-    <h3>Received Messages:</h3>
-    <ul id="messages"></ul>
-
-    <!-- ADDED: Message History -->
-    <h3>Message History:</h3>
-    <button onclick="getMessages()">Load Messages</button>
-    <ul id="history"></ul>
-
-    <h3>Logs:</h3>
-    <ul id="logs"></ul>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatFlow | Real-Time Messaging</title>
 
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@10.0.0/dist/browser/signalr.min.js"></script>
 
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #f3f5f8;
+            color: #172033;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        .app {
+            width: 100%;
+            max-width: 1100px;
+            height: 720px;
+            max-height: 90vh;
+            background: white;
+            border-radius: 16px;
+            display: flex;
+            overflow: hidden;
+            box-shadow: 0 12px 45px rgba(20, 35, 60, .09);
+        }
+
+        /* Sidebar */
+
+        .sidebar {
+            width: 300px;
+            background: #fff;
+            border-right: 1px solid #edf0f4;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .brand {
+            padding: 25px 22px;
+            border-bottom: 1px solid #edf0f4;
+        }
+
+            .brand h2 {
+                font-size: 21px;
+                color: #16875d;
+                letter-spacing: -.5px;
+            }
+
+            .brand p {
+                color: #8993a4;
+                font-size: 12px;
+                margin-top: 5px;
+            }
+
+        .sidebar-content {
+            padding: 22px;
+        }
+
+        .section-label {
+            font-size: 11px;
+            font-weight: 700;
+            color: #9aa3b2;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+        }
+
+        .conversation {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 13px;
+            border-radius: 10px;
+            background: #eaf7f1;
+        }
+
+        .avatar {
+            width: 43px;
+            height: 43px;
+            border-radius: 50%;
+            background: #d5f0e3;
+            color: #16875d;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .conversation-info {
+            min-width: 0;
+        }
+
+            .conversation-info h4 {
+                font-size: 14px;
+                margin-bottom: 5px;
+            }
+
+            .conversation-info p {
+                font-size: 12px;
+                color: #84909f;
+            }
+
+        .sidebar-footer {
+            margin-top: auto;
+            padding: 20px;
+            border-top: 1px solid #edf0f4;
+            font-size: 12px;
+            color: #929baa;
+        }
+
+        /* Main chat */
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .chat-header {
+            height: 82px;
+            padding: 18px 25px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #edf0f4;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+            .user-info h3 {
+                font-size: 15px;
+            }
+
+            .user-info p {
+                font-size: 12px;
+                color: #929baa;
+                margin-top: 4px;
+            }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 12px;
+            color: #8993a4;
+            background: #f6f7f9;
+            padding: 9px 12px;
+            border-radius: 20px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #aab2bf;
+            border-radius: 50%;
+        }
+
+        .status.connected .status-dot {
+            background: #16a36a;
+        }
+
+        .status.reconnecting .status-dot {
+            background: #e5a32d;
+        }
+
+        /* Messages */
+
+        .messages {
+            flex: 1;
+            padding: 25px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 17px;
+            background: #f8fafb;
+        }
+
+        .empty-state {
+            margin: auto;
+            text-align: center;
+            color: #929baa;
+        }
+
+        .empty-icon {
+            font-size: 38px;
+            margin-bottom: 12px;
+        }
+
+        .empty-state h3 {
+            color: #344054;
+            font-size: 16px;
+            margin-bottom: 7px;
+        }
+
+        .empty-state p {
+            font-size: 13px;
+        }
+
+        .message {
+            max-width: 75%;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            align-self: flex-start;
+        }
+
+            .message.own {
+                align-self: flex-end;
+            }
+
+        .sender {
+            font-size: 11px;
+            color: #929baa;
+            padding: 0 5px;
+        }
+
+        .message.own .sender {
+            text-align: right;
+        }
+
+        .bubble {
+            padding: 12px 16px;
+            background: white;
+            border: 1px solid #edf0f4;
+            border-radius: 13px 13px 13px 3px;
+            font-size: 14px;
+            line-height: 1.6;
+            overflow-wrap: anywhere;
+        }
+
+        .message.own .bubble {
+            background: #dcf6e9;
+            border-color: #dcf6e9;
+            border-radius: 13px 13px 3px 13px;
+        }
+
+        .message-time {
+            font-size: 10px;
+            color: #a0a8b5;
+            padding: 0 5px;
+        }
+
+        .message.own .message-time {
+            text-align: right;
+        }
+
+        /* Composer */
+
+        .composer {
+            padding: 18px 22px;
+            border-top: 1px solid #edf0f4;
+            background: white;
+        }
+
+        .input-area {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: #f4f6f8;
+            padding: 7px 9px 7px 17px;
+            border-radius: 12px;
+        }
+
+            .input-area input {
+                flex: 1;
+                border: none;
+                outline: none;
+                background: transparent;
+                font-size: 14px;
+                min-width: 0;
+                padding: 10px 0;
+            }
+
+        .send-btn {
+            border: none;
+            background: #16875d;
+            color: white;
+            border-radius: 9px;
+            padding: 11px 20px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+            .send-btn:hover {
+                background: #10734e;
+            }
+
+            .send-btn:disabled {
+                background: #a7c9b9;
+                cursor: not-allowed;
+            }
+
+        /* Connection settings */
+
+        .settings {
+            padding: 10px 22px;
+            border-top: 1px solid #edf0f4;
+            background: white;
+        }
+
+            .settings summary {
+                cursor: pointer;
+                color: #84909f;
+                font-size: 12px;
+            }
+
+        .settings-body {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .settings input {
+            min-width: 0;
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #e0e5eb;
+            border-radius: 7px;
+            outline: none;
+        }
+
+        .settings button {
+            border: none;
+            padding: 10px 15px;
+            border-radius: 7px;
+            cursor: pointer;
+            background: #16875d;
+            color: white;
+        }
+
+            .settings button.disconnect {
+                background: #f0eeee;
+                color: #555;
+            }
+
+            .settings button:disabled {
+                opacity: .5;
+                cursor: not-allowed;
+            }
+
+        .conversation-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 22px 0;
+        }
+
+            .conversation-control label {
+                font-size: 12px;
+                color: #929baa;
+            }
+
+            .conversation-control input {
+                width: 100px;
+                padding: 7px 9px;
+                border: 1px solid #e0e5eb;
+                border-radius: 7px;
+                outline: none;
+            }
+
+        .history-btn {
+            margin-left: auto;
+            border: 1px solid #e0e5eb;
+            background: white;
+            padding: 7px 12px;
+            border-radius: 7px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .notice {
+            text-align: center;
+            color: #929baa;
+            font-size: 11px;
+            margin-top: 9px;
+        }
+
+        @media(max-width: 650px) {
+            body {
+                padding: 0;
+            }
+
+            .app {
+                height: 100vh;
+                max-height: none;
+                border-radius: 0;
+            }
+
+            .sidebar {
+                display: none;
+            }
+
+            .chat-header {
+                padding: 15px;
+            }
+
+            .messages {
+                padding: 16px;
+            }
+
+            .composer {
+                padding: 12px;
+            }
+
+            .message {
+                max-width: 88%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="app">
+
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="brand">
+                <h2>ChatFlow.</h2>
+                <p>Real-Time Messaging Platform</p>
+            </div>
+
+            <div class="sidebar-content">
+                <div class="section-label">MESSAGES</div>
+
+                <div class="conversation">
+                    <div class="avatar">C</div>
+                    <div class="conversation-info">
+                        <h4>Chat Conversation</h4>
+                        <p>1-to-1 messaging</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                Powered by ASP.NET Core & SignalR
+            </div>
+        </aside>
+
+        <!-- Main chat -->
+        <main class="main">
+
+            <header class="chat-header">
+                <div class="user-info">
+                    <div class="avatar">C</div>
+                    <div>
+                        <h3>Real-Time Chat</h3>
+                        <p>One-to-one conversation</p>
+                    </div>
+                </div>
+
+                <div class="status" id="statusBadge">
+                    <span class="status-dot"></span>
+                    <span id="statusText">Disconnected</span>
+                </div>
+            </header>
+
+            <div class="conversation-control">
+                <label>Conversation ID</label>
+                <input type="number" id="conversationId"
+                       placeholder="ID" min="1" />
+
+                <button class="history-btn" onclick="getMessages()">
+                    Load History
+                </button>
+            </div>
+
+            <section class="messages" id="messages">
+
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-icon">💬</div>
+                    <h3>Your conversation starts here</h3>
+                    <p>Connect and send a message to get started.</p>
+                </div>
+
+            </section>
+
+            <div class="composer">
+                <div class="input-area">
+                    <input type="text"
+                           id="messageText"
+                           placeholder="Type your message..."
+                           onkeydown="handleEnter(event)"
+                           autocomplete="off" />
+
+                    <button class="send-btn" id="sendBtn"
+                            onclick="sendMessage()" disabled>
+                        Send ➤
+                    </button>
+                </div>
+
+                <p class="notice">
+                    Messages are delivered in real time.
+                </p>
+            </div>
+
+            <!-- Hidden connection configuration -->
+            <details class="settings">
+                <summary>Connection settings · JWT Authentication</summary>
+
+                <div class="settings-body">
+                    <input type="password"
+                           id="token"
+                           placeholder="Paste JWT access token"
+                           autocomplete="off" />
+
+                    <button id="connectBtn" onclick="connect()">
+                        Connect
+                    </button>
+
+                    <button id="disconnectBtn"
+                            class="disconnect"
+                            onclick="disconnect()" disabled>
+                        Disconnect
+                    </button>
+                </div>
+            </details>
+
+        </main>
+    </div>
+
     <script>
-      let connection = null;
+            let connection = null;
+            let currentUserId = null;
 
-      function log(message) {
-        const li = document.createElement("li");
-        li.textContent = message;
-        document.getElementById("logs").appendChild(li);
-      }
+            const messagesElement = document.getElementById("messages");
 
-      async function connect() {
-        const token = document.getElementById("token").value.trim();
+            function setStatus(status) {
+                document.getElementById("statusText").textContent = status;
 
-        if (!token) {
-          alert("Please enter your JWT token.");
-          return;
-        }
+                const badge = document.getElementById("statusBadge");
+                badge.className = "status";
 
-        connection = new signalR.HubConnectionBuilder()
-          .withUrl("/hubs/chat", {
-            accessTokenFactory: () => token,
-          })
-          .withAutomaticReconnect()
-          .build();
+                if (status === "Connected") {
+                    badge.classList.add("connected");
+                } else if (status === "Reconnecting") {
+                    badge.classList.add("reconnecting");
+                }
 
-        connection.onclose((error) => {
-          document.getElementById("status").textContent = "Disconnected";
-          log("Connection closed.");
-        });
+                const connected =
+                    connection &&
+                    connection.state === signalR.HubConnectionState.Connected;
 
-        connection.onreconnecting((error) => {
-          document.getElementById("status").textContent = "Reconnecting";
-          log("Reconnecting...");
-        });
+                document.getElementById("sendBtn").disabled = !connected;
+                document.getElementById("disconnectBtn").disabled = !connection;
+                document.getElementById("connectBtn").disabled =
+                    !!connection &&
+                    connection.state !== signalR.HubConnectionState.Disconnected;
+            }
 
-        connection.onreconnected((connectionId) => {
-          document.getElementById("status").textContent = "Connected";
-          document.getElementById("connectionId").textContent = connectionId;
-          log("Reconnected successfully.");
-        });
+            function getUserIdFromToken(token) {
+                try {
+                    const payload = token.split(".")[1];
+                    const base64 = payload
+                        .replace(/-/g, "+")
+                        .replace(/_/g, "/");
 
-        connection.on("ReceiveMessage", (message) => {
-          displayMessage(message, "messages");
-          log("New message received.");
-        });
+                    const decoded = JSON.parse(
+                        decodeURIComponent(
+                            atob(base64)
+                                .split("")
+                                .map(c => "%" + c.charCodeAt(0)
+                                    .toString(16).padStart(2, "0"))
+                                .join("")
+                        )
+                    );
 
-        connection.on("MessageHistory", (messages) => {
-          document.getElementById("history").innerHTML = "";
+                    return decoded.sub ||
+                        decoded.nameid ||
+                        decoded["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"] ||
+                        decoded.userId ||
+                        null;
+                } catch {
+                    return null;
+                }
+            }
 
-          messages.forEach((message) => {
-            displayMessage(message, "history");
-          });
+            function removeEmptyState() {
+                const empty = document.getElementById("emptyState");
+                if (empty) empty.remove();
+            }
 
-          log("Message history loaded.");
-        });
+            function displayMessage(message) {
+                removeEmptyState();
 
-        try {
-          await connection.start();
+                const senderId = message.senderId || message.SenderId;
+                const senderName = message.senderName ||
+                    message.SenderName || "User";
 
-          document.getElementById("status").textContent = "Connected";
-          document.getElementById("connectionId").textContent =
-            connection.connectionId;
+                const text = message.text || message.Text || "";
 
-          log("Connected successfully!");
-          log("Connection ID: " + connection.connectionId);
-        } catch (error) {
-          document.getElementById("status").textContent = "Connection failed";
-          log("Error: " + error);
-          console.error(error);
-        }
+                const ownMessage = currentUserId &&
+                    senderId &&
+                    String(senderId).toLowerCase() ===
+                    String(currentUserId).toLowerCase();
 
-        // Add the message Received handler
-      }
+                const wrapper = document.createElement("div");
+                wrapper.className = ownMessage ? "message own" : "message";
 
-      // Function to send a message
-      async function sendMessage() {
-        if (
-          !connection ||
-          connection.state !== signalR.HubConnectionState.Connected
-        ) {
-          alert("Please connect first.");
-          return;
-        }
+                const sender = document.createElement("div");
+                sender.className = "sender";
+                sender.textContent = ownMessage ? "You" : senderName;
 
-        const conversationId = Number(
-          document.getElementById("conversationId").value,
-        );
+                const bubble = document.createElement("div");
+                bubble.className = "bubble";
+                bubble.textContent = text;
 
-        const text = document.getElementById("messageText").value.trim();
+                const time = document.createElement("div");
+                time.className = "message-time";
 
-        if (!conversationId || !text) {
-          alert("Enter conversation ID and message.");
-          return;
-        }
+                const timestamp = message.createdAt ||
+                    message.CreatedAt ||
+                    message.sentAt ||
+                    message.SentAt;
 
-        await connection.invoke("SendMessage", {
-          conversationId: conversationId,
-          text: text,
-        });
-      }
+                time.textContent = timestamp
+                    ? new Date(timestamp).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit"
+                    })
+                    : "Sent";
 
-      async function getMessages() {
-        if (
-          !connection ||
-          connection.state !== signalR.HubConnectionState.Connected
-        ) {
-          alert("Please connect first.");
-          return;
-        }
+                wrapper.append(sender, bubble, time);
+                messagesElement.appendChild(wrapper);
 
-        const conversationId = Number(
-          document.getElementById("conversationId").value,
-        );
+                messagesElement.scrollTop = messagesElement.scrollHeight;
+            }
 
-        await connection.invoke("GetMessages", conversationId);
-      }
+            async function connect() {
+                if (
+                    connection &&
+                    connection.state !== signalR.HubConnectionState.Disconnected
+                ) {
+                    return;
+                }
 
-      async function disconnect() {
-        if (connection) {
-          await connection.stop();
-          document.getElementById("status").textContent = "Disconnected";
-          document.getElementById("connectionId").textContent = "Not connected";
-          log("Disconnected manually.");
-        }
-      }
-      function displayMessage(message, elementId) {
-        const li = document.createElement("li");
+                const token = document.getElementById("token").value.trim();
 
-        li.textContent = `${message.senderName}: ${message.text}`;
+                if (!token) {
+                    alert("Please enter your JWT token.");
+                    return;
+                }
 
-        document.getElementById(elementId).appendChild(li);
-      }
+                currentUserId = getUserIdFromToken(token);
+
+                connection = new signalR.HubConnectionBuilder()
+                    .withUrl("/hubs/chat", {
+                        accessTokenFactory: () => token
+                    })
+                    .withAutomaticReconnect()
+                    .build();
+
+                // Register handlers only once per connection.
+
+                connection.on("ReceiveMessage", message => {
+                    displayMessage(message);
+                });
+
+                connection.on("MessageHistory", messages => {
+                    messagesElement.innerHTML = "";
+
+                    if (!messages || messages.length === 0) {
+                        messagesElement.innerHTML = `
+                            <div class="empty-state">
+                                <div class="empty-icon">💬</div>
+                                <h3>No messages yet</h3>
+                                <p>Start the conversation.</p>
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    messages.forEach(displayMessage);
+                });
+
+                connection.onreconnecting(() => {
+                    setStatus("Reconnecting");
+                });
+
+                connection.onreconnected(() => {
+                    setStatus("Connected");
+                });
+
+                connection.onclose(() => {
+                    setStatus("Disconnected");
+                });
+
+                setStatus("Connecting");
+
+                try {
+                    await connection.start();
+                    setStatus("Connected");
+                } catch (error) {
+                    console.error("Connection error:", error);
+                    setStatus("Connection failed");
+                    connection = null;
+                    setStatus("Connection failed");
+                    alert("Unable to connect. Check JWT token and server.");
+                }
+            }
+
+            async function sendMessage() {
+                if (
+                    !connection ||
+                    connection.state !== signalR.HubConnectionState.Connected
+                ) {
+                    alert("Please connect first.");
+                    return;
+                }
+
+                const conversationId = Number(
+                    document.getElementById("conversationId").value
+                );
+
+                const text = document.getElementById("messageText").value.trim();
+
+                if (!Number.isInteger(conversationId) ||
+                    conversationId <= 0 || !text) {
+                    alert("Enter a valid conversation ID and message.");
+                    return;
+                }
+
+                const sendBtn = document.getElementById("sendBtn");
+                sendBtn.disabled = true;
+
+                try {
+                    await connection.invoke("SendMessage", {
+                        conversationId: conversationId,
+                        text: text
+                    });
+
+                    document.getElementById("messageText").value = "";
+                } catch (error) {
+                    console.error("Message sending failed:", error);
+                    alert("Message could not be sent.");
+                } finally {
+                    sendBtn.disabled = false;
+                }
+            }
+
+            async function getMessages() {
+                if (
+                    !connection ||
+                    connection.state !== signalR.HubConnectionState.Connected
+                ) {
+                    alert("Please connect first.");
+                    return;
+                }
+
+                const conversationId = Number(
+                    document.getElementById("conversationId").value
+                );
+
+                if (!Number.isInteger(conversationId) || conversationId <= 0) {
+                    alert("Enter a valid conversation ID.");
+                    return;
+                }
+
+                try {
+                    await connection.invoke("GetMessages", conversationId);
+                } catch (error) {
+                    console.error("History loading failed:", error);
+                    alert("Unable to load message history.");
+                }
+            }
+
+            async function disconnect() {
+                if (connection) {
+                    const oldConnection = connection;
+                    connection = null;
+
+                    try {
+                        await oldConnection.stop();
+                    } catch (error) {
+                        console.error("Disconnect error:", error);
+                    }
+
+                    setStatus("Disconnected");
+                }
+            }
+
+            function handleEnter(event) {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    sendMessage();
+                }
+            }
     </script>
-  </body>
+
+</body>
 </html>
