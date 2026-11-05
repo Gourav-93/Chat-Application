@@ -6,6 +6,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Chat.Api.Hubs;
 using Chat.Infrastructure.Data;
+using Chat.Application.Services;
+using Chat.Application.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +36,7 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 // SignalR
+builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddSignalR();
 
 // Database connection
@@ -94,9 +97,13 @@ builder.Services.AddAuthorization();
 var app = builder.Build();
 
 //test
-//visulization- https://localhost:YOUR_PORT/signalr-test.html
+//visulization- http://localhost:YOUR_PORT/signalr-test.html
 app.UseDefaultFiles();
 app.UseStaticFiles();
+// testing Complete
+// Response  
+// User dffd5f10-78a1-4476-bbf9-5f3824fa94f2 connected to group user-dffd5f10-78a1-4476-bbf9-5f3824fa94f2
+// Connection disconnected: yDQNW-psXqS03VW1FPk7fg
 
 // Swagger UI
 if (app.Environment.IsDevelopment())

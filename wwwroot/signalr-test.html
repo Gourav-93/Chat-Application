@@ -1,15 +1,19 @@
-
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
+  <head>
     <title>SignalR Connection Test</title>
-</head>
-<body>
+  </head>
+  <body>
     <h2>Real-Time Chat - Connection Test</h2>
 
     <label>JWT Token:</label>
     <br />
-    <input type="text" id="token" placeholder="Enter your JWT token" style="width: 400px;" />
+    <input
+      type="text"
+      id="token"
+      placeholder="Enter your JWT token"
+      style="width: 400px"
+    />
 
     <br /><br />
 
@@ -22,76 +26,157 @@
     <h3>Connection ID:</h3>
     <p id="connectionId">Not connected</p>
 
+    <!-- ADDED: Send Message -->
+    <h3>Send Message</h3>
+    <input type="number" id="conversationId" placeholder="Conversation ID" />
+    <input type="text" id="messageText" placeholder="Enter your message" />
+    <button onclick="sendMessage()">Send</button>
+
+    <!-- ADDED: Received Messages -->
+    <h3>Received Messages:</h3>
+    <ul id="messages"></ul>
+
+    <!-- ADDED: Message History -->
+    <h3>Message History:</h3>
+    <button onclick="getMessages()">Load Messages</button>
+    <ul id="history"></ul>
+
     <h3>Logs:</h3>
     <ul id="logs"></ul>
 
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@10.0.0/dist/browser/signalr.min.js"></script>
 
     <script>
-        let connection = null;
+      let connection = null;
 
-        function log(message) {
-            const li = document.createElement("li");
-            li.textContent = message;
-            document.getElementById("logs").appendChild(li);
+      function log(message) {
+        const li = document.createElement("li");
+        li.textContent = message;
+        document.getElementById("logs").appendChild(li);
+      }
+
+      async function connect() {
+        const token = document.getElementById("token").value.trim();
+
+        if (!token) {
+          alert("Please enter your JWT token.");
+          return;
         }
 
-        async function connect() {
-            const token = document.getElementById("token").value.trim();
+        connection = new signalR.HubConnectionBuilder()
+          .withUrl("/hubs/chat", {
+            accessTokenFactory: () => token,
+          })
+          .withAutomaticReconnect()
+          .build();
 
-            if (!token) {
-                alert("Please enter your JWT token.");
-                return;
-            }
+        connection.onclose((error) => {
+          document.getElementById("status").textContent = "Disconnected";
+          log("Connection closed.");
+        });
 
-            connection = new signalR.HubConnectionBuilder()
-                .withUrl("/hubs/chat", {
-                    accessTokenFactory: () => token
-                })
-                .withAutomaticReconnect()
-                .build();
+        connection.onreconnecting((error) => {
+          document.getElementById("status").textContent = "Reconnecting";
+          log("Reconnecting...");
+        });
 
-            connection.onclose(error => {
-                document.getElementById("status").textContent = "Disconnected";
-                log("Connection closed.");
-            });
+        connection.onreconnected((connectionId) => {
+          document.getElementById("status").textContent = "Connected";
+          document.getElementById("connectionId").textContent = connectionId;
+          log("Reconnected successfully.");
+        });
 
-            connection.onreconnecting(error => {
-                document.getElementById("status").textContent = "Reconnecting";
-                log("Reconnecting...");
-            });
+        connection.on("ReceiveMessage", (message) => {
+          displayMessage(message, "messages");
+          log("New message received.");
+        });
 
-            connection.onreconnected(connectionId => {
-                document.getElementById("status").textContent = "Connected";
-                document.getElementById("connectionId").textContent = connectionId;
-                log("Reconnected successfully.");
-            });
+        connection.on("MessageHistory", (messages) => {
+          document.getElementById("history").innerHTML = "";
 
-            try {
-                await connection.start();
+          messages.forEach((message) => {
+            displayMessage(message, "history");
+          });
 
-                document.getElementById("status").textContent = "Connected";
-                document.getElementById("connectionId").textContent =
-                    connection.connectionId;
+          log("Message history loaded.");
+        });
 
-                log("Connected successfully!");
-                log("Connection ID: " + connection.connectionId);
-            }
-            catch (error) {
-                document.getElementById("status").textContent = "Connection failed";
-                log("Error: " + error);
-                console.error(error);
-            }
+        try {
+          await connection.start();
+
+          document.getElementById("status").textContent = "Connected";
+          document.getElementById("connectionId").textContent =
+            connection.connectionId;
+
+          log("Connected successfully!");
+          log("Connection ID: " + connection.connectionId);
+        } catch (error) {
+          document.getElementById("status").textContent = "Connection failed";
+          log("Error: " + error);
+          console.error(error);
         }
 
-        async function disconnect() {
-            if (connection) {
-                await connection.stop();
-                document.getElementById("status").textContent = "Disconnected";
-                document.getElementById("connectionId").textContent = "Not connected";
-                log("Disconnected manually.");
-            }
+        // Add the message Received handler
+      }
+
+      // Function to send a message
+      async function sendMessage() {
+        if (
+          !connection ||
+          connection.state !== signalR.HubConnectionState.Connected
+        ) {
+          alert("Please connect first.");
+          return;
         }
+
+        const conversationId = Number(
+          document.getElementById("conversationId").value,
+        );
+
+        const text = document.getElementById("messageText").value.trim();
+
+        if (!conversationId || !text) {
+          alert("Enter conversation ID and message.");
+          return;
+        }
+
+        await connection.invoke("SendMessage", {
+          conversationId: conversationId,
+          text: text,
+        });
+      }
+
+      async function getMessages() {
+        if (
+          !connection ||
+          connection.state !== signalR.HubConnectionState.Connected
+        ) {
+          alert("Please connect first.");
+          return;
+        }
+
+        const conversationId = Number(
+          document.getElementById("conversationId").value,
+        );
+
+        await connection.invoke("GetMessages", conversationId);
+      }
+
+      async function disconnect() {
+        if (connection) {
+          await connection.stop();
+          document.getElementById("status").textContent = "Disconnected";
+          document.getElementById("connectionId").textContent = "Not connected";
+          log("Disconnected manually.");
+        }
+      }
+      function displayMessage(message, elementId) {
+        const li = document.createElement("li");
+
+        li.textContent = `${message.senderName}: ${message.text}`;
+
+        document.getElementById(elementId).appendChild(li);
+      }
     </script>
-</body>
+  </body>
 </html>
