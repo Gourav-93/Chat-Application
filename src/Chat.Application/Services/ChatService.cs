@@ -94,27 +94,22 @@ public class ChatService : IChatService
             .ToListAsync();
     }
 
-    public async Task<Guid> GetOtherParticipantIdAsync(int conversationId, Guid userId)
+    public async Task<Guid> GetOtherParticipantIdAsync(
+    int conversationId,
+    Guid userId)
     {
         var conversation = await _context.Conversations
             .FirstOrDefaultAsync(c => c.Id == conversationId);
 
-        if (conversation == null)
-            throw new UnauthorizedAccessException(
-                "Conversation not found."
-            );
-
-        if (conversation.UserAId != userId &&
-            conversation.UserBId != userId)
+        if (conversation == null ||
+            (conversation.UserAId != userId &&
+             conversation.UserBId != userId))
         {
-            throw new UnauthorizedAccessException(
-                "You are not a participant of this conversation."
-            );
+            throw new UnauthorizedAccessException("Invalid conversation.");
         }
 
         return conversation.UserAId == userId
             ? conversation.UserBId
             : conversation.UserAId;
     }
-
 }

@@ -53,5 +53,9 @@ public class ChatDbContext : DbContext
             .WithMany(c => c.Messages) // ek Conversation ka multiple Messages ho sakte hain
             .HasForeignKey(m => m.ConversationId) // ConversationId Message table mein foreign key hai.
             .OnDelete(DeleteBehavior.Cascade); // conversation delete ho jaye toh uske saare messages bhi delete ho jayenge
+
+        modelBuilder.Entity<Conversation>()
+            .HasIndex(c => new { c.UserAId, c.UserBId })
+            .IsUnique();
     }
 }
