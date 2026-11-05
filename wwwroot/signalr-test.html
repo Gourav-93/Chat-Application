@@ -1,6 +1,7 @@
-<!DOCTYPE html>
+
+<!doctype html>
 <html lang="en">
-<head>
+  <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ChatFlow | Real-Time Messaging</title>
@@ -8,802 +9,1287 @@
     <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@10.0.0/dist/browser/signalr.min.js"></script>
 
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
 
+      body {
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f3f5f8;
+        color: #172033;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .app {
+        width: 100%;
+        max-width: 1100px;
+        height: 720px;
+        max-height: 90vh;
+        background: white;
+        border-radius: 16px;
+        display: flex;
+        overflow: hidden;
+        box-shadow: 0 12px 45px rgba(20, 35, 60, 0.09);
+      }
+
+      /* Sidebar */
+
+      .sidebar {
+        width: 300px;
+        background: #fff;
+        border-right: 1px solid #edf0f4;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .brand {
+        padding: 25px 22px;
+        border-bottom: 1px solid #edf0f4;
+      }
+
+      .brand h2 {
+        font-size: 21px;
+        color: #16875d;
+        letter-spacing: -0.5px;
+      }
+
+      .brand p {
+        color: #8993a4;
+        font-size: 12px;
+        margin-top: 5px;
+      }
+
+      .sidebar-content {
+        padding: 22px;
+      }
+
+      .section-label {
+        font-size: 11px;
+        font-weight: 700;
+        color: #9aa3b2;
+        letter-spacing: 1px;
+        margin-bottom: 15px;
+      }
+
+      .conversation {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 13px;
+        border-radius: 10px;
+        background: #eaf7f1;
+      }
+
+      .avatar {
+        width: 43px;
+        height: 43px;
+        border-radius: 50%;
+        background: #d5f0e3;
+        color: #16875d;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .conversation-info {
+        min-width: 0;
+      }
+
+      .conversation-info h4 {
+        font-size: 14px;
+        margin-bottom: 5px;
+      }
+
+      .conversation-info p {
+        font-size: 12px;
+        color: #84909f;
+      }
+
+      .sidebar-footer {
+        margin-top: auto;
+        padding: 20px;
+        border-top: 1px solid #edf0f4;
+        font-size: 12px;
+        color: #929baa;
+      }
+
+      /* Main chat */
+
+      .main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+
+      .chat-header {
+        height: 82px;
+        padding: 18px 25px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #edf0f4;
+      }
+
+      .user-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .user-info h3 {
+        font-size: 15px;
+      }
+
+      .user-info p {
+        font-size: 12px;
+        color: #929baa;
+        margin-top: 4px;
+      }
+
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        color: #8993a4;
+        background: #f6f7f9;
+        padding: 9px 12px;
+        border-radius: 20px;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        background: #aab2bf;
+        border-radius: 50%;
+      }
+
+      .status.connected .status-dot {
+        background: #16a36a;
+      }
+
+      .status.reconnecting .status-dot {
+        background: #e5a32d;
+      }
+
+      /* Messages */
+
+      .messages {
+        flex: 1;
+        padding: 25px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 17px;
+        background: #f8fafb;
+      }
+
+      .empty-state {
+        margin: auto;
+        text-align: center;
+        color: #929baa;
+      }
+
+      .empty-icon {
+        font-size: 38px;
+        margin-bottom: 12px;
+      }
+
+      .empty-state h3 {
+        color: #344054;
+        font-size: 16px;
+        margin-bottom: 7px;
+      }
+
+      .empty-state p {
+        font-size: 13px;
+      }
+
+      .message {
+        max-width: 75%;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        align-self: flex-start;
+      }
+
+      .message.own {
+        align-self: flex-end;
+      }
+
+      .sender {
+        font-size: 11px;
+        color: #929baa;
+        padding: 0 5px;
+      }
+
+      .message.own .sender {
+        text-align: right;
+      }
+
+      .bubble {
+        padding: 12px 16px;
+        background: white;
+        border: 1px solid #edf0f4;
+        border-radius: 13px 13px 13px 3px;
+        font-size: 14px;
+        line-height: 1.6;
+        overflow-wrap: anywhere;
+      }
+
+      .message.own .bubble {
+        background: #dcf6e9;
+        border-color: #dcf6e9;
+        border-radius: 13px 13px 3px 13px;
+      }
+
+      .message-time {
+        font-size: 10px;
+        color: #a0a8b5;
+        padding: 0 5px;
+      }
+
+      .message.own .message-time {
+        text-align: right;
+      }
+
+      /* Composer */
+
+      .composer {
+        padding: 18px 22px;
+        border-top: 1px solid #edf0f4;
+        background: white;
+      }
+
+      .input-area {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: #f4f6f8;
+        padding: 7px 9px 7px 17px;
+        border-radius: 12px;
+      }
+
+      .input-area input {
+        flex: 1;
+        border: none;
+        outline: none;
+        background: transparent;
+        font-size: 14px;
+        min-width: 0;
+        padding: 10px 0;
+      }
+
+      .send-btn {
+        border: none;
+        background: #16875d;
+        color: white;
+        border-radius: 9px;
+        padding: 11px 20px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .send-btn:hover {
+        background: #10734e;
+      }
+
+      .send-btn:disabled {
+        background: #a7c9b9;
+        cursor: not-allowed;
+      }
+
+      /* Connection settings */
+
+      .settings {
+        padding: 10px 22px;
+        border-top: 1px solid #edf0f4;
+        background: white;
+      }
+
+      .settings summary {
+        cursor: pointer;
+        color: #84909f;
+        font-size: 12px;
+      }
+
+      .settings-body {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+
+      .settings input {
+        min-width: 220px;
+        flex: 1 1 260px;
+        padding: 10px;
+        border: 1px solid #e0e5eb;
+        border-radius: 7px;
+        outline: none;
+      }
+
+      .settings button {
+        border: none;
+        padding: 10px 15px;
+        border-radius: 7px;
+        cursor: pointer;
+        background: #16875d;
+        color: white;
+      }
+
+      .settings button.disconnect {
+        background: #f0eeee;
+        color: #555;
+      }
+
+      .settings button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .conversation-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 22px 0;
+      }
+
+      .conversation-control label {
+        font-size: 12px;
+        color: #929baa;
+      }
+
+      .conversation-control input {
+        width: 100px;
+        padding: 7px 9px;
+        border: 1px solid #e0e5eb;
+        border-radius: 7px;
+        outline: none;
+      }
+
+      .history-btn {
+        margin-left: auto;
+        border: 1px solid #e0e5eb;
+        background: white;
+        padding: 7px 12px;
+        border-radius: 7px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .notice {
+        text-align: center;
+        color: #929baa;
+        font-size: 11px;
+        margin-top: 9px;
+      }
+
+      .typing-indicator {
+        min-height: 20px;
+        padding: 0 27px 8px;
+        color: #16875d;
+        font-size: 12px;
+        font-style: italic;
+      }
+
+      @media (max-width: 650px) {
         body {
-            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #f3f5f8;
-            color: #172033;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
+          padding: 0;
         }
 
         .app {
-            width: 100%;
-            max-width: 1100px;
-            height: 720px;
-            max-height: 90vh;
-            background: white;
-            border-radius: 16px;
-            display: flex;
-            overflow: hidden;
-            box-shadow: 0 12px 45px rgba(20, 35, 60, .09);
+          height: 100vh;
+          max-height: none;
+          border-radius: 0;
         }
-
-        /* Sidebar */
 
         .sidebar {
-            width: 300px;
-            background: #fff;
-            border-right: 1px solid #edf0f4;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .brand {
-            padding: 25px 22px;
-            border-bottom: 1px solid #edf0f4;
-        }
-
-            .brand h2 {
-                font-size: 21px;
-                color: #16875d;
-                letter-spacing: -.5px;
-            }
-
-            .brand p {
-                color: #8993a4;
-                font-size: 12px;
-                margin-top: 5px;
-            }
-
-        .sidebar-content {
-            padding: 22px;
-        }
-
-        .section-label {
-            font-size: 11px;
-            font-weight: 700;
-            color: #9aa3b2;
-            letter-spacing: 1px;
-            margin-bottom: 15px;
-        }
-
-        .conversation {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 13px;
-            border-radius: 10px;
-            background: #eaf7f1;
-        }
-
-        .avatar {
-            width: 43px;
-            height: 43px;
-            border-radius: 50%;
-            background: #d5f0e3;
-            color: #16875d;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-weight: 700;
-            flex-shrink: 0;
-        }
-
-        .conversation-info {
-            min-width: 0;
-        }
-
-            .conversation-info h4 {
-                font-size: 14px;
-                margin-bottom: 5px;
-            }
-
-            .conversation-info p {
-                font-size: 12px;
-                color: #84909f;
-            }
-
-        .sidebar-footer {
-            margin-top: auto;
-            padding: 20px;
-            border-top: 1px solid #edf0f4;
-            font-size: 12px;
-            color: #929baa;
-        }
-
-        /* Main chat */
-
-        .main {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            min-width: 0;
+          display: none;
         }
 
         .chat-header {
-            height: 82px;
-            padding: 18px 25px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            border-bottom: 1px solid #edf0f4;
+          padding: 15px;
         }
-
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-            .user-info h3 {
-                font-size: 15px;
-            }
-
-            .user-info p {
-                font-size: 12px;
-                color: #929baa;
-                margin-top: 4px;
-            }
-
-        .status {
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            font-size: 12px;
-            color: #8993a4;
-            background: #f6f7f9;
-            padding: 9px 12px;
-            border-radius: 20px;
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            background: #aab2bf;
-            border-radius: 50%;
-        }
-
-        .status.connected .status-dot {
-            background: #16a36a;
-        }
-
-        .status.reconnecting .status-dot {
-            background: #e5a32d;
-        }
-
-        /* Messages */
 
         .messages {
-            flex: 1;
-            padding: 25px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 17px;
-            background: #f8fafb;
+          padding: 16px;
         }
 
-        .empty-state {
-            margin: auto;
-            text-align: center;
-            color: #929baa;
-        }
-
-        .empty-icon {
-            font-size: 38px;
-            margin-bottom: 12px;
-        }
-
-        .empty-state h3 {
-            color: #344054;
-            font-size: 16px;
-            margin-bottom: 7px;
-        }
-
-        .empty-state p {
-            font-size: 13px;
+        .composer {
+          padding: 12px;
         }
 
         .message {
-            max-width: 75%;
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-            align-self: flex-start;
+          max-width: 88%;
         }
-
-            .message.own {
-                align-self: flex-end;
-            }
-
-        .sender {
-            font-size: 11px;
-            color: #929baa;
-            padding: 0 5px;
-        }
-
-        .message.own .sender {
-            text-align: right;
-        }
-
-        .bubble {
-            padding: 12px 16px;
-            background: white;
-            border: 1px solid #edf0f4;
-            border-radius: 13px 13px 13px 3px;
-            font-size: 14px;
-            line-height: 1.6;
-            overflow-wrap: anywhere;
-        }
-
-        .message.own .bubble {
-            background: #dcf6e9;
-            border-color: #dcf6e9;
-            border-radius: 13px 13px 3px 13px;
-        }
-
-        .message-time {
-            font-size: 10px;
-            color: #a0a8b5;
-            padding: 0 5px;
-        }
-
-        .message.own .message-time {
-            text-align: right;
-        }
-
-        /* Composer */
-
-        .composer {
-            padding: 18px 22px;
-            border-top: 1px solid #edf0f4;
-            background: white;
-        }
-
-        .input-area {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: #f4f6f8;
-            padding: 7px 9px 7px 17px;
-            border-radius: 12px;
-        }
-
-            .input-area input {
-                flex: 1;
-                border: none;
-                outline: none;
-                background: transparent;
-                font-size: 14px;
-                min-width: 0;
-                padding: 10px 0;
-            }
-
-        .send-btn {
-            border: none;
-            background: #16875d;
-            color: white;
-            border-radius: 9px;
-            padding: 11px 20px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-            .send-btn:hover {
-                background: #10734e;
-            }
-
-            .send-btn:disabled {
-                background: #a7c9b9;
-                cursor: not-allowed;
-            }
-
-        /* Connection settings */
-
-        .settings {
-            padding: 10px 22px;
-            border-top: 1px solid #edf0f4;
-            background: white;
-        }
-
-            .settings summary {
-                cursor: pointer;
-                color: #84909f;
-                font-size: 12px;
-            }
-
-        .settings-body {
-            display: flex;
-            gap: 8px;
-            margin-top: 12px;
-            flex-wrap: wrap;
-        }
-
-        .settings input {
-            min-width: 0;
-            flex: 1;
-            padding: 10px;
-            border: 1px solid #e0e5eb;
-            border-radius: 7px;
-            outline: none;
-        }
-
-        .settings button {
-            border: none;
-            padding: 10px 15px;
-            border-radius: 7px;
-            cursor: pointer;
-            background: #16875d;
-            color: white;
-        }
-
-            .settings button.disconnect {
-                background: #f0eeee;
-                color: #555;
-            }
-
-            .settings button:disabled {
-                opacity: .5;
-                cursor: not-allowed;
-            }
-
-        .conversation-control {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 12px 22px 0;
-        }
-
-            .conversation-control label {
-                font-size: 12px;
-                color: #929baa;
-            }
-
-            .conversation-control input {
-                width: 100px;
-                padding: 7px 9px;
-                border: 1px solid #e0e5eb;
-                border-radius: 7px;
-                outline: none;
-            }
-
-        .history-btn {
-            margin-left: auto;
-            border: 1px solid #e0e5eb;
-            background: white;
-            padding: 7px 12px;
-            border-radius: 7px;
-            cursor: pointer;
-            font-size: 12px;
-        }
-
-        .notice {
-            text-align: center;
-            color: #929baa;
-            font-size: 11px;
-            margin-top: 9px;
-        }
-
-        @media(max-width: 650px) {
-            body {
-                padding: 0;
-            }
-
-            .app {
-                height: 100vh;
-                max-height: none;
-                border-radius: 0;
-            }
-
-            .sidebar {
-                display: none;
-            }
-
-            .chat-header {
-                padding: 15px;
-            }
-
-            .messages {
-                padding: 16px;
-            }
-
-            .composer {
-                padding: 12px;
-            }
-
-            .message {
-                max-width: 88%;
-            }
-        }
+      }
     </style>
-</head>
+  </head>
 
-<body>
-
+  <body>
     <div class="app">
 
-        <!-- Sidebar -->
-        <aside class="sidebar">
-            <div class="brand">
-                <h2>ChatFlow.</h2>
-                <p>Real-Time Messaging Platform</p>
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="brand">
+          <h2>ChatFlow.</h2>
+          <p>Real-Time Messaging Platform</p>
+        </div>
+
+        <div class="sidebar-content">
+          <div class="section-label">MESSAGES</div>
+
+          <div class="conversation">
+            <div class="avatar">C</div>
+            <div class="conversation-info">
+              <h4>Chat Conversation</h4>
+              <p>1-to-1 messaging</p>
             </div>
+          </div>
+        </div>
 
-            <div class="sidebar-content">
-                <div class="section-label">MESSAGES</div>
+        <div class="sidebar-footer">
+          Powered by ASP.NET Core & SignalR
+        </div>
+      </aside>
 
-                <div class="conversation">
-                    <div class="avatar">C</div>
-                    <div class="conversation-info">
-                        <h4>Chat Conversation</h4>
-                        <p>1-to-1 messaging</p>
-                    </div>
-                </div>
+      <!-- Main chat -->
+      <main class="main">
+
+        <header class="chat-header">
+          <div class="user-info">
+            <div class="avatar">C</div>
+            <div>
+              <h3>Real-Time Chat</h3>
+              <p>One-to-one conversation</p>
             </div>
+          </div>
 
-            <div class="sidebar-footer">
-                Powered by ASP.NET Core & SignalR
-            </div>
-        </aside>
+          <div class="status" id="statusBadge">
+            <span class="status-dot"></span>
+            <span id="statusText">Disconnected</span>
+          </div>
+        </header>
 
-        <!-- Main chat -->
-        <main class="main">
+        <div class="conversation-control">
+          <label>Conversation ID</label>
+          <input type="number" id="conversationId" placeholder="ID" min="1" />
 
-            <header class="chat-header">
-                <div class="user-info">
-                    <div class="avatar">C</div>
-                    <div>
-                        <h3>Real-Time Chat</h3>
-                        <p>One-to-one conversation</p>
-                    </div>
-                </div>
+          <button class="history-btn" onclick="getMessages()">
+            Load History
+          </button>
+        </div>
 
-                <div class="status" id="statusBadge">
-                    <span class="status-dot"></span>
-                    <span id="statusText">Disconnected</span>
-                </div>
-            </header>
+        <section class="messages" id="messages">
+          <div class="empty-state" id="emptyState">
+            <div class="empty-icon">💬</div>
+            <h3>Your conversation starts here</h3>
+            <p>Connect and send a message to get started.</p>
+          </div>
+        </section>
 
-            <div class="conversation-control">
-                <label>Conversation ID</label>
-                <input type="number" id="conversationId"
-                       placeholder="ID" min="1" />
+        <div class="typing-indicator" id="typingIndicator" aria-live="polite"></div>
 
-                <button class="history-btn" onclick="getMessages()">
-                    Load History
-                </button>
-            </div>
+        <div class="composer">
+          <div class="input-area">
+            <input
+              type="text"
+              id="messageText"
+              placeholder="Type your message..."
+              onkeydown="handleEnter(event)"
+              autocomplete="off"
+            />
 
-            <section class="messages" id="messages">
+            <button
+              class="send-btn"
+              id="sendBtn"
+              onclick="sendMessage()"
+              disabled
+            >
+              Send ➤
+            </button>
+          </div>
 
-                <div class="empty-state" id="emptyState">
-                    <div class="empty-icon">💬</div>
-                    <h3>Your conversation starts here</h3>
-                    <p>Connect and send a message to get started.</p>
-                </div>
+          <p class="notice">Messages are delivered in real time.</p>
+        </div>
 
-            </section>
+        <!-- Connection settings -->
+        <details class="settings">
+          <summary>Connection settings · JWT Authentication</summary>
 
-            <div class="composer">
-                <div class="input-area">
-                    <input type="text"
-                           id="messageText"
-                           placeholder="Type your message..."
-                           onkeydown="handleEnter(event)"
-                           autocomplete="off" />
+          <div class="settings-body">
+            <input
+              type="url"
+              id="backendUrl"
+              placeholder="Backend URL (example: http://localhost:5230)"
+              autocomplete="url"
+              aria-label="ASP.NET Core backend base URL"
+            />
 
-                    <button class="send-btn" id="sendBtn"
-                            onclick="sendMessage()" disabled>
-                        Send ➤
-                    </button>
-                </div>
+            <input
+              type="password"
+              id="token"
+              placeholder="Paste JWT access token"
+              autocomplete="off"
+            />
 
-                <p class="notice">
-                    Messages are delivered in real time.
-                </p>
-            </div>
+            <button id="connectBtn" onclick="connect()">Connect</button>
 
-            <!-- Hidden connection configuration -->
-            <details class="settings">
-                <summary>Connection settings · JWT Authentication</summary>
+            <button
+              id="disconnectBtn"
+              class="disconnect"
+              onclick="disconnect()"
+              disabled
+            >
+              Disconnect
+            </button>
+          </div>
+        </details>
 
-                <div class="settings-body">
-                    <input type="password"
-                           id="token"
-                           placeholder="Paste JWT access token"
-                           autocomplete="off" />
-
-                    <button id="connectBtn" onclick="connect()">
-                        Connect
-                    </button>
-
-                    <button id="disconnectBtn"
-                            class="disconnect"
-                            onclick="disconnect()" disabled>
-                        Disconnect
-                    </button>
-                </div>
-            </details>
-
-        </main>
+      </main>
     </div>
 
     <script>
-            let connection = null;
-            let currentUserId = null;
+      // =========================================
+      // GLOBAL VARIABLES
+      // =========================================
 
-            const messagesElement = document.getElementById("messages");
+      let connection = null;
+      let currentUserId = null;
 
-            function setStatus(status) {
-                document.getElementById("statusText").textContent = status;
+      // Typing state
+      let isTyping = false;
+      let lastTypingConversationId = null;
 
-                const badge = document.getElementById("statusBadge");
-                badge.className = "status";
+      const messagesElement = document.getElementById("messages");
+      const messageInput = document.getElementById("messageText");
+      const conversationInput = document.getElementById("conversationId");
+      const typingIndicator = document.getElementById("typingIndicator");
 
-                if (status === "Connected") {
-                    badge.classList.add("connected");
-                } else if (status === "Reconnecting") {
-                    badge.classList.add("reconnecting");
-                }
+      // =========================================
+      // CONVERSATION ID
+      // =========================================
 
-                const connected =
-                    connection &&
-                    connection.state === signalR.HubConnectionState.Connected;
+      function getCurrentConversationId() {
+        const value = Number(conversationInput.value);
 
-                document.getElementById("sendBtn").disabled = !connected;
-                document.getElementById("disconnectBtn").disabled = !connection;
-                document.getElementById("connectBtn").disabled =
-                    !!connection &&
-                    connection.state !== signalR.HubConnectionState.Disconnected;
+        return Number.isInteger(value) && value > 0
+          ? value
+          : null;
+      }
+
+      // =========================================
+      // CONNECTION STATUS
+      // =========================================
+
+      function setStatus(status) {
+        document.getElementById("statusText").textContent = status;
+
+        const badge = document.getElementById("statusBadge");
+
+        badge.className = "status";
+
+        if (status === "Connected") {
+          badge.classList.add("connected");
+        }
+
+        if (
+          status === "Reconnecting" ||
+          status === "Connecting"
+        ) {
+          badge.classList.add("reconnecting");
+        }
+
+        const state = connection?.state;
+
+        const connected =
+          state === signalR.HubConnectionState.Connected;
+
+        const connecting =
+          state === signalR.HubConnectionState.Connecting ||
+          state === signalR.HubConnectionState.Reconnecting;
+
+        document.getElementById("sendBtn").disabled = !connected;
+
+        document.getElementById("disconnectBtn").disabled =
+          !connection;
+
+        document.getElementById("connectBtn").disabled =
+          connected || connecting;
+      }
+
+      // =========================================
+      // JWT USER ID
+      // =========================================
+
+      function getUserIdFromToken(token) {
+        try {
+          const parts = token.split(".");
+
+          if (parts.length !== 3) return null;
+
+          const payload = parts[1]
+            .replace(/-/g, "+")
+            .replace(/_/g, "/");
+
+          const padded = payload.padEnd(
+            payload.length + ((4 - (payload.length % 4)) % 4),
+            "="
+          );
+
+          const binary = atob(padded);
+
+          const bytes = Uint8Array.from(
+            binary,
+            character => character.charCodeAt(0)
+          );
+
+          const decoded = JSON.parse(
+            new TextDecoder().decode(bytes)
+          );
+
+          return (
+            decoded.nameid ||
+            decoded.sub ||
+            decoded["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"] ||
+            decoded["http://schemas.microsoft.com/ws/2008/06/identity/claims/primarysid"] ||
+            decoded.userId ||
+            null
+          );
+
+        } catch (error) {
+          console.warn("Could not read user ID from JWT:", error);
+          return null;
+        }
+      }
+
+      // =========================================
+      // EMPTY STATE
+      // =========================================
+
+      function removeEmptyState() {
+        const empty = document.getElementById("emptyState");
+
+        if (empty) {
+          empty.remove();
+        }
+      }
+
+      function showEmptyState(title, description) {
+        messagesElement.innerHTML = `
+          <div class="empty-state" id="emptyState">
+            <div class="empty-icon">💬</div>
+            <h3>${title}</h3>
+            <p>${description}</p>
+          </div>
+        `;
+      }
+
+      // =========================================
+      // DISPLAY MESSAGE
+      // =========================================
+
+      function displayMessage(message) {
+        const messageConversationId =
+          message.conversationId ?? message.ConversationId;
+
+        const selectedConversationId =
+          getCurrentConversationId();
+
+        if (
+          selectedConversationId &&
+          messageConversationId != null &&
+          Number(messageConversationId) !== selectedConversationId
+        ) {
+          return;
+        }
+
+        removeEmptyState();
+
+        const senderId =
+          message.senderId || message.SenderId;
+
+        const senderName =
+          message.senderName || message.SenderName || "User";
+
+        const text =
+          message.text || message.Text || "";
+
+        const ownMessage =
+          currentUserId &&
+          senderId &&
+          String(senderId).toLowerCase() ===
+            String(currentUserId).toLowerCase();
+
+        const wrapper = document.createElement("div");
+
+        wrapper.className = ownMessage
+          ? "message own"
+          : "message";
+
+        const sender = document.createElement("div");
+
+        sender.className = "sender";
+
+        sender.textContent = ownMessage
+          ? "You"
+          : senderName;
+
+        const bubble = document.createElement("div");
+
+        bubble.className = "bubble";
+        bubble.textContent = text;
+
+        const time = document.createElement("div");
+
+        time.className = "message-time";
+
+        const timestamp =
+          message.createdAt ||
+          message.CreatedAt ||
+          message.sentAt ||
+          message.SentAt;
+
+        time.textContent = timestamp
+          ? new Date(timestamp).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit"
+            })
+          : "Sent";
+
+        wrapper.append(sender, bubble, time);
+
+        messagesElement.appendChild(wrapper);
+
+        messagesElement.scrollTop =
+          messagesElement.scrollHeight;
+      }
+
+      // =========================================
+      // SIGNALR EVENT HANDLERS
+      // =========================================
+
+      function registerSignalRHandlers() {
+        connection.off("ReceiveMessage");
+        connection.off("MessageHistory");
+        connection.off("UserTyping");
+
+        // Receive Message
+        connection.on("ReceiveMessage", message => {
+          displayMessage(message);
+        });
+
+        // Message History
+        connection.on("MessageHistory", messages => {
+          messagesElement.innerHTML = "";
+
+          if (!messages || messages.length === 0) {
+            showEmptyState(
+              "No messages yet",
+              "Start the conversation."
+            );
+
+            return;
+          }
+
+          messages.forEach(displayMessage);
+
+          messagesElement.scrollTop =
+            messagesElement.scrollHeight;
+        });
+
+        // User Typing
+        connection.on("UserTyping", data => {
+          const selectedConversationId =
+            getCurrentConversationId();
+
+          const eventConversationId =
+            data.conversationId ?? data.ConversationId;
+
+          if (
+            !selectedConversationId ||
+            Number(eventConversationId) !== selectedConversationId
+          ) {
+            return;
+          }
+
+          const senderId =
+            data.userId || data.UserId;
+
+          if (
+            currentUserId &&
+            senderId &&
+            String(senderId).toLowerCase() ===
+              String(currentUserId).toLowerCase()
+          ) {
+            return;
+          }
+
+          const typing =
+            data.isTyping ?? data.IsTyping;
+
+          const senderName =
+            data.userName ||
+            data.UserName ||
+            "The other user";
+
+          typingIndicator.textContent = typing
+            ? `${senderName} is typing...`
+            : "";
+        });
+      }
+
+      // =========================================
+      // STOP TYPING
+      // =========================================
+
+      async function stopTyping() {
+        if (!isTyping) return;
+
+        // Save old conversation ID before resetting.
+        const conversationId =
+          lastTypingConversationId;
+
+        // Reset local state.
+        isTyping = false;
+        lastTypingConversationId = null;
+
+        if (
+          connection &&
+          connection.state === signalR.HubConnectionState.Connected &&
+          conversationId
+        ) {
+          try {
+            await connection.invoke(
+              "Typing",
+              conversationId,
+              false
+            );
+
+            console.info(
+              "Typing stopped for conversation:",
+              conversationId
+            );
+
+          } catch (error) {
+            console.warn(
+              "Unable to send typing-stop event:",
+              error
+            );
+          }
+        }
+      }
+
+      // =========================================
+      // HANDLE TYPING
+      // =========================================
+
+      async function handleTyping() {
+        const conversationId =
+          getCurrentConversationId();
+
+        // If input is empty, stop typing.
+        if (!messageInput.value.trim()) {
+          await stopTyping();
+          return;
+        }
+
+        // Connection and conversation validation.
+        if (
+          !connection ||
+          connection.state !== signalR.HubConnectionState.Connected ||
+          !conversationId
+        ) {
+          return;
+        }
+
+        // Already typing in the same conversation.
+        // Do not send repeated typing-start events.
+        if (
+          isTyping &&
+          lastTypingConversationId === conversationId
+        ) {
+          return;
+        }
+
+        // If conversation changed, stop old typing first.
+        if (isTyping) {
+          await stopTyping();
+        }
+
+        // Mark locally before invoking to prevent duplicate starts.
+        isTyping = true;
+        lastTypingConversationId = conversationId;
+
+        try {
+          await connection.invoke(
+            "Typing",
+            conversationId,
+            true
+          );
+
+          console.info(
+            "Typing started for conversation:",
+            conversationId
+          );
+
+        } catch (error) {
+          console.error(
+            "Unable to send typing-start event:",
+            error
+          );
+
+          isTyping = false;
+          lastTypingConversationId = null;
+        }
+      }
+
+      // =========================================
+      // CONNECT SIGNALR
+      // =========================================
+
+      async function connect() {
+        if (
+          connection &&
+          connection.state !== signalR.HubConnectionState.Disconnected
+        ) {
+          return;
+        }
+
+        if (typeof signalR === "undefined") {
+          alert(
+            "SignalR client library did not load. Check your internet connection."
+          );
+
+          return;
+        }
+
+        const token =
+          document.getElementById("token").value.trim();
+
+        const backendUrl =
+          document.getElementById("backendUrl").value.trim();
+
+        if (!token) {
+          alert("Please enter your JWT access token.");
+          return;
+        }
+
+        if (!backendUrl) {
+          alert(
+            "Enter your ASP.NET Core backend URL, for example http://localhost:5230."
+          );
+
+          return;
+        }
+
+        let hubUrl;
+
+        try {
+          const baseUrl = new URL(backendUrl);
+
+          if (!["http:", "https:"].includes(baseUrl.protocol)) {
+            throw new Error("Invalid protocol.");
+          }
+
+          hubUrl = new URL(
+            "/hubs/chat",
+            baseUrl
+          ).toString();
+
+        } catch (error) {
+          alert(
+            "Invalid backend URL. Example: http://localhost:5230"
+          );
+
+          return;
+        }
+
+        currentUserId =
+          getUserIdFromToken(token);
+
+        const newConnection =
+          new signalR.HubConnectionBuilder()
+            .withUrl(hubUrl, {
+              accessTokenFactory: () => token
+            })
+            .withAutomaticReconnect()
+            .configureLogging(signalR.LogLevel.Information)
+            .build();
+
+        connection = newConnection;
+
+        registerSignalRHandlers();
+
+        // Reconnecting
+        connection.onreconnecting(() => {
+          setStatus("Reconnecting");
+
+          typingIndicator.textContent = "";
+
+          isTyping = false;
+          lastTypingConversationId = null;
+        });
+
+        // Reconnected
+        connection.onreconnected(() => {
+          setStatus("Connected");
+        });
+
+        // Connection closed
+        connection.onclose(() => {
+          setStatus("Disconnected");
+
+          typingIndicator.textContent = "";
+
+          isTyping = false;
+          lastTypingConversationId = null;
+        });
+
+        setStatus("Connecting");
+
+        try {
+          await connection.start();
+
+          setStatus("Connected");
+
+          console.info(
+            "SignalR connected:",
+            hubUrl
+          );
+
+        } catch (error) {
+          console.error(
+            "SignalR connection error:",
+            error
+          );
+
+          try {
+            await newConnection.stop();
+          } catch (_) {
+            // Ignore cleanup errors.
+          }
+
+          if (connection === newConnection) {
+            connection = null;
+          }
+
+          setStatus("Connection failed");
+
+          alert(
+            "Unable to connect. Verify backend URL, JWT token, CORS settings, and that the API is running."
+          );
+        }
+      }
+
+      // =========================================
+      // SEND MESSAGE
+      // =========================================
+
+      async function sendMessage() {
+        if (
+          !connection ||
+          connection.state !== signalR.HubConnectionState.Connected
+        ) {
+          alert("Please connect first.");
+          return;
+        }
+
+        const conversationId =
+          getCurrentConversationId();
+
+        const text =
+          messageInput.value.trim();
+
+        if (!conversationId || !text) {
+          alert(
+            "Enter a valid conversation ID and message."
+          );
+
+          return;
+        }
+
+        const sendBtn =
+          document.getElementById("sendBtn");
+
+        sendBtn.disabled = true;
+
+        try {
+          // Stop typing before sending message.
+          await stopTyping();
+
+          await connection.invoke(
+            "SendMessage",
+            {
+              conversationId: conversationId,
+              text: text
             }
+          );
 
-            function getUserIdFromToken(token) {
-                try {
-                    const payload = token.split(".")[1];
-                    const base64 = payload
-                        .replace(/-/g, "+")
-                        .replace(/_/g, "/");
+          messageInput.value = "";
 
-                    const decoded = JSON.parse(
-                        decodeURIComponent(
-                            atob(base64)
-                                .split("")
-                                .map(c => "%" + c.charCodeAt(0)
-                                    .toString(16).padStart(2, "0"))
-                                .join("")
-                        )
-                    );
+          console.info("Message sent successfully.");
 
-                    return decoded.sub ||
-                        decoded.nameid ||
-                        decoded["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"] ||
-                        decoded.userId ||
-                        null;
-                } catch {
-                    return null;
-                }
-            }
+        } catch (error) {
+          console.error(
+            "Message sending failed:",
+            error
+          );
 
-            function removeEmptyState() {
-                const empty = document.getElementById("emptyState");
-                if (empty) empty.remove();
-            }
+          alert(
+            "Message could not be sent. Check the conversation ID and server logs."
+          );
 
-            function displayMessage(message) {
-                removeEmptyState();
+        } finally {
+          sendBtn.disabled =
+            !connection ||
+            connection.state !== signalR.HubConnectionState.Connected;
+        }
+      }
 
-                const senderId = message.senderId || message.SenderId;
-                const senderName = message.senderName ||
-                    message.SenderName || "User";
+      // =========================================
+      // LOAD MESSAGE HISTORY
+      // =========================================
 
-                const text = message.text || message.Text || "";
+      async function getMessages() {
+        if (
+          !connection ||
+          connection.state !== signalR.HubConnectionState.Connected
+        ) {
+          alert("Please connect first.");
+          return;
+        }
 
-                const ownMessage = currentUserId &&
-                    senderId &&
-                    String(senderId).toLowerCase() ===
-                    String(currentUserId).toLowerCase();
+        const conversationId =
+          getCurrentConversationId();
 
-                const wrapper = document.createElement("div");
-                wrapper.className = ownMessage ? "message own" : "message";
+        if (!conversationId) {
+          alert("Enter a valid conversation ID.");
+          return;
+        }
 
-                const sender = document.createElement("div");
-                sender.className = "sender";
-                sender.textContent = ownMessage ? "You" : senderName;
+        await stopTyping();
 
-                const bubble = document.createElement("div");
-                bubble.className = "bubble";
-                bubble.textContent = text;
+        typingIndicator.textContent = "";
 
-                const time = document.createElement("div");
-                time.className = "message-time";
+        try {
+          await connection.invoke(
+            "GetMessages",
+            conversationId
+          );
 
-                const timestamp = message.createdAt ||
-                    message.CreatedAt ||
-                    message.sentAt ||
-                    message.SentAt;
+        } catch (error) {
+          console.error(
+            "History loading failed:",
+            error
+          );
 
-                time.textContent = timestamp
-                    ? new Date(timestamp).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit"
-                    })
-                    : "Sent";
+          alert("Unable to load message history.");
+        }
+      }
 
-                wrapper.append(sender, bubble, time);
-                messagesElement.appendChild(wrapper);
+      // =========================================
+      // DISCONNECT
+      // =========================================
 
-                messagesElement.scrollTop = messagesElement.scrollHeight;
-            }
+      async function disconnect() {
+        if (!connection) return;
 
-            async function connect() {
-                if (
-                    connection &&
-                    connection.state !== signalR.HubConnectionState.Disconnected
-                ) {
-                    return;
-                }
+        const oldConnection = connection;
 
-                const token = document.getElementById("token").value.trim();
+        await stopTyping();
 
-                if (!token) {
-                    alert("Please enter your JWT token.");
-                    return;
-                }
+        connection = null;
 
-                currentUserId = getUserIdFromToken(token);
+        try {
+          await oldConnection.stop();
 
-                connection = new signalR.HubConnectionBuilder()
-                    .withUrl("/hubs/chat", {
-                        accessTokenFactory: () => token
-                    })
-                    .withAutomaticReconnect()
-                    .build();
+        } catch (error) {
+          console.error(
+            "Disconnect error:",
+            error
+          );
+        }
 
-                // Register handlers only once per connection.
+        typingIndicator.textContent = "";
 
-                connection.on("ReceiveMessage", message => {
-                    displayMessage(message);
-                });
+        isTyping = false;
+        lastTypingConversationId = null;
 
-                connection.on("MessageHistory", messages => {
-                    messagesElement.innerHTML = "";
+        setStatus("Disconnected");
+      }
 
-                    if (!messages || messages.length === 0) {
-                        messagesElement.innerHTML = `
-                            <div class="empty-state">
-                                <div class="empty-icon">💬</div>
-                                <h3>No messages yet</h3>
-                                <p>Start the conversation.</p>
-                            </div>
-                        `;
-                        return;
-                    }
+      // =========================================
+      // ENTER KEY
+      // =========================================
 
-                    messages.forEach(displayMessage);
-                });
+      function handleEnter(event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          sendMessage();
+        }
+      }
 
-                connection.onreconnecting(() => {
-                    setStatus("Reconnecting");
-                });
+      // =========================================
+      // INPUT EVENT
+      // =========================================
 
-                connection.onreconnected(() => {
-                    setStatus("Connected");
-                });
+      messageInput.addEventListener("input", () => {
+        void handleTyping();
+      });
 
-                connection.onclose(() => {
-                    setStatus("Disconnected");
-                });
+      // IMPORTANT:
+      // No blur event here.
+      // Moving focus away from the input will NOT stop typing.
 
-                setStatus("Connecting");
+      // =========================================
+      // CONVERSATION CHANGE
+      // =========================================
 
-                try {
-                    await connection.start();
-                    setStatus("Connected");
-                } catch (error) {
-                    console.error("Connection error:", error);
-                    setStatus("Connection failed");
-                    connection = null;
-                    setStatus("Connection failed");
-                    alert("Unable to connect. Check JWT token and server.");
-                }
-            }
+      conversationInput.addEventListener(
+        "change",
+        async () => {
+          await stopTyping();
 
-            async function sendMessage() {
-                if (
-                    !connection ||
-                    connection.state !== signalR.HubConnectionState.Connected
-                ) {
-                    alert("Please connect first.");
-                    return;
-                }
+          typingIndicator.textContent = "";
 
-                const conversationId = Number(
-                    document.getElementById("conversationId").value
-                );
+          showEmptyState(
+            "Your conversation starts here",
+            "Load history or send a message to get started."
+          );
+        }
+      );
 
-                const text = document.getElementById("messageText").value.trim();
+      // =========================================
+      // BROWSER CLOSE
+      // BEST EFFORT CLEANUP
+      // =========================================
 
-                if (!Number.isInteger(conversationId) ||
-                    conversationId <= 0 || !text) {
-                    alert("Enter a valid conversation ID and message.");
-                    return;
-                }
+      window.addEventListener("beforeunload", () => {
+        if (
+          isTyping &&
+          connection &&
+          connection.state === signalR.HubConnectionState.Connected &&
+          lastTypingConversationId
+        ) {
+          connection.invoke(
+            "Typing",
+            lastTypingConversationId,
+            false
+          ).catch(() => {});
+        }
+      });
 
-                const sendBtn = document.getElementById("sendBtn");
-                sendBtn.disabled = true;
-
-                try {
-                    await connection.invoke("SendMessage", {
-                        conversationId: conversationId,
-                        text: text
-                    });
-
-                    document.getElementById("messageText").value = "";
-                } catch (error) {
-                    console.error("Message sending failed:", error);
-                    alert("Message could not be sent.");
-                } finally {
-                    sendBtn.disabled = false;
-                }
-            }
-
-            async function getMessages() {
-                if (
-                    !connection ||
-                    connection.state !== signalR.HubConnectionState.Connected
-                ) {
-                    alert("Please connect first.");
-                    return;
-                }
-
-                const conversationId = Number(
-                    document.getElementById("conversationId").value
-                );
-
-                if (!Number.isInteger(conversationId) || conversationId <= 0) {
-                    alert("Enter a valid conversation ID.");
-                    return;
-                }
-
-                try {
-                    await connection.invoke("GetMessages", conversationId);
-                } catch (error) {
-                    console.error("History loading failed:", error);
-                    alert("Unable to load message history.");
-                }
-            }
-
-            async function disconnect() {
-                if (connection) {
-                    const oldConnection = connection;
-                    connection = null;
-
-                    try {
-                        await oldConnection.stop();
-                    } catch (error) {
-                        console.error("Disconnect error:", error);
-                    }
-
-                    setStatus("Disconnected");
-                }
-            }
-
-            function handleEnter(event) {
-                if (event.key === "Enter") {
-                    event.preventDefault();
-                    sendMessage();
-                }
-            }
     </script>
-
-</body>
+  </body>
 </html>
