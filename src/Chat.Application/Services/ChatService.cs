@@ -93,4 +93,23 @@ public class ChatService : IChatService
             })
             .ToListAsync();
     }
+
+    public async Task<Guid> GetOtherParticipantIdAsync(
+    int conversationId,
+    Guid userId)
+    {
+        var conversation = await _context.Conversations
+            .FirstOrDefaultAsync(c => c.Id == conversationId);
+
+        if (conversation == null ||
+            (conversation.UserAId != userId &&
+             conversation.UserBId != userId))
+        {
+            throw new UnauthorizedAccessException("Invalid conversation.");
+        }
+
+        return conversation.UserAId == userId
+            ? conversation.UserBId
+            : conversation.UserAId;
+    }
 }

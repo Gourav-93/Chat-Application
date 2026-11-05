@@ -37,6 +37,7 @@ builder.Services.AddSwaggerGen(options =>
 
 // SignalR
 builder.Services.AddScoped<IChatService, ChatService>();
+builder.Services.AddScoped<IConversationService, ConversationService>();
 builder.Services.AddSignalR();
 
 // Database connection

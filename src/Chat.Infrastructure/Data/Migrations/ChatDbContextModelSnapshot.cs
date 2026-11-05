@@ -41,9 +41,10 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserAId");
-
                     b.HasIndex("UserBId");
+
+                    b.HasIndex("UserAId", "UserBId")
+                        .IsUnique();
 
                     b.ToTable("Conversations");
                 });
