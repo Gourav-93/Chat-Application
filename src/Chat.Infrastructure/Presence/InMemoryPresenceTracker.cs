@@ -5,33 +5,38 @@ namespace Chat.Infrastructure.Presence;
 
 public class InMemoryPresenceTracker : IPresenceTracker
 {
-    private readonly ConcurrentDictionary<string, HashSet<string>> _connections = new();
+    private readonly ConcurrentDictionary<Guid, HashSet<string>> _connections = new();
     private readonly object _lock = new();
 
-    public Task<bool> UserConnected(
-        string userId,
+    public Task<bool> UserConnectedAsync(
+        Guid userId,
         string connectionId)
     {
         lock (_lock)
         {
+            if (!_connections.TryGetValue(userId, out var connections))
+            {
+                connections = new HashSet<string>();
+                _connections[userId] = connections;
+            }
+
             // Get or create a HashSet of connection IDs for this user
-            var connections = _connections.GetOrAdd(
-                userId,
-                key => new HashSet<string>());
+            // var connections = _connections.GetOrAdd(
+            //     userId,
+            //     key => new HashSet<string>());
 
             
-            bool isFirstConnection = connections.Count == 0;
+            // bool isFirstConnection = connections.Count == 0;
 
             // Add the new connection ID
             connections.Add(connectionId);
 
             // Returns true if the user just came online
-            return Task.FromResult(isFirstConnection);
+            return Task.FromResult(connections.Count == 1);
         }
     }
-
-    public Task<bool> UserDisconnected(
-        string userId,
+    public Task<bool> UserDisconnectedAsync(
+        Guid userId,
         string connectionId)
     {
         lock (_lock)
@@ -49,8 +54,8 @@ public class InMemoryPresenceTracker : IPresenceTracker
 
             if (connections.Count == 0)
             {
+                // _connections.TryRemove(userId, out var key);
                 _connections.TryRemove(userId, out var key);
-
                 // Returns true if the user just went completely offline
                 return Task.FromResult(true);
             }
@@ -60,16 +65,30 @@ public class InMemoryPresenceTracker : IPresenceTracker
         }
     }
 
-    public Task<bool> IsOnline(string userId)
+    public Task<bool> IsOnlineAsync(Guid userId)
     {
         lock (_lock)
         {
             // Check if the user exists in the dictionary and has at least one active connection
-            bool isOnline =
+            return Task.FromResult(_connections.ContainsKey(userId));
+        }
+    }
+     public Task<int> GetConnectionCountAsync(Guid userId)
+    {
+        lock (_lock)
+        {
+            return Task.FromResult(
                 _connections.TryGetValue(userId, out var connections)
-                && connections.Count > 0;
-
-            return Task.FromResult(isOnline);
+                    ? connections.Count
+                    : 0
+            );
+        }
+    }
+    public Task<List<Guid>> GetOnlineUsersAsync()
+    {
+        lock (_lock)
+        {
+            return Task.FromResult(_connections.Keys.ToList());
         }
     }
 }

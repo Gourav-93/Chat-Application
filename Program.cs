@@ -8,6 +8,7 @@ using Chat.Api.Hubs;
 using Chat.Infrastructure.Data;
 using Chat.Application.Services;
 using Chat.Application.Interfaces;
+using Chat.Infrastructure.Presence;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,6 +39,8 @@ builder.Services.AddSwaggerGen(options =>
 // SignalR
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
+builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
+builder.Services.AddSingleton<IPresenceService, PresenceService>();
 builder.Services.AddSignalR();
 
 // Database connection

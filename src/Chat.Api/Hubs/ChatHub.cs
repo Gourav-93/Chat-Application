@@ -9,10 +9,12 @@ namespace Chat.Api.Hubs;
 public partial class ChatHub : Hub
 {
     private readonly IChatService _chatService;
+    private readonly IPresenceService _presenceService;
 
-    public ChatHub(IChatService chatService)
+    public ChatHub(IChatService chatService, IPresenceService presenceService)
     {
         _chatService = chatService;
+        _presenceService = presenceService;
     }
     public override async Task OnConnectedAsync()
     {
@@ -24,6 +26,14 @@ public partial class ChatHub : Hub
         {
             throw new HubException("User identity not found.");
         }
+
+        if (!Guid.TryParse(Context.UserIdentifier, out var user))
+            throw new HubException("User identity not found.");
+
+        bool isFirstConnection = await _presenceService.UserConnectedAsync(
+       user,
+       Context.ConnectionId
+   );
 
 
         // Add this connection to the user's personal group
@@ -41,21 +51,13 @@ public partial class ChatHub : Hub
             Context.ConnectionId
        );
 
+        if (isFirstConnection)
+        {
+            await Clients.All.SendAsync("UserOnline", userId);
+        }
+
         await base.OnConnectedAsync();
     }
-
-    // public async Task SendMessage(SendMessageDto dto)
-    // {
-    //     if (!Guid.TryParse(Context.UserIdentifier, out var senderId))
-    //         throw new HubException("User identity not found.");
-
-    //     var message = await _chatService.SendMessageAsync(dto, senderId);
-
-    //     await Clients.Group($"user-{message.ReceiverId}")
-    //         .SendAsync("ReceiveMessage", message);
-    // }
-
-
     public async Task SendMessage(SendMessageDto dto)
     {
         if (!Guid.TryParse(Context.UserIdentifier, out var senderId))
@@ -65,14 +67,12 @@ public partial class ChatHub : Hub
 
         var groups = new[]
         {
-        $"user-{message.SenderId}",
-        $"user-{message.ReceiverId}"
-    };
-
+           $"user-{message.SenderId}",
+           $"user-{message.ReceiverId}"
+        };
         await Clients.Groups(groups)
             .SendAsync("ReceiveMessage", message);
     }
-
     public async Task GetMessages(int conversationId)
     {
         if (!Guid.TryParse(Context.UserIdentifier, out var userId))
@@ -87,14 +87,31 @@ public partial class ChatHub : Hub
     }
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        Console.WriteLine(
-            $"Connection disconnected: {Context.ConnectionId}"
-        );
+        if (Guid.TryParse(Context.UserIdentifier, out var userId))
+        {
+            bool isOffline = await _presenceService.UserDisconnectedAsync(
+                userId,
+                Context.ConnectionId
+            );
+            Console.WriteLine(
+                $"Connection disconnected: {Context.ConnectionId}"
+            );
+            if (isOffline)
+            {
+                var status = await _presenceService.GetUserStatusAsync(userId);
 
-        await base.OnDisconnectedAsync(exception);
+                await Clients.All.SendAsync("UserOffline", new
+                {
+                    UserId = userId,
+                    LastSeenAt = status.LastSeenAt
+                });
+            }
+
+            await base.OnDisconnectedAsync(exception);
+        }
     }
 
-    
+
 
     /*
     Ye method kaise work karega?
