@@ -1,3 +1,5 @@
+
+using System.Text.RegularExpressions;
 using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
@@ -15,7 +17,7 @@ public class ConversationService : IConversationService
         _context = context;
     }
 
-    // Search users by username
+    // Search users by verified mobile number
     public async Task<IReadOnlyList<UserSearchResultDto>> SearchUsersAsync(
         string query,
         Guid currentUserId)
@@ -23,14 +25,17 @@ public class ConversationService : IConversationService
         if (string.IsNullOrWhiteSpace(query))
             return new List<UserSearchResultDto>();
 
-        query = query.Trim();
+        var mobileNumber = query.Trim();
+
+        if (!Regex.IsMatch(mobileNumber, @"^\+[1-9]\d{7,14}$"))
+            throw new ArgumentException(
+                "Enter a valid mobile number in international format.");
 
         return await _context.Users
             .Where(u =>
                 u.Id != currentUserId &&
-                EF.Functions.Like(u.UserName, $"%{query}%"))
-            .OrderBy(u => u.UserName)
-            .Take(20)
+                u.MobileNumber == mobileNumber &&
+                u.IsMobileVerified)
             .Select(u => new UserSearchResultDto
             {
                 Id = u.Id,
@@ -53,7 +58,6 @@ public class ConversationService : IConversationService
         if (receiver == null)
             throw new KeyNotFoundException("User not found.");
 
-        // Find conversation in either participant order
         var conversation = await _context.Conversations
             .FirstOrDefaultAsync(c =>
                 (c.UserAId == currentUserId && c.UserBId == receiverId) ||
@@ -61,7 +65,6 @@ public class ConversationService : IConversationService
 
         if (conversation == null)
         {
-            // Keep participant IDs in a consistent order
             var userAId = currentUserId.CompareTo(receiverId) < 0
                 ? currentUserId
                 : receiverId;
