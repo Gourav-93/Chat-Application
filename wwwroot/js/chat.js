@@ -32,31 +32,132 @@ function displayIdentity(mobileNumber, userName) {
     return "Chat user";
 }
 function userInitial(name) { return (name || "?").trim().charAt(0).toUpperCase(); }
+
+// Get a local date key, e.g. 2026-11-12
+function getLocalDateKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+}
+
+// Format date as Today, Yesterday, or 12 November 2026
+function getDateLabel(date) {
+    const today = new Date();
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const dateKey = getLocalDateKey(date);
+
+    if (dateKey === getLocalDateKey(today)) {
+        return "Today";
+    }
+
+    if (dateKey === getLocalDateKey(yesterday)) {
+        return "Yesterday";
+    }
+
+    return date.toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+    });
+}
+
+// Show date separator whenever the message date changes
+function appendDateSeparator(date, dateKey) {
+    const separator = document.createElement("div");
+    separator.className = "date-separator";
+    separator.dataset.dateKey = dateKey;
+
+    const label = document.createElement("span");
+    label.textContent = getDateLabel(date);
+
+    separator.appendChild(label);
+    messagesEl.appendChild(separator);
+}
+
 function appendMessage(message) {
     const cid = Number(message.conversationId ?? message.ConversationId);
+
     if (activeConversationId && cid !== Number(activeConversationId)) return;
+
     const senderId = String(message.senderId ?? message.SenderId ?? "").toLowerCase();
     const mine = senderId === String(currentUserId).toLowerCase();
+
     const senderName = message.senderName ?? message.SenderName ??
         (mine ? currentUserName : activeOtherUserName) ?? "User";
+
     const text = message.text ?? message.Text ?? "";
     const sentAt = message.sentAt ?? message.SentAt;
+
     const empty = messagesEl.querySelector(".empty");
     if (empty) empty.remove();
+
+    // Convert timestamp into the browser's local time
+    const date = sentAt ? new Date(sentAt) : new Date();
+
+    const validDate = !Number.isNaN(date.getTime());
+    const dateKey = validDate
+        ? getLocalDateKey(date)
+        : "unknown-date";
+
+    // Add separator only when the date changes
+    const previousItem = messagesEl.lastElementChild;
+
+    if (!previousItem || previousItem.dataset.dateKey !== dateKey) {
+        if (validDate) {
+            appendDateSeparator(date, dateKey);
+        }
+    }
+
     const item = document.createElement("div");
     item.className = "message" + (mine ? " own" : "");
-    const sender = document.createElement("div"); sender.className = "sender"; sender.textContent = mine ? "You" : senderName;
-    const bubble = document.createElement("div"); bubble.className = "bubble"; bubble.textContent = text;
-    const time = document.createElement("div"); time.className = "time";
-    time.textContent = sentAt ? new Date(sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Just now";
-    item.append(sender, bubble, time); messagesEl.appendChild(item); messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-function renderHistory(items) {
-    messagesEl.innerHTML = "";
-    if (!items || !items.length) { showEmpty("No messages yet", "Send the first message to get the conversation going."); return; }
-    items.forEach(appendMessage);
+    item.dataset.dateKey = dateKey;
+
+    const sender = document.createElement("div");
+    sender.className = "sender";
+    sender.textContent = mine ? "You" : senderName;
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+
+    const time = document.createElement("div");
+    time.className = "time";
+
+    time.textContent = validDate
+        ? date.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit"
+        })
+        : "Just now";
+
+    item.append(sender, bubble, time);
+    messagesEl.appendChild(item);
+
     messagesEl.scrollTop = messagesEl.scrollHeight;
 }
+
+function renderHistory(items) {
+    messagesEl.innerHTML = "";
+
+    if (!items || !items.length) {
+        showEmpty(
+            "No messages yet",
+            "Send the first message to get the conversation going."
+        );
+        return;
+    }
+
+    // Backend already returns messages in chronological order.
+    items.forEach(appendMessage);
+
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 async function apiRequest(path, options = {}) {
     const response = await fetch(`${apiBase}${path}`, {
         ...options,
@@ -279,7 +380,15 @@ function renderConversationHistory(items) {
         details.append(title, preview);
 
         const meta = document.createElement("small");
-        meta.textContent = lastAt ? new Date(lastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+        if (lastAt) {
+            const lastDate = new Date(lastAt);
+
+            meta.textContent = Number.isNaN(lastDate.getTime())
+                ? ""
+                : getDateLabel(lastDate);
+        } else {
+            meta.textContent = "";
+        }
 
         button.append(avatar, details, meta);
         button.addEventListener("click", () => openConversation(id, name, username || "One-to-one conversation"));
