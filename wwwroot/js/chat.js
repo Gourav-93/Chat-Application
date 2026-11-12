@@ -79,7 +79,12 @@ function appendDateSeparator(date, dateKey) {
     messagesEl.appendChild(separator);
 }
 
+
 function appendMessage(message) {
+    const messageId = message.id ?? message.Id;
+    const deliveredAt = message.deliveredAt ?? message.DeliveredAt;
+    const readAt = message.readAt ?? message.ReadAt;
+
     const cid = Number(message.conversationId ?? message.ConversationId);
 
     if (activeConversationId && cid !== Number(activeConversationId)) return;
@@ -96,25 +101,25 @@ function appendMessage(message) {
     const empty = messagesEl.querySelector(".empty");
     if (empty) empty.remove();
 
-    // Convert timestamp into the browser's local time
     const date = sentAt ? new Date(sentAt) : new Date();
-
     const validDate = !Number.isNaN(date.getTime());
+
     const dateKey = validDate
         ? getLocalDateKey(date)
         : "unknown-date";
 
-    // Add separator only when the date changes
-    const previousItem = messagesEl.lastElementChild;
+    // Find the previous MESSAGE, not the previous element.
+    const previousMessage = messagesEl.querySelector(".message:last-of-type");
+    const previousDateKey = previousMessage?.dataset.dateKey;
 
-    if (!previousItem || previousItem.dataset.dateKey !== dateKey) {
-        if (validDate) {
-            appendDateSeparator(date, dateKey);
-        }
+    // Add a date separator only when the message date changes.
+    if (validDate && previousDateKey !== dateKey) {
+        appendDateSeparator(date, dateKey);
     }
 
     const item = document.createElement("div");
     item.className = "message" + (mine ? " own" : "");
+    item.dataset.messageId = messageId ?? "";
     item.dataset.dateKey = dateKey;
 
     const sender = document.createElement("div");
@@ -135,10 +140,54 @@ function appendMessage(message) {
         })
         : "Just now";
 
-    item.append(sender, bubble, time);
-    messagesEl.appendChild(item);
+    // Show ticks only on our own messages.
+    if (mine) {
+        const tick = document.createElement("span");
+        tick.className = "message-tick";
 
+        if (readAt) {
+            tick.textContent = "✓✓";
+            tick.classList.add("read");
+        } else if (deliveredAt) {
+            tick.textContent = "✓✓";
+        } else {
+            tick.textContent = "✓";
+        }
+
+        time.appendChild(tick);
+    }
+
+    item.append(sender, bubble, time);
+
+    // Append the message exactly once.
+    messagesEl.appendChild(item);
     messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+
+function updateMessageStatus(status) {
+    const messageId = status.messageId ?? status.MessageId;
+    const deliveredAt = status.deliveredAt ?? status.DeliveredAt;
+    const readAt = status.readAt ?? status.ReadAt;
+
+    if (!messageId) return;
+
+    const item = messagesEl.querySelector(
+        `[data-message-id="${messageId}"]`
+    );
+
+    if (!item) return;
+
+    const tick = item.querySelector(".message-tick");
+    if (!tick) return;
+
+    if (readAt) {
+        tick.textContent = "✓✓";
+        tick.classList.add("read");
+    } else if (deliveredAt) {
+        tick.textContent = "✓✓";
+        tick.classList.remove("read");
+    }
 }
 
 function renderHistory(items) {
@@ -288,11 +337,111 @@ async function connectSignalR() {
         .configureLogging(signalR.LogLevel.Warning)
         .build();
 
-    connection.on("ReceiveMessage", message => {
+    connection.on("ReceiveMessage", async message => {
         appendMessage(message);
         loadConversationHistory();
+
+        const messageId = message.messageId ?? message.MessageId ??
+            message.id ?? message.Id;
+
+        const conversationId = Number(
+            message.conversationId ?? message.ConversationId
+        );
+
+        const senderId = String(
+            message.senderId ?? message.SenderId ?? ""
+        ).toLowerCase();
+
+        const isMine = senderId === String(currentUserId).toLowerCase();
+
+        // Only the recipient acknowledges delivery.
+        if (!isMine && messageId) {
+            try {
+                await connection.invoke("MarkDelivered", Number(messageId));
+
+                // If the recipient is currently viewing this conversation,
+                // mark its incoming messages as read too.
+                if (Number(activeConversationId) === conversationId) {
+                    await connection.invoke(
+                        "MarkRead",
+                        conversationId
+                    );
+                }
+            } catch (err) {
+                console.warn("Message acknowledgement failed:", err);
+            }
+        }
     });
+
+
+    // Handle messages received while the user was offline.
+    connection.on("PendingMessages", async messages => {
+        if (!Array.isArray(messages) || messages.length === 0) {
+            return;
+        }
+
+        console.log("Pending messages received:", messages.length);
+
+        for (const message of messages) {
+            const messageId = message.id ?? message.Id;
+
+            const senderId = String(
+                message.senderId ?? message.SenderId ?? ""
+            ).toLowerCase();
+
+            // Only acknowledge messages received from another user.
+            if (
+                !messageId ||
+                senderId === String(currentUserId).toLowerCase()
+            ) {
+                continue;
+            }
+
+            try {
+                // Save delivery status in the backend.
+                await connection.invoke(
+                    "MarkDelivered",
+                    Number(messageId)
+                );
+
+                console.log("Message delivered:", messageId);
+
+            } catch (err) {
+                console.error(
+                    "Pending message acknowledgement failed:",
+                    messageId,
+                    err
+                );
+            }
+        }
+
+        // Refresh conversation sidebar.
+        await loadConversationHistory();
+
+        // Refresh active chat if one is already open.
+        // Do not mark messages as read just because the user reconnected.
+        if (activeConversationId) {
+            try {
+                await connection.invoke(
+                    "GetMessages",
+                    Number(activeConversationId),
+                    1,
+                    50
+                );
+            } catch (err) {
+                console.error("Conversation refresh failed:", err);
+            }
+        }
+    });
+
+    // Receive message status updates from the backend.
+    connection.on("MessageStatusUpdated", status => {
+        updateMessageStatus(status);
+    });
+
+    // Receive conversation message history.
     connection.on("MessageHistory", renderHistory);
+
     connection.on("UserTyping", data => {
         const cid = Number(data.conversationId ?? data.ConversationId);
         const uid = String(data.userId ?? data.UserId ?? "").toLowerCase();
@@ -487,6 +636,11 @@ async function openConversation(receiverId, receiverName, receiverSubtitle = "On
                 Number(activeConversationId),
                 1,
                 50
+            );
+
+            await connection.invoke(
+                "MarkRead",
+                Number(activeConversationId)
             );
         }
     } catch (err) {

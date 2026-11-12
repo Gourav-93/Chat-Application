@@ -121,10 +121,14 @@ public class ChatService : IChatService
                 SenderId = m.SenderId,
                 SenderName = m.Sender.UserName ?? string.Empty,
                 ReceiverId = m.SenderId == conversation.UserAId
-                    ? conversation.UserBId
-                    : conversation.UserAId,
+                       ? conversation.UserBId
+                       : conversation.UserAId,
                 Text = m.Text,
-                SentAt = m.SentAt
+                SentAt = m.SentAt,
+
+                // Important: retrieve persisted message statuses
+                DeliveredAt = m.DeliveredAt,
+                ReadAt = m.ReadAt
             })
             .ToListAsync();
 
@@ -156,6 +160,168 @@ public class ChatService : IChatService
 
         return messages;
     }
+
+
+    public async Task<MessageStatusDto> MarkDeliveredAsync(
+        int messageId,
+        Guid recipientId)
+    {
+        var message = await _context.Messages
+            .Include(m => m.Conversation)
+            .FirstOrDefaultAsync(m => m.Id == messageId);
+
+        if (message == null)
+            throw new KeyNotFoundException("Message not found.");
+
+        var conversation = message.Conversation;
+
+        // Verify that the authenticated user belongs to this conversation.
+        if (conversation.UserAId != recipientId &&
+            conversation.UserBId != recipientId)
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot acknowledge this message.");
+        }
+
+        // Only the actual recipient can acknowledge delivery.
+        if (message.SenderId == recipientId)
+        {
+            throw new UnauthorizedAccessException(
+                "A sender cannot acknowledge their own message.");
+        }
+
+        // Do not overwrite the original delivery timestamp.
+        if (!message.DeliveredAt.HasValue)
+        {
+            message.DeliveredAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
+
+        return new MessageStatusDto
+        {
+            MessageId = message.Id,
+            ConversationId = message.ConversationId,
+            SenderId = message.SenderId,
+            ReceiverId = recipientId,
+            DeliveredAt = DateTime.SpecifyKind(
+                message.DeliveredAt.Value,
+                DateTimeKind.Utc),
+            ReadAt = message.ReadAt.HasValue
+                ? DateTime.SpecifyKind(
+                    message.ReadAt.Value,
+                    DateTimeKind.Utc)
+                : null
+        };
+    }
+
+
+    public async Task<IReadOnlyList<MessageStatusDto>> MarkReadAsync(
+        int conversationId,
+        Guid recipientId)
+    {
+        var conversation = await _context.Conversations
+            .FirstOrDefaultAsync(c => c.Id == conversationId);
+
+        if (conversation == null ||
+            (conversation.UserAId != recipientId &&
+             conversation.UserBId != recipientId))
+        {
+            throw new UnauthorizedAccessException(
+                "You cannot access this conversation.");
+        }
+
+        // Find unread messages sent by the other participant.
+        var unreadMessages = await _context.Messages
+            .Where(m =>
+                m.ConversationId == conversationId &&
+                m.SenderId != recipientId &&
+                m.ReadAt == null)
+            .ToListAsync();
+
+        if (unreadMessages.Count == 0)
+            return Array.Empty<MessageStatusDto>();
+
+        var now = DateTime.UtcNow;
+
+        foreach (var message in unreadMessages)
+        {
+            // Reading a message also means it was delivered.
+            message.DeliveredAt ??= now;
+            message.ReadAt = now;
+        }
+
+        await _context.SaveChangesAsync();
+
+        return unreadMessages.Select(message => new MessageStatusDto
+        {
+            MessageId = message.Id,
+            ConversationId = message.ConversationId,
+            SenderId = message.SenderId,
+            ReceiverId = recipientId,
+            DeliveredAt = DateTime.SpecifyKind(
+                message.DeliveredAt!.Value,
+                DateTimeKind.Utc),
+            ReadAt = DateTime.SpecifyKind(
+                message.ReadAt!.Value,
+                DateTimeKind.Utc)
+        }).ToList();
+    }
+
+
+    public async Task<IReadOnlyList<MessageDto>> GetUndeliveredMessagesAsync(
+        Guid recipientId)
+    {
+        // Find messages that have not yet been delivered to this user.
+        var messages = await _context.Messages
+            .Where(m =>
+                m.DeliveredAt == null &&
+                m.SenderId != recipientId &&
+                (m.Conversation.UserAId == recipientId ||
+                 m.Conversation.UserBId == recipientId))
+            .OrderBy(m => m.SentAt)
+            .ThenBy(m => m.Id)
+            .Select(m => new MessageDto
+            {
+                Id = m.Id,
+                ConversationId = m.ConversationId,
+                SenderId = m.SenderId,
+                SenderName = m.Sender.UserName ?? string.Empty,
+
+                ReceiverId = recipientId,
+
+                Text = m.Text,
+                SentAt = m.SentAt,
+                DeliveredAt = m.DeliveredAt,
+                ReadAt = m.ReadAt
+            })
+            .ToListAsync();
+
+        // SQL Server does not preserve DateTime.Kind.
+        foreach (var message in messages)
+        {
+            message.SentAt = DateTime.SpecifyKind(
+                message.SentAt,
+                DateTimeKind.Utc);
+
+            if (message.DeliveredAt.HasValue)
+            {
+                message.DeliveredAt = DateTime.SpecifyKind(
+                    message.DeliveredAt.Value,
+                    DateTimeKind.Utc);
+            }
+
+            if (message.ReadAt.HasValue)
+            {
+                message.ReadAt = DateTime.SpecifyKind(
+                    message.ReadAt.Value,
+                    DateTimeKind.Utc);
+            }
+        }
+
+        return messages;
+    }
+
+
 
 
     public async Task<Guid> GetOtherParticipantIdAsync(

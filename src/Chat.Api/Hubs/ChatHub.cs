@@ -14,19 +14,17 @@ public partial class ChatHub : Hub
     {
         _chatService = chatService;
     }
+
     public override async Task OnConnectedAsync()
     {
-        // Get the authenticated user's ID
         var userId = Context.UserIdentifier;
-        Console.WriteLine(userId);
 
-        if (string.IsNullOrWhiteSpace(userId))
+        if (!Guid.TryParse(userId, out var recipientId))
         {
             throw new HubException("User identity not found.");
         }
 
-
-        // Add this connection to the user's personal group
+        // Add this connection to the user's group.
         var groupName = $"user-{userId}";
 
         await Groups.AddToGroupAsync(
@@ -34,15 +32,22 @@ public partial class ChatHub : Hub
             groupName
         );
 
-        Console.WriteLine(
-            $"User {userId} connected to group {groupName}"
-        );
-        Console.WriteLine(
-            Context.ConnectionId
-       );
+        // Retrieve messages sent while this user was offline.
+        var pendingMessages =
+            await _chatService.GetUndeliveredMessagesAsync(recipientId);
+
+        // Send pending messages only to this newly connected client.
+        if (pendingMessages.Count > 0)
+        {
+            await Clients.Caller.SendAsync(
+                "PendingMessages",
+                pendingMessages
+            );
+        }
 
         await base.OnConnectedAsync();
     }
+
 
     // public async Task SendMessage(SendMessageDto dto)
     // {
@@ -73,18 +78,37 @@ public partial class ChatHub : Hub
             .SendAsync("ReceiveMessage", message);
     }
 
-    public async Task GetMessages(int conversationId)
+
+    public async Task GetMessages(
+        int conversationId,
+        int pageNumber,
+        int pageSize)
     {
         if (!Guid.TryParse(Context.UserIdentifier, out var userId))
             throw new HubException("User identity not found.");
 
-        var messages = await _chatService.GetMessageAsync(
-            conversationId,
-            userId
-        );
+        try
+        {
+            var messages = await _chatService.GetMessageAsync(
+                conversationId,
+                userId,
+                pageNumber,
+                pageSize
+            );
 
-        await Clients.Caller.SendAsync("MessageHistory", messages);
+            await Clients.Caller.SendAsync("MessageHistory", messages);
+        }
+        catch (ArgumentException)
+        {
+            throw new HubException("Invalid message history request.");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new HubException("Unable to access this conversation.");
+        }
     }
+
+
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         Console.WriteLine(
@@ -124,4 +148,57 @@ public partial class ChatHub : Hub
                 IsTyping = isTyping
             });
     }
+
+
+    public async Task MarkDelivered(int messageId)
+    {
+        if (!Guid.TryParse(Context.UserIdentifier, out var recipientId))
+            throw new HubException("User identity not found.");
+
+        try
+        {
+            var status = await _chatService.MarkDeliveredAsync(
+                messageId,
+                recipientId);
+
+            // Notify the original sender that the message was delivered.
+            await Clients.Group($"user-{status.SenderId}")
+                .SendAsync("MessageStatusUpdated", status);
+        }
+        catch (KeyNotFoundException)
+        {
+            throw new HubException("Message not found.");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new HubException("Unable to acknowledge this message.");
+        }
+    }
+
+
+    public async Task MarkRead(int conversationId)
+    {
+        if (!Guid.TryParse(Context.UserIdentifier, out var recipientId))
+            throw new HubException("User identity not found.");
+
+        try
+        {
+            var statuses = await _chatService.MarkReadAsync(
+                conversationId,
+                recipientId);
+
+            // Notify each original sender about their messages being read.
+            foreach (var status in statuses)
+            {
+                await Clients.Group($"user-{status.SenderId}")
+                    .SendAsync("MessageStatusUpdated", status);
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new HubException("Unable to mark messages as read.");
+        }
+    }
+
+
 }
