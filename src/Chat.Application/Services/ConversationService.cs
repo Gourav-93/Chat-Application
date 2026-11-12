@@ -31,6 +31,7 @@ public class ConversationService : IConversationService
             throw new ArgumentException(
                 "Enter a valid mobile number in international format.");
 
+
         return await _context.Users
             .Where(u =>
                 u.Id != currentUserId &&
@@ -39,9 +40,11 @@ public class ConversationService : IConversationService
             .Select(u => new UserSearchResultDto
             {
                 Id = u.Id,
-                UserName = u.UserName
+                UserName = u.UserName,
+                MobileNumber = u.MobileNumber
             })
             .ToListAsync();
+
     }
 
     // Find existing conversation or create a new one
@@ -89,7 +92,72 @@ public class ConversationService : IConversationService
             ConversationId = conversation.Id,
             OtherUserId = receiver.Id,
             OtherUserName = receiver.UserName,
+            OtherUserMobileNumber = receiver.MobileNumber,
             CreatedAt = conversation.CreatedAt
         };
     }
+
+
+
+    public async Task<IReadOnlyList<ConversationHistoryDto>>
+        GetConversationHistoryAsync(Guid currentUserId)
+    {
+        var conversations = await _context.Conversations
+            .AsNoTracking()
+            .Where(c =>
+                c.UserAId == currentUserId ||
+                c.UserBId == currentUserId)
+            .Select(c => new ConversationHistoryDto
+            {
+                ConversationId = c.Id,
+
+                OtherUserId = c.UserAId == currentUserId
+                    ? c.UserBId
+                    : c.UserAId,
+
+                OtherUserName = c.UserAId == currentUserId
+                    ? c.UserB.UserName
+                    : c.UserA.UserName,
+
+                OtherUserMobileNumber = c.UserAId == currentUserId
+                    ? c.UserB.MobileNumber
+                    : c.UserA.MobileNumber,
+
+                LastMessage = c.Messages
+                    .OrderByDescending(m => m.SentAt)
+                    .ThenByDescending(m => m.Id)
+                    .Select(m => m.Text)
+                    .FirstOrDefault(),
+
+                LastMessageAt = c.Messages
+                    .OrderByDescending(m => m.SentAt)
+                    .ThenByDescending(m => m.Id)
+                    .Select(m => (DateTime?)m.SentAt)
+                    .FirstOrDefault(),
+
+                LastMessageSenderId = c.Messages
+                    .OrderByDescending(m => m.SentAt)
+                    .ThenByDescending(m => m.Id)
+                    .Select(m => (Guid?)m.SenderId)
+                    .FirstOrDefault()
+            })
+            .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
+            .ThenByDescending(c => c.ConversationId)
+            .ToListAsync();
+
+        // SQL Server does not preserve DateTime.Kind.
+        // Our message timestamps are stored in UTC.
+        foreach (var conversation in conversations)
+        {
+            if (conversation.LastMessageAt.HasValue)
+            {
+                conversation.LastMessageAt = DateTime.SpecifyKind(
+                    conversation.LastMessageAt.Value,
+                    DateTimeKind.Utc);
+            }
+        }
+
+        return conversations;
+    }
+    
 }
