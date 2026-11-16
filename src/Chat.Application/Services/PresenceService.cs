@@ -162,7 +162,25 @@ public class PresenceService : IPresenceService
             UserName = user?.UserName ?? string.Empty,
             IsOnline = isOnline,
             ConnectionCount = connectionCount,
-            LastSeenAt = isOnline ? null : user?.LastSeenAt
+            LastSeenAt = isOnline ? null : ConvertToIST(user?.LastSeenAt)
         };
+    }
+    private static DateTime? ConvertToIST(DateTime? utcTime)
+    {
+        if (utcTime == null)
+            return null;
+
+        TimeZoneInfo istZone = TimeZoneInfo.FindSystemTimeZoneById(
+            OperatingSystem.IsWindows()
+                ? "India Standard Time"
+                : "Asia/Kolkata"
+        );
+
+        DateTime utc = DateTime.SpecifyKind(
+            utcTime.Value,
+            DateTimeKind.Utc
+        );
+
+        return TimeZoneInfo.ConvertTimeFromUtc(utc, istZone);
     }
 }
