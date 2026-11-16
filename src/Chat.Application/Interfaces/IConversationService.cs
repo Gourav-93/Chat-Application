@@ -11,4 +11,10 @@ public interface IConversationService
     Task<ConversationDto> GetOrCreateConversationAsync(
         Guid currentUserId,
         Guid receiverId);
+
+    Task<IReadOnlyList<ConversationHistoryDto>> GetConversationHistoryAsync(
+    Guid currentUserId);
+
+    Task<IReadOnlyList<Guid>> GetConversationParticipantIdsAsync(
+    Guid userId);
 }

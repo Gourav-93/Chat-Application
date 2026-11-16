@@ -1,4 +1,6 @@
+
 using Chat.Application.DTOs;
+using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
@@ -8,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Chat.Api.Controllers;
 
@@ -18,20 +21,27 @@ public class AuthController : ControllerBase
     private readonly ChatDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly PasswordHasher<User> _passwordHasher;
+    private readonly IOtpService _otpService;
 
     public AuthController(
         ChatDbContext context,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IOtpService otpService)
     {
         _context = context;
         _configuration = configuration;
+        _otpService = otpService;
         _passwordHasher = new PasswordHasher<User>();
     }
+
+    // ==========================================
+    // 1. USERNAME + PASSWORD LOGIN
+    // POST: api/auth/login
+    // ==========================================
 
     [HttpPost("login")]
     public async Task<IActionResult> Login(LoginRequestDto request)
     {
-        // Find user by username
         var user = await _context.Users
             .FirstOrDefaultAsync(u => u.UserName == request.UserName);
 
@@ -43,7 +53,15 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Verify password hash
+        // OTP-only accounts cannot use password login.
+        if (string.IsNullOrWhiteSpace(user.PasswordHash))
+        {
+            return Unauthorized(new
+            {
+                message = "Invalid username or password."
+            });
+        }
+
         var result = _passwordHasher.VerifyHashedPassword(
             user,
             user.PasswordHash,
@@ -58,7 +76,100 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Generate JWT token
+        return Ok(GenerateLoginResponse(user));
+    }
+
+    // ==========================================
+    // 2. USER REGISTRATION
+    // POST: api/auth/register
+    // ==========================================
+
+    [HttpPost("register")]
+    public async Task<IActionResult> Register(RegisterRequestDto request)
+    {
+        var existingUser = await _context.Users
+            .AnyAsync(u => u.UserName == request.UserName);
+
+        if (existingUser)
+        {
+            return Conflict(new
+            {
+                message = "Username already exists."
+            });
+        }
+
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            UserName = request.UserName.Trim(),
+            LastSeenAt = null
+        };
+
+        user.PasswordHash = _passwordHasher.HashPassword(
+            user,
+            request.Password
+        );
+
+        _context.Users.Add(user);
+
+        await _context.SaveChangesAsync();
+
+        return Created("/api/auth/login", new
+        {
+            message = "Registration successful. Please login.",
+            userId = user.Id,
+            userName = user.UserName
+        });
+    }
+
+    // ==========================================
+    // 3. SEND OTP
+    // POST: api/auth/send-otp
+    // ==========================================
+
+    [EnableRateLimiting("otp-send")]
+    [HttpPost("send-otp")]
+    public async Task<IActionResult> SendOtp(SendOtpRequestDto request)
+    {
+        await _otpService.SendOtpAsync(request);
+
+        return Ok(new
+        {
+            message = "OTP generated successfully. Check backend terminal."
+        });
+    }
+
+    // ==========================================
+    // 4. VERIFY OTP + LOGIN
+    // POST: api/auth/verify-otp
+    // ==========================================
+
+    [EnableRateLimiting("otp-verify")]
+    [HttpPost("verify-otp")]
+    public async Task<IActionResult> VerifyOtp(VerifyOtpRequestDto request)
+    {
+        var userId = await _otpService.VerifyOtpAsync(request);
+
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.Id == userId);
+
+        if (user == null)
+        {
+            return Unauthorized(new
+            {
+                message = "User not found."
+            });
+        }
+
+        return Ok(GenerateLoginResponse(user));
+    }
+
+    // ==========================================
+    // 5. REUSABLE JWT GENERATION
+    // ==========================================
+
+    private LoginResponseDto GenerateLoginResponse(User user)
+    {
         var jwtKey = _configuration["Jwt:Key"]
             ?? throw new InvalidOperationException("JWT Key is missing.");
 
@@ -73,8 +184,14 @@ public class AuthController : ControllerBase
 
         var claims = new[]
         {
-            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new Claim(ClaimTypes.Name, user.UserName)
+            new Claim(
+                ClaimTypes.NameIdentifier,
+                user.Id.ToString()
+            ),
+            new Claim(
+                ClaimTypes.Name,
+                user.UserName
+            )
         };
 
         var key = new SymmetricSecurityKey(
@@ -97,56 +214,13 @@ public class AuthController : ControllerBase
         var tokenString = new JwtSecurityTokenHandler()
             .WriteToken(token);
 
-        // Return login response
-        var response = new LoginResponseDto
+        return new LoginResponseDto
         {
             Token = tokenString,
             UserId = user.Id.ToString(),
             UserName = user.UserName,
+            MobileNumber = user.MobileNumber,
             ExpiresAt = expiresAt
         };
-
-        return Ok(response);
     }
-    [HttpPost("register")]
-public async Task<IActionResult> Register(RegisterRequestDto request)
-{
-    // Check whether username already exists
-    var existingUser = await _context.Users
-        .AnyAsync(u => u.UserName == request.UserName);
-
-    if (existingUser)
-    {
-        return Conflict(new
-        {
-            message = "Username already exists."
-        });
-    }
-
-    // Create new user
-    var user = new User
-    {
-        Id = Guid.NewGuid(),
-        UserName = request.UserName.Trim(),
-        LastSeenAt = null
-    };
-
-    // Hash password before saving
-    user.PasswordHash = _passwordHasher.HashPassword(
-        user,
-        request.Password
-    );
-
-    // Save user in database
-    _context.Users.Add(user);
-
-    await _context.SaveChangesAsync();
-
-    return Created("/api/auth/login", new
-    {
-        message = "Registration successful. Please login.",
-        userId = user.Id,
-        userName = user.UserName
-    });
-}
 }

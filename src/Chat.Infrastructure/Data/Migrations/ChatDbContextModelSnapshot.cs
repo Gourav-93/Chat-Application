@@ -85,14 +85,55 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.ToTable("Messages");
                 });
 
+            modelBuilder.Entity("Chat.Domain.Entities.OtpVerification", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsUsed")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("MobileNumber")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("OtpHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MobileNumber");
+
+                    b.ToTable("OtpVerifications");
+                });
+
             modelBuilder.Entity("Chat.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("IsMobileVerified")
+                        .HasColumnType("bit");
+
                     b.Property<DateTime?>("LastSeenAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("MobileNumber")
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()
@@ -103,6 +144,10 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("MobileNumber")
+                        .IsUnique()
+                        .HasFilter("[MobileNumber] IS NOT NULL");
 
                     b.ToTable("Users");
                 });

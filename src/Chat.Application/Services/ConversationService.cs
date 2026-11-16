@@ -1,3 +1,5 @@
+
+using System.Text.RegularExpressions;
 using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
@@ -15,7 +17,7 @@ public class ConversationService : IConversationService
         _context = context;
     }
 
-    // Search users by username
+    // Search users by verified mobile number
     public async Task<IReadOnlyList<UserSearchResultDto>> SearchUsersAsync(
         string query,
         Guid currentUserId)
@@ -23,20 +25,26 @@ public class ConversationService : IConversationService
         if (string.IsNullOrWhiteSpace(query))
             return new List<UserSearchResultDto>();
 
-        query = query.Trim();
+        var mobileNumber = query.Trim();
+
+        if (!Regex.IsMatch(mobileNumber, @"^\+[1-9]\d{7,14}$"))
+            throw new ArgumentException(
+                "Enter a valid mobile number in international format.");
+
 
         return await _context.Users
             .Where(u =>
                 u.Id != currentUserId &&
-                EF.Functions.Like(u.UserName, $"%{query}%"))
-            .OrderBy(u => u.UserName)
-            .Take(20)
+                u.MobileNumber == mobileNumber &&
+                u.IsMobileVerified)
             .Select(u => new UserSearchResultDto
             {
                 Id = u.Id,
-                UserName = u.UserName
+                UserName = u.UserName,
+                MobileNumber = u.MobileNumber
             })
             .ToListAsync();
+
     }
 
     // Find existing conversation or create a new one
@@ -53,7 +61,6 @@ public class ConversationService : IConversationService
         if (receiver == null)
             throw new KeyNotFoundException("User not found.");
 
-        // Find conversation in either participant order
         var conversation = await _context.Conversations
             .FirstOrDefaultAsync(c =>
                 (c.UserAId == currentUserId && c.UserBId == receiverId) ||
@@ -61,7 +68,6 @@ public class ConversationService : IConversationService
 
         if (conversation == null)
         {
-            // Keep participant IDs in a consistent order
             var userAId = currentUserId.CompareTo(receiverId) < 0
                 ? currentUserId
                 : receiverId;
@@ -86,7 +92,85 @@ public class ConversationService : IConversationService
             ConversationId = conversation.Id,
             OtherUserId = receiver.Id,
             OtherUserName = receiver.UserName,
+            OtherUserMobileNumber = receiver.MobileNumber,
             CreatedAt = conversation.CreatedAt
         };
     }
+
+
+
+    public async Task<IReadOnlyList<ConversationHistoryDto>>
+        GetConversationHistoryAsync(Guid currentUserId)
+    {
+        var conversations = await _context.Conversations
+            .AsNoTracking()
+            .Where(c =>
+                c.UserAId == currentUserId ||
+                c.UserBId == currentUserId)
+            .Select(c => new ConversationHistoryDto
+            {
+                ConversationId = c.Id,
+
+                OtherUserId = c.UserAId == currentUserId
+                    ? c.UserBId
+                    : c.UserAId,
+
+                OtherUserName = c.UserAId == currentUserId
+                    ? c.UserB.UserName
+                    : c.UserA.UserName,
+
+                OtherUserMobileNumber = c.UserAId == currentUserId
+                    ? c.UserB.MobileNumber
+                    : c.UserA.MobileNumber,
+
+                LastMessage = c.Messages
+                    .OrderByDescending(m => m.SentAt)
+                    .ThenByDescending(m => m.Id)
+                    .Select(m => m.Text)
+                    .FirstOrDefault(),
+
+                LastMessageAt = c.Messages
+                    .OrderByDescending(m => m.SentAt)
+                    .ThenByDescending(m => m.Id)
+                    .Select(m => (DateTime?)m.SentAt)
+                    .FirstOrDefault(),
+
+                LastMessageSenderId = c.Messages
+                    .OrderByDescending(m => m.SentAt)
+                    .ThenByDescending(m => m.Id)
+                    .Select(m => (Guid?)m.SenderId)
+                    .FirstOrDefault()
+            })
+            .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
+            .ThenByDescending(c => c.ConversationId)
+            .ToListAsync();
+
+        // SQL Server does not preserve DateTime.Kind.
+        // Our message timestamps are stored in UTC.
+        foreach (var conversation in conversations)
+        {
+            if (conversation.LastMessageAt.HasValue)
+            {
+                conversation.LastMessageAt = DateTime.SpecifyKind(
+                    conversation.LastMessageAt.Value,
+                    DateTimeKind.Utc);
+            }
+        }
+
+        return conversations;
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetConversationParticipantIdsAsync(
+    Guid userId)
+    {
+        return await _context.Conversations
+            .AsNoTracking()
+            .Where(c => c.UserAId == userId || c.UserBId == userId)
+            .Select(c => c.UserAId == userId
+                ? c.UserBId
+                : c.UserAId)
+            .Distinct()
+            .ToListAsync();
+    }
+
 }

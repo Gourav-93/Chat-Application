@@ -1,13 +1,14 @@
 namespace Chat.Application.Interfaces;
+
 public interface IPresenceTracker
 {
-    Task<bool> UserConnected(
-        string userId,
-        string connectionId);
+    Task<bool> UserConnectedAsync(Guid userId, string connectionId);
 
-    Task<bool> UserDisconnected(
-        string userId,
-        string connectionId);
+    Task<bool> UserDisconnectedAsync(Guid userId, string connectionId);
 
-    Task<bool> IsOnline(string userId);
+    Task<bool> IsOnlineAsync(Guid userId);
+
+    Task<int> GetConnectionCountAsync(Guid userId);
+
+    Task<List<Guid>> GetOnlineUsersAsync();
 }

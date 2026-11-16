@@ -1,6 +1,6 @@
-
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -8,6 +8,9 @@ using Chat.Api.Hubs;
 using Chat.Infrastructure.Data;
 using Chat.Application.Services;
 using Chat.Application.Interfaces;
+using Chat.Infrastructure.Services;
+using Chat.Infrastructure.Presence;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,7 +41,13 @@ builder.Services.AddSwaggerGen(options =>
 // SignalR
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
+builder.Services.AddScoped<ISmsSender, DevelopmentSmsSender>();
+builder.Services.AddScoped<IOtpService, OtpService>();
+
+
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
+builder.Services.AddSingleton<IPresenceService, PresenceService>();
 
 // Database connection
 builder.Services.AddDbContext<ChatDbContext>(options =>
@@ -54,6 +63,24 @@ var jwtKey = builder.Configuration["Jwt:Key"]
 var jwtIssuer = builder.Configuration["Jwt:Issuer"];
 var jwtAudience = builder.Configuration["Jwt:Audience"];
 
+var jwtKeyBytes = Encoding.UTF8.GetBytes(jwtKey);
+
+if (jwtKeyBytes.Length < 32)
+{
+    throw new InvalidOperationException(
+        "JWT signing key must contain at least 32 bytes for HS256.");
+}
+
+if (string.IsNullOrWhiteSpace(jwtIssuer))
+{
+    throw new InvalidOperationException("JWT Issuer is missing.");
+}
+
+if (string.IsNullOrWhiteSpace(jwtAudience))
+{
+    throw new InvalidOperationException("JWT Audience is missing.");
+}
+
 // JWT Authentication
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -66,12 +93,19 @@ builder.Services
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
 
+            RequireExpirationTime = true,
+
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtAudience,
 
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtKey)
-            )
+            IssuerSigningKey = new SymmetricSecurityKey(jwtKeyBytes),
+
+            ValidAlgorithms = new[]
+    {
+        SecurityAlgorithms.HmacSha256
+    },
+
+            ClockSkew = TimeSpan.FromSeconds(30)
         };
 
         // SignalR JWT token support
@@ -95,6 +129,33 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("otp-send", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 3,
+                Window = TimeSpan.FromMinutes(15),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    options.AddPolicy("otp-verify", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(5),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+});
+
 var app = builder.Build();
 
 //test
@@ -114,6 +175,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseRouting();
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -8,5 +8,7 @@ public class LoginResponseDto
 
     public string UserName { get; set; } = string.Empty;
 
+    public string? MobileNumber { get; set; }
+
     public DateTime ExpiresAt { get; set; }
 }
