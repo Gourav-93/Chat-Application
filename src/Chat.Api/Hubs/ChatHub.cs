@@ -9,40 +9,62 @@ namespace Chat.Api.Hubs;
 public partial class ChatHub : Hub
 {
     private readonly IChatService _chatService;
+    private readonly IPresenceService _presenceService;
+    private readonly IConversationService _conversationService;
 
-    public ChatHub(IChatService chatService)
+    public ChatHub(
+        IChatService chatService,
+        IPresenceService presenceService,
+        IConversationService conversationService)
     {
         _chatService = chatService;
+        _presenceService = presenceService;
+        _conversationService = conversationService;
     }
-
     public override async Task OnConnectedAsync()
     {
         var userId = Context.UserIdentifier;
 
-        if (!Guid.TryParse(userId, out var recipientId))
-        {
+        if (!Guid.TryParse(userId, out var currentUserId))
             throw new HubException("User identity not found.");
-        }
 
-        // Add this connection to the user's group.
-        var groupName = $"user-{userId}";
-
+        // Add connection to the authenticated user's group.
         await Groups.AddToGroupAsync(
             Context.ConnectionId,
-            groupName
-        );
+            $"user-{userId}");
 
-        // Retrieve messages sent while this user was offline.
+        // Register this SignalR connection.
+        bool isFirstConnection = await _presenceService.UserConnectedAsync(
+            currentUserId,
+            Context.ConnectionId);
+
+        // Notify conversation partners only when the user comes online.
+        if (isFirstConnection)
+        {
+            var participantIds =
+                await _conversationService.GetConversationParticipantIdsAsync(
+                    currentUserId);
+
+            foreach (var participantId in participantIds)
+            {
+                await Clients.Group($"user-{participantId}")
+                    .SendAsync("UserOnline", new
+                    {
+                        UserId = currentUserId,
+                        IsOnline = true
+                    });
+            }
+        }
+
+        // Preserve your existing offline-message synchronization.
         var pendingMessages =
-            await _chatService.GetUndeliveredMessagesAsync(recipientId);
+            await _chatService.GetUndeliveredMessagesAsync(currentUserId);
 
-        // Send pending messages only to this newly connected client.
         if (pendingMessages.Count > 0)
         {
             await Clients.Caller.SendAsync(
                 "PendingMessages",
-                pendingMessages
-            );
+                pendingMessages);
         }
 
         await base.OnConnectedAsync();
@@ -109,16 +131,46 @@ public partial class ChatHub : Hub
     }
 
 
+
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        Console.WriteLine(
-            $"Connection disconnected: {Context.ConnectionId}"
-        );
+        if (Guid.TryParse(Context.UserIdentifier, out var userId))
+        {
+            Console.WriteLine(
+                $"Connection disconnected: {Context.ConnectionId}");
+
+            // Remove this connection and wait for the grace period.
+            bool isOffline = await _presenceService.UserDisconnectedAsync(
+                userId,
+                Context.ConnectionId);
+
+            // Notify conversation partners only if the user is truly offline.
+            if (isOffline)
+            {
+                var status = await _presenceService.GetUserStatusAsync(userId);
+
+                var participantIds =
+                    await _conversationService.GetConversationParticipantIdsAsync(
+                        userId);
+
+                foreach (var participantId in participantIds)
+                {
+                    await Clients.Group($"user-{participantId}")
+                        .SendAsync("UserOffline", new
+                        {
+                            UserId = userId,
+                            IsOnline = false,
+                            LastSeenAt = status.LastSeenAt
+                        });
+                }
+            }
+        }
 
         await base.OnDisconnectedAsync(exception);
     }
 
-    
+
+
 
     /*
     Ye method kaise work karega?
@@ -198,6 +250,25 @@ public partial class ChatHub : Hub
         {
             throw new HubException("Unable to mark messages as read.");
         }
+    }
+
+    public async Task<UserStatusDto> GetUserStatus(Guid targetUserId)
+    {
+        if (!Guid.TryParse(Context.UserIdentifier, out var currentUserId))
+            throw new HubException("User identity not found.");
+
+        if (targetUserId == Guid.Empty || targetUserId == currentUserId)
+            throw new HubException("Invalid user.");
+
+        // Verify that both users share a conversation.
+        var participantIds =
+            await _conversationService.GetConversationParticipantIdsAsync(
+                currentUserId);
+
+        if (!participantIds.Contains(targetUserId))
+            throw new HubException("Unable to access this user's presence.");
+
+        return await _presenceService.GetUserStatusAsync(targetUserId);
     }
 
 

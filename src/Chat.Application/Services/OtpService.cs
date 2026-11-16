@@ -48,6 +48,20 @@ public class OtpService : IOtpService
     {
         var mobileNumber = NormalizeMobileNumber(request.MobileNumber);
 
+        var now = DateTime.UtcNow;
+        var windowStart = now.AddMinutes(-15);
+
+        var recentOtpCount = await _context.OtpVerifications
+            .CountAsync(o =>
+                o.MobileNumber == mobileNumber &&
+                o.CreatedAt >= windowStart);
+
+        if (recentOtpCount >= 3)
+        {
+            throw new InvalidOperationException(
+                "Too many OTP requests. Try again after 15 minutes.");
+        }
+
         var latestOtp = await _context.OtpVerifications
             .Where(o => o.MobileNumber == mobileNumber)
             .OrderByDescending(o => o.CreatedAt)
@@ -95,6 +109,20 @@ public class OtpService : IOtpService
     public async Task<Guid> VerifyOtpAsync(VerifyOtpRequestDto request)
     {
         var mobileNumber = NormalizeMobileNumber(request.MobileNumber);
+
+        var windowStart = DateTime.UtcNow.AddMinutes(-15);
+
+        var recentFailedAttempts = await _context.OtpVerifications
+            .Where(o =>
+                o.MobileNumber == mobileNumber &&
+                o.CreatedAt >= windowStart)
+            .SumAsync(o => o.Attempts);
+
+        if (recentFailedAttempts >= MaxAttempts)
+        {
+            throw new InvalidOperationException(
+                "Too many incorrect OTP attempts. Try again later.");
+        }
 
         if (string.IsNullOrWhiteSpace(request.Otp) ||
             !Regex.IsMatch(request.Otp, @"^\d{6}$"))

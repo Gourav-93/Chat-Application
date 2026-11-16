@@ -84,4 +84,19 @@ public class ConversationsController : ControllerBase
             return NotFound(ex.Message);
         }
     }
+
+    [HttpGet]
+    public async Task<IActionResult> GetConversationHistory()
+    {
+        var userIdClaim =
+            User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (!Guid.TryParse(userIdClaim, out var currentUserId))
+            return Unauthorized();
+
+        var conversations =
+            await _conversationService.GetConversationHistoryAsync(currentUserId);
+
+        return Ok(conversations);
+    }
 }

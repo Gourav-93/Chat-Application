@@ -159,5 +159,18 @@ public class ConversationService : IConversationService
 
         return conversations;
     }
-    
+
+    public async Task<IReadOnlyList<Guid>> GetConversationParticipantIdsAsync(
+    Guid userId)
+    {
+        return await _context.Conversations
+            .AsNoTracking()
+            .Where(c => c.UserAId == userId || c.UserBId == userId)
+            .Select(c => c.UserAId == userId
+                ? c.UserBId
+                : c.UserAId)
+            .Distinct()
+            .ToListAsync();
+    }
+
 }

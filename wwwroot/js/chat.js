@@ -15,6 +15,19 @@ const loginView = $("loginView"), chatView = $("chatView");
 const messagesEl = $("messages"), messageInput = $("messageInput");
 const sendBtn = $("sendBtn"), typingEl = $("typingIndicator");
 
+function formatDateTime(utcDate) {
+    if (!utcDate) return "Never";
+
+    return new Date(utcDate).toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true
+    });
+}
 function setConnectionStatus(value, online = false) {
     $("connectionStatus").textContent = value;
     $("connectionStatus").classList.toggle("online", online);
@@ -448,6 +461,24 @@ async function connectSignalR() {
         if (cid !== Number(activeConversationId) || uid === String(currentUserId).toLowerCase()) return;
         typingEl.textContent = (data.isTyping ?? data.IsTyping) ? `${activeOtherUserName || "The other user"} is typing…` : "";
     });
+
+    connection.on("UserOnline", data => {
+        const userId = String(data.userId ?? data.UserId ?? "").toLowerCase();
+
+        if (userId !== String(activeOtherUserId).toLowerCase()) return;
+
+        updatePresenceUI(true);
+    });
+
+    connection.on("UserOffline", data => {
+        const userId = String(data.userId ?? data.UserId ?? "").toLowerCase();
+
+        if (userId !== String(activeOtherUserId).toLowerCase()) return;
+
+        const lastSeenAt = data.lastSeenAt ?? data.LastSeenAt;
+        updatePresenceUI(false, lastSeenAt);
+    });
+
     connection.onreconnecting(() => setConnectionStatus("Reconnecting…"));
     connection.onreconnected(() => {
         setConnectionStatus("Connected", true);
@@ -490,6 +521,32 @@ $("userSearch").addEventListener("input", () => {
 
     searchTimer = setTimeout(() => searchUsers(query), 350);
 });
+
+function updatePresenceUI(isOnline, lastSeenAt = null) {
+    const subtitle = $("chatSubtitle");
+
+    if (!subtitle) return;
+
+    if (isOnline) {
+        subtitle.textContent = "Online";
+        return;
+    }
+
+    if (!lastSeenAt) {
+        subtitle.textContent = "Offline";
+        return;
+    }
+
+    const date = new Date(lastSeenAt);
+    console.log("Last seen at:", lastSeenAt, "Parsed date:", date);
+
+    if (Number.isNaN(date.getTime())) {
+        subtitle.textContent = "Offline";
+        return;
+    }
+
+    subtitle.textContent = `Last seen ${formatDateTime(lastSeenAt)}`;
+}
 
 function renderConversationHistory(items) {
     const container = $("conversationHistory");
@@ -618,6 +675,7 @@ async function openConversation(receiverId, receiverName, receiverSubtitle = "On
         $("chatAvatar").textContent = userInitial(receiverName);
         activeOtherUserId = receiverId; activeOtherUserName = receiverName;
         activeConversationId = null; typingEl.textContent = "";
+
         messageInput.disabled = true; messageInput.placeholder = "Opening conversation…"; sendBtn.disabled = true;
         showEmpty("Opening conversation…", "Preparing your secure chat.");
         const conversation = await apiRequest("/api/conversations", { method: "POST", body: JSON.stringify({ receiverId }) });
@@ -627,6 +685,23 @@ async function openConversation(receiverId, receiverName, receiverSubtitle = "On
         $("chatName").textContent = activeOtherUserName;
         $("chatAvatar").textContent = userInitial(activeOtherUserName);
         activeConversationId = conversation.conversationId ?? conversation.ConversationId;
+
+        if (connection && connection.state === signalR.HubConnectionState.Connected) {
+            try {
+                const status = await connection.invoke(
+                    "GetUserStatus",
+                    receiverId
+                );
+
+                updatePresenceUI(
+                    status.isOnline ?? status.IsOnline,
+                    status.lastSeenAt ?? status.LastSeenAt
+                );
+            } catch (error) {
+                console.error("Could not fetch user presence:", error);
+                $("chatSubtitle").textContent = "One-to-one conversation";
+            }
+        }
         if (!activeConversationId) throw new Error("Conversation response did not include conversationId.");
         await loadConversationHistory();
         messageInput.disabled = false; messageInput.placeholder = "Type your message…"; sendBtn.disabled = false;

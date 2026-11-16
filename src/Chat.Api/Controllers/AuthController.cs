@@ -10,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Chat.Api.Controllers;
 
@@ -45,6 +46,15 @@ public class AuthController : ControllerBase
             .FirstOrDefaultAsync(u => u.UserName == request.UserName);
 
         if (user == null)
+        {
+            return Unauthorized(new
+            {
+                message = "Invalid username or password."
+            });
+        }
+
+        // OTP-only accounts cannot use password login.
+        if (string.IsNullOrWhiteSpace(user.PasswordHash))
         {
             return Unauthorized(new
             {
@@ -117,6 +127,7 @@ public class AuthController : ControllerBase
     // POST: api/auth/send-otp
     // ==========================================
 
+    [EnableRateLimiting("otp-send")]
     [HttpPost("send-otp")]
     public async Task<IActionResult> SendOtp(SendOtpRequestDto request)
     {
@@ -133,6 +144,7 @@ public class AuthController : ControllerBase
     // POST: api/auth/verify-otp
     // ==========================================
 
+    [EnableRateLimiting("otp-verify")]
     [HttpPost("verify-otp")]
     public async Task<IActionResult> VerifyOtp(VerifyOtpRequestDto request)
     {
@@ -207,6 +219,7 @@ public class AuthController : ControllerBase
             Token = tokenString,
             UserId = user.Id.ToString(),
             UserName = user.UserName,
+            MobileNumber = user.MobileNumber,
             ExpiresAt = expiresAt
         };
     }
