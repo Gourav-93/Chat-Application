@@ -1,9 +1,9 @@
 
 using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
+using Chat.Application.Services;
 using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -20,7 +20,6 @@ public class AuthController : ControllerBase
 {
     private readonly ChatDbContext _context;
     private readonly IConfiguration _configuration;
-    private readonly PasswordHasher<User> _passwordHasher;
     private readonly IOtpService _otpService;
 
     public AuthController(
@@ -31,101 +30,7 @@ public class AuthController : ControllerBase
         _context = context;
         _configuration = configuration;
         _otpService = otpService;
-        _passwordHasher = new PasswordHasher<User>();
     }
-
-    // ==========================================
-    // 1. USERNAME + PASSWORD LOGIN
-    // POST: api/auth/login
-    // ==========================================
-
-    [HttpPost("login")]
-    public async Task<IActionResult> Login(LoginRequestDto request)
-    {
-        var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.UserName == request.UserName);
-
-        if (user == null)
-        {
-            return Unauthorized(new
-            {
-                message = "Invalid username or password."
-            });
-        }
-
-        // OTP-only accounts cannot use password login.
-        if (string.IsNullOrWhiteSpace(user.PasswordHash))
-        {
-            return Unauthorized(new
-            {
-                message = "Invalid username or password."
-            });
-        }
-
-        var result = _passwordHasher.VerifyHashedPassword(
-            user,
-            user.PasswordHash,
-            request.Password
-        );
-
-        if (result == PasswordVerificationResult.Failed)
-        {
-            return Unauthorized(new
-            {
-                message = "Invalid username or password."
-            });
-        }
-
-        return Ok(GenerateLoginResponse(user));
-    }
-
-    // ==========================================
-    // 2. USER REGISTRATION
-    // POST: api/auth/register
-    // ==========================================
-
-    [HttpPost("register")]
-    public async Task<IActionResult> Register(RegisterRequestDto request)
-    {
-        var existingUser = await _context.Users
-            .AnyAsync(u => u.UserName == request.UserName);
-
-        if (existingUser)
-        {
-            return Conflict(new
-            {
-                message = "Username already exists."
-            });
-        }
-
-        var user = new User
-        {
-            Id = Guid.NewGuid(),
-            UserName = request.UserName.Trim(),
-            LastSeenAt = null
-        };
-
-        user.PasswordHash = _passwordHasher.HashPassword(
-            user,
-            request.Password
-        );
-
-        _context.Users.Add(user);
-
-        await _context.SaveChangesAsync();
-
-        return Created("/api/auth/login", new
-        {
-            message = "Registration successful. Please login.",
-            userId = user.Id,
-            userName = user.UserName
-        });
-    }
-
-    // ==========================================
-    // 3. SEND OTP
-    // POST: api/auth/send-otp
-    // ==========================================
 
     [EnableRateLimiting("otp-send")]
     [HttpPost("send-otp")]
@@ -148,10 +53,30 @@ public class AuthController : ControllerBase
     [HttpPost("verify-otp")]
     public async Task<IActionResult> VerifyOtp(VerifyOtpRequestDto request)
     {
-        var userId = await _otpService.VerifyOtpAsync(request);
+        OtpVerificationResult result;
+        try
+        {
+            result = await _otpService.VerifyOtpAsync(request);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (AuthFlowException ex)
+        {
+            return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
+
+        if (result.UserId == null)
+            return Ok(new
+            {
+                status = "profileRequired",
+                registrationToken = result.RegistrationToken,
+                registrationExpiresAt = result.RegistrationExpiresAt
+            });
 
         var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.Id == userId);
+            .FirstOrDefaultAsync(u => u.Id == result.UserId);
 
         if (user == null)
         {
@@ -161,7 +86,26 @@ public class AuthController : ControllerBase
             });
         }
 
-        return Ok(GenerateLoginResponse(user));
+        return Ok(new { status = "signedIn", login = GenerateLoginResponse(user) });
+    }
+
+    [HttpPost("complete-profile")]
+    public async Task<IActionResult> CompleteProfile(CompleteProfileRequestDto request)
+    {
+        try
+        {
+            var userId = await _otpService.CompleteProfileAsync(request);
+            var user = await _context.Users.SingleAsync(u => u.Id == userId);
+            return Ok(GenerateLoginResponse(user));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (AuthFlowException ex)
+        {
+            return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
     }
 
     // ==========================================
