@@ -1,0 +1,141 @@
+/**
+ * File: ProfileMenu.jsx
+ * Purpose: Provides the signed-in user's profile dropdown.
+ * Responsibilities:
+ * 1. Display a generic user avatar and the authenticated mobile number.
+ * 2. Invoke the existing authentication logout action.
+ * 3. Support themes, responsive sizing, and accessible dismissal.
+ */
+
+import { useContext, useEffect, useId, useRef, useState } from "react";
+import { LogOut, UserRound } from "lucide-react";
+import { AuthContext } from "../../../app/AuthContext";
+import { ThemeContext } from "../../../app/ThemeContext";
+
+export default function ProfileMenu() {
+  const auth = useContext(AuthContext);
+  const theme = useContext(ThemeContext);
+  const isDark = theme?.isDark ?? true;
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+  const triggerRef = useRef(null);
+  const logoutRef = useRef(null);
+  const panelId = useId();
+  const nameId = useId();
+
+  const mobileNumber =
+    typeof auth?.user?.mobileNumber === "string"
+      ? auth.user.mobileNumber.trim()
+      : "";
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    // Focus the action while keeping normal Tab navigation available.
+    logoutRef.current?.focus();
+
+    const handlePointerDown = (event) => {
+      if (!containerRef.current?.contains(event.target)) {
+        setIsOpen(false);
+        // Restore focus if the outside target does not receive focus itself.
+        if (containerRef.current?.contains(document.activeElement)) {
+          triggerRef.current?.focus();
+        }
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const handleBlur = (event) => {
+    // Leaving the entire control by keyboard dismisses the dropdown.
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setIsOpen(false);
+    }
+  };
+
+  return (
+    <div ref={containerRef} onBlur={handleBlur} className="relative shrink-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label="Your profile"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? panelId : undefined}
+        onClick={() => setIsOpen((current) => !current)}
+        className={
+          "flex size-11 items-center justify-center rounded-full border text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 " +
+          (isDark
+            ? "border-blue-400/30 bg-blue-600/20 text-blue-200 hover:bg-blue-600/30"
+            : "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100")
+        }
+      >
+        <UserRound size={22} aria-hidden="true" />
+      </button>
+
+      {isOpen && (
+        <section
+          id={panelId}
+          aria-labelledby={nameId}
+          className={
+            "absolute right-0 top-full z-30 mt-3 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border shadow-xl " +
+            (isDark
+              ? "border-[#293854] bg-[#111d31] text-white shadow-black/30"
+              : "border-slate-200 bg-white text-slate-900 shadow-slate-900/10")
+          }
+        >
+          <div
+            className={
+              "border-b px-4 py-4 " +
+              (isDark ? "border-[#293854]" : "border-slate-200")
+            }
+          >
+            <p className={
+              "mb-1 text-xs " +
+              (isDark ? "text-slate-400" : "text-slate-500")
+            }>
+              Signed in as
+            </p>
+            <h2 id={nameId} className="break-words text-sm font-semibold">
+              {mobileNumber || "Mobile number unavailable"}
+            </h2>
+          </div>
+
+          <div className="p-2">
+            <button
+              ref={logoutRef}
+              type="button"
+              disabled={typeof auth?.logout !== "function"}
+              onClick={() => {
+                setIsOpen(false);
+                auth?.logout?.();
+              }}
+              className={
+                "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-50 " +
+                (isDark
+                  ? "text-red-300 hover:bg-red-500/10"
+                  : "text-red-600 hover:bg-red-50")
+              }
+            >
+              <LogOut size={18} aria-hidden="true" />
+              Logout
+            </button>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
