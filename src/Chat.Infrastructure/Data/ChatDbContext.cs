@@ -14,6 +14,7 @@ public class ChatDbContext : DbContext
     public DbSet<User> Users { get; set; } // DataBase me User table 
     public DbSet<Conversation> Conversations { get; set; } // DataBase me Conversation table
     public DbSet<Message> Messages { get; set; } // DataBase me Message table
+    public DbSet<OtpVerification> OtpVerifications { get; set; } // DataBase me OtpVerification table
 
 
     // Configure the relationships and constraints between entities
@@ -57,5 +58,13 @@ public class ChatDbContext : DbContext
         modelBuilder.Entity<Conversation>()
             .HasIndex(c => new { c.UserAId, c.UserBId })
             .IsUnique();
+
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.MobileNumber)
+            .IsUnique()
+            .HasFilter("[MobileNumber] IS NOT NULL");
+
+        modelBuilder.Entity<OtpVerification>()
+            .HasIndex(o => o.MobileNumber);
     }
 }

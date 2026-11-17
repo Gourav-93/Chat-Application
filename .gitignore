@@ -11,5 +11,3 @@ obj/
 *.log
 
 appsettings.json
-
-node_modules
