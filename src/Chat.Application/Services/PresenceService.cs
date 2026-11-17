@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-=======
 
->>>>>>> d0a56987a63aad8da38052ae7e533af71cd362f7
 using System.Collections.Concurrent;
 using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
@@ -19,18 +16,12 @@ public class PresenceService : IPresenceService
         _pendingDisconnects = new();
 
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _locks = new();
-<<<<<<< HEAD
-    private readonly TimeSpan _gracePeriod = TimeSpan.FromSeconds(5);
-
-    public PresenceService( IPresenceTracker tracker, IServiceScopeFactory scopeFactory)
-=======
 
     private readonly TimeSpan _gracePeriod = TimeSpan.FromSeconds(5);
 
     public PresenceService(
         IPresenceTracker tracker,
         IServiceScopeFactory scopeFactory)
->>>>>>> d0a56987a63aad8da38052ae7e533af71cd362f7
     {
         _tracker = tracker;
         _scopeFactory = scopeFactory;
@@ -53,10 +44,6 @@ public class PresenceService : IPresenceService
             bool isFirstConnection =
                 await _tracker.UserConnectedAsync(userId, connectionId);
 
-<<<<<<< HEAD
-            // Don't broadcast UserOnline again during a page refresh.
-=======
->>>>>>> d0a56987a63aad8da38052ae7e533af71cd362f7
             return isFirstConnection && !isReconnecting;
         }
         finally
@@ -128,10 +115,6 @@ public class PresenceService : IPresenceService
         }
         catch (OperationCanceledException)
         {
-<<<<<<< HEAD
-            // The user reconnected during the five-second grace period.
-=======
->>>>>>> d0a56987a63aad8da38052ae7e533af71cd362f7
             return false;
         }
         finally
@@ -153,18 +136,11 @@ public class PresenceService : IPresenceService
             }
         }
     }
-<<<<<<< HEAD
-=======
 
->>>>>>> d0a56987a63aad8da38052ae7e533af71cd362f7
     public async Task<UserStatusDto> GetUserStatusAsync(Guid userId)
     {
         bool isOnline = await _tracker.IsOnlineAsync(userId);
 
-<<<<<<< HEAD
-        // During the refresh grace period, the user is still considered online.
-=======
->>>>>>> d0a56987a63aad8da38052ae7e533af71cd362f7
         if (!isOnline && _pendingDisconnects.ContainsKey(userId))
             isOnline = true;
 
@@ -186,12 +162,6 @@ public class PresenceService : IPresenceService
             UserName = user?.UserName ?? string.Empty,
             IsOnline = isOnline,
             ConnectionCount = connectionCount,
-<<<<<<< HEAD
-            LastSeenAt = isOnline ? null : user?.LastSeenAt
-        };
-    }
-}
-=======
             LastSeenAt = isOnline ? null : ConvertToIST(user?.LastSeenAt)
         };
     }
@@ -214,4 +184,3 @@ public class PresenceService : IPresenceService
         return TimeZoneInfo.ConvertTimeFromUtc(utc, istZone);
     }
 }
->>>>>>> d0a56987a63aad8da38052ae7e533af71cd362f7

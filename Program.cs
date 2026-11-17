@@ -8,6 +8,9 @@ using Chat.Api.Hubs;
 using Chat.Infrastructure.Data;
 using Chat.Application.Services;
 using Chat.Application.Interfaces;
+using Chat.Infrastructure.Services;
+using Chat.Infrastructure.Presence;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,6 +41,10 @@ builder.Services.AddSwaggerGen(options =>
 // SignalR
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
+builder.Services.AddScoped<ISmsSender, DevelopmentSmsSender>();
+builder.Services.AddScoped<IOtpService, OtpService>();
+
+
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
 builder.Services.AddSingleton<IPresenceService, PresenceService>();

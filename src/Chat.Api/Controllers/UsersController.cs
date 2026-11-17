@@ -11,12 +11,10 @@ namespace Chat.Api.Controllers;
 public class UsersController : ControllerBase
 {
     private readonly IConversationService _conversationService;
-    private readonly IPresenceService _presenceService;
 
-    public UsersController(IConversationService conversationService, IPresenceService presenceService)
+    public UsersController(IConversationService conversationService)
     {
         _conversationService = conversationService;
-        _presenceService = presenceService;
     }
 
     [HttpGet("search")]
@@ -36,13 +34,5 @@ public class UsersController : ControllerBase
         );
 
         return Ok(users);
-    }
-
-    [HttpGet("{id:guid}/status")]
-    public async Task<IActionResult> GetUserStatus(Guid id)
-    {
-        var status = await _presenceService.GetUserStatusAsync(id);
-
-        return Ok(status);
     }
 }
