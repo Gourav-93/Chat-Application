@@ -83,8 +83,8 @@ public class OtpService : IOtpService
 
         if (recentOtpCount >= MaxSendRequests)
         {
-            throw new InvalidOperationException(
-                "Too many OTP requests. Try again after 15 minutes.");
+            throw new AuthFlowException(
+            "Too many OTP requests. Try again later.", 429);
         }
 
         var latestOtp = await _context.OtpVerifications
@@ -95,8 +95,8 @@ public class OtpService : IOtpService
         if (latestOtp != null &&
             DateTime.UtcNow < latestOtp.CreatedAt.AddSeconds(ResendCooldownSeconds))
         {
-            throw new InvalidOperationException(
-                "Please wait before requesting another OTP.");
+            throw new AuthFlowException(
+    "Please wait before requesting another OTP.", 429);
         }
 
         var otp = RandomNumberGenerator.GetInt32(100000, 1000000)
