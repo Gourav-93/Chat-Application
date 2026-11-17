@@ -36,12 +36,25 @@ public class AuthController : ControllerBase
     [HttpPost("send-otp")]
     public async Task<IActionResult> SendOtp(SendOtpRequestDto request)
     {
-        await _otpService.SendOtpAsync(request);
-
-        return Ok(new
+        try
         {
-            message = "OTP generated successfully. Check backend terminal."
-        });
+            await _otpService.SendOtpAsync(request);
+
+            return Ok(new
+            {
+                message = "OTP generated successfully. Check backend terminal."
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (AuthFlowException ex)
+        {
+            return StatusCode(
+                ex.StatusCode,
+                new { message = ex.Message });
+        }
     }
 
     // ==========================================
