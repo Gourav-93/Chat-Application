@@ -30,7 +30,24 @@
             </div>
             <div class="error" id="loginError" role="alert"></div>
         </form>
-        <p class="hint">Sign in using your mobile number and one-time password. Your JWT stays in memory for this page session.</p>
+        <p class="hint">Sign in with your mobile number and OTP. New users choose a name after verification.</p>
+    </section>
+
+    <section class="auth-card hidden" id="profileView">
+        <div class="logo">ChatFlow.</div>
+        <h1>Complete your profile</h1>
+        <p class="sub">Your mobile is verified. Choose your name to start chatting.</p>
+        <form id="profileForm">
+            <div class="field">
+                <label for="userName">NAME</label>
+                <input id="userName" name="userName" type="text" autocomplete="nickname"
+                       required maxlength="100" placeholder="Enter your name">
+            </div>
+            <button class="primary wide" id="completeProfileBtn" type="submit">Complete registration</button>
+            <div class="error" id="profileError" role="alert"></div>
+        </form>
+        <button class="logout" id="restartRegistrationBtn" type="button">Verify mobile again</button>
+        <p class="hint">This test client keeps your pending registration in sessionStorage for up to 10 minutes.</p>
     </section>
 
     <div class="app hidden" id="chatView">

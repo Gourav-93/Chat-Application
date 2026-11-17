@@ -4,9 +4,7 @@ public class User
 {
     public Guid Id { get; set; } // Primary key
 
-    public string UserName { get; set; } = string.Empty; // Unique username for the user
-
-    public string PasswordHash { get; set; } = string.Empty; // Hashed password for authentication
+    public string UserName { get; set; } = string.Empty; // Display name; mobile number identifies the account
 
     public DateTime? LastSeenAt { get; set; } // Timestamp of the last time the user was seen online
 

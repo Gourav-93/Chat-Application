@@ -71,18 +71,6 @@ public partial class ChatHub : Hub
     }
 
 
-    // public async Task SendMessage(SendMessageDto dto)
-    // {
-    //     if (!Guid.TryParse(Context.UserIdentifier, out var senderId))
-    //         throw new HubException("User identity not found.");
-
-    //     var message = await _chatService.SendMessageAsync(dto, senderId);
-
-    //     await Clients.Group($"user-{message.ReceiverId}")
-    //         .SendAsync("ReceiveMessage", message);
-    // }
-
-
     public async Task SendMessage(SendMessageDto dto)
     {
         if (!Guid.TryParse(Context.UserIdentifier, out var senderId))

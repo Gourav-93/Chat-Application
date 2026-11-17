@@ -15,6 +15,7 @@ public class ChatDbContext : DbContext
     public DbSet<Conversation> Conversations { get; set; } // DataBase me Conversation table
     public DbSet<Message> Messages { get; set; } // DataBase me Message table
     public DbSet<OtpVerification> OtpVerifications { get; set; } // DataBase me OtpVerification table
+    public DbSet<PendingRegistration> PendingRegistrations { get; set; }
 
 
     // Configure the relationships and constraints between entities
@@ -66,5 +67,12 @@ public class ChatDbContext : DbContext
 
         modelBuilder.Entity<OtpVerification>()
             .HasIndex(o => o.MobileNumber);
+
+        modelBuilder.Entity<PendingRegistration>(entity =>
+        {
+            entity.Property(p => p.MobileNumber).HasMaxLength(16);
+            entity.Property(p => p.TokenHash).HasMaxLength(64);
+            entity.HasIndex(p => p.MobileNumber).IsUnique();
+        });
     }
 }
