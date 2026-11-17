@@ -18,9 +18,12 @@ public class OtpService : IOtpService
     private readonly ISmsSender _smsSender;
     private readonly byte[] _hashingKey;
 
-    private const int OtpExpiryMinutes = 5;
+    private readonly int OtpExpiryMinutes;
+    private readonly int ResendCooldownSeconds;
+    private readonly int MaxSendRequests;
+    private readonly int SendWindowMinutes;
+
     private const int MaxAttempts = 5;
-    private const int ResendCooldownSeconds = 60;
 
     public OtpService(
         ChatDbContext context,
@@ -29,6 +32,27 @@ public class OtpService : IOtpService
     {
         _context = context;
         _smsSender = smsSender;
+
+        OtpExpiryMinutes =
+            configuration.GetValue<int>("Otp:ExpiryMinutes", 5);
+
+        ResendCooldownSeconds =
+            configuration.GetValue<int>("Otp:ResendCooldownSeconds", 60);
+
+        MaxSendRequests =
+            configuration.GetValue<int>("Otp:MaxSendRequests", 3);
+
+        SendWindowMinutes =
+            configuration.GetValue<int>("Otp:SendWindowMinutes", 15);
+
+        if (OtpExpiryMinutes <= 0 ||
+            ResendCooldownSeconds <= 0 ||
+            MaxSendRequests <= 0 ||
+            SendWindowMinutes <= 0)
+        {
+            throw new InvalidOperationException(
+                "OTP configuration values must be greater than zero.");
+        }
 
         var secret = configuration["Otp:HashingKey"];
 
@@ -50,14 +74,14 @@ public class OtpService : IOtpService
         var mobileNumber = NormalizeMobileNumber(request.MobileNumber);
 
         var now = DateTime.UtcNow;
-        var windowStart = now.AddMinutes(-15);
+        var windowStart = now.AddMinutes(-SendWindowMinutes);
 
         var recentOtpCount = await _context.OtpVerifications
             .CountAsync(o =>
                 o.MobileNumber == mobileNumber &&
                 o.CreatedAt >= windowStart);
 
-        if (recentOtpCount >= 3)
+        if (recentOtpCount >= MaxSendRequests)
         {
             throw new AuthFlowException(
             "Too many OTP requests. Try again later.", 429);

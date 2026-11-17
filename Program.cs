@@ -129,6 +129,19 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+var otpIpSendPermitLimit =
+    builder.Configuration.GetValue<int>("Otp:IpSendPermitLimit", 3);
+
+var otpIpSendWindowMinutes =
+    builder.Configuration.GetValue<int>("Otp:IpSendWindowMinutes", 15);
+
+if (otpIpSendPermitLimit <= 0 ||
+    otpIpSendWindowMinutes <= 0)
+{
+    throw new InvalidOperationException(
+        "OTP IP rate limit settings must be greater than zero.");
+}
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -138,8 +151,8 @@ builder.Services.AddRateLimiter(options =>
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 3,
-                Window = TimeSpan.FromMinutes(15),
+                PermitLimit = otpIpSendPermitLimit,
+                Window = TimeSpan.FromMinutes(otpIpSendWindowMinutes),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
