@@ -123,8 +123,16 @@ public class OtpService : IOtpService
             await transaction.CommitAsync();
         }
 
-        // Database lock release hone ke baad delivery.
-        await _smsSender.SendOtpAsync(mobileNumber, otp);
+        try
+        {   // Database lock release hone ke baad delivery.
+            await _smsSender.SendOtpAsync(mobileNumber, otp);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new AuthFlowException(
+                "Unable to send OTP right now. Please try again later.",
+                503);
+        }
     }
 
     // ==========================================
