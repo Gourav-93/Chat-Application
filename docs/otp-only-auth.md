@@ -106,7 +106,7 @@ To run the test UI with local configuration, from project root:
 
 Open http://localhost:5261/index.html and hard-refresh. Sign out/use a fresh browser profile if an existing login hides the initial form.
 
-## Manual verification and profile completion results
+## Manual OTP sign-in and profile completion results
 
 These are user-reported local API results on `stabilization/v1`.
 
@@ -115,8 +115,11 @@ These are user-reported local API results on `stabilization/v1`.
 | Verify a valid OTP for a fresh mobile | HTTP 200 with `profileRequired`, a registration token, and a future registration expiry | HTTP 200 with `profileRequired`, a non-empty `registrationToken`, and a future `registrationExpiresAt` | Passed |
 | Complete the profile with the issued registration token | HTTP 200 with a login JWT, account ID, submitted name, verified mobile, and future login expiry | HTTP 200 with non-empty `token` and `userId`, `userName` equal to `Sandesh Test`, the verified mobile, and a future `expiresAt` | Passed |
 | Replay the same registration token after completion | HTTP 409 Conflict | HTTP 409 | Passed |
+| Sign in with a fresh OTP for the registered mobile | HTTP 200 with `signedIn`, the same user ID and name as profile completion, and a non-empty login JWT | HTTP 200 with `signedIn`, matching `login.userId` and `login.userName`, and a non-empty `login.token` | Passed |
+| Resubmit the same OTP after successful sign-in | HTTP 400 with `OTP not found or already used.` and no new login JWT | User confirmed the expected rejection | Passed |
+| Submit one wrong OTP, then retry with the original correct OTP | HTTP 400 with `Incorrect OTP.` for the wrong OTP. `Attempts` increases by one on the same row, `IsUsed` stays false, and the correct OTP returns HTTP 200 with `signedIn` | Baseline `Attempts = 0` and `IsUsed = false`. The wrong OTP returned HTTP 400 with `Incorrect OTP.` The same row then had `Attempts = 1` and `IsUsed = false`. The correct OTP returned HTTP 200 with `signedIn` | Passed |
 
-These checks confirm the reported HTTP results. Direct database checks, JWT use against protected endpoints, credential expiry, concurrent completion, and frontend handling were outside this manual run. The automated harness was not run for these results.
+These results cover the reported HTTP responses and the OTP-row check for the wrong attempt. JWT use against protected endpoints, credential expiry, concurrent completion, and frontend handling were outside this manual run. The automated harness was not run for these results.
 
 ## Proposed PR description (not submitted)
 
