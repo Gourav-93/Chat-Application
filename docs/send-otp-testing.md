@@ -15,8 +15,9 @@ Environment: Local Development
 | Request after development cooldown | HTTP 200 | Passed |
 | IP request limit configured as zero | Application startup rejected | Passed |
 | Two concurrent requests for same mobile | One HTTP 200, one cooldown HTTP 429, one OTP printed | Passed |
-| Simulated SMS sender failure after commit | HTTP 500, new OTP record remained in database | Passed |
+| Simulated SMS sender failure after commit | HTTP 503, message: "Unable to send OTP right now. Please try again later." OTP record remained in the database. | Passed |
 | Original sender restored | HTTP 200, OTP printed normally | Passed |
+| Simulated error after SaveChangesAsync, before commit | HTTP 500; record count remained 0. After removing the error, a successful request increased count to 1. | Passed |
 
 ## Current behavior
 
