@@ -1,8 +1,8 @@
 /**
  * File: ConversationList.jsx
- * Purpose: Displays searchable conversation summaries with mobile-number titles.
+ * Purpose: Displays searchable conversation summaries with username-first titles.
  * Responsibilities:
- * 1. Render accessible selectable rows with generic avatars, mobile numbers, and last-message details.
+ * 1. Render selectable rows with generic avatars, username-first titles, and last-message details.
  * 2. Filter loaded conversations locally by username or mobile number.
  * 3. Distinguish loading, retryable errors, empty lists, and no search matches.
  * 4. Keep list scrolling independent of the dashboard header and search input.
@@ -14,6 +14,7 @@ import { LoaderCircle, MessageCircleMore, Search, UserRound, X } from "lucide-re
 import { ThemeContext } from "../../../app/ThemeContext";
 import { AuthContext } from "../../../app/AuthContext";
 import useConversations from "../Hooks/useConversations";
+import { getDisplayName } from "../../../shared/lib/displayIdentity";
 
 function formatTimestamp(value) {
   if (!value) return null;
@@ -43,7 +44,8 @@ export default function ConversationList({
   const auth = useContext(AuthContext);
   const userId = auth?.isAuthenticated ? auth.user?.userId : null;
   const isDark = theme?.isDark ?? true;
-  const { conversations, isLoading, error, retry } = useConversations(refreshKey);
+  const { conversations, isLoading, isRefreshing, snapshotReady, error, refreshError, retry } =
+    useConversations(refreshKey);
   const [query, setQuery] = useState("");
   const searchId = useId();
   const listId = useId();
@@ -54,7 +56,7 @@ export default function ConversationList({
   useEffect(() => {
     // The hook reports loading until an authenticated response has settled.
     // Errors and local search results must never be reported as list snapshots.
-    if (!userId || isLoading || error ||
+    if (!userId || !snapshotReady ||
         typeof onConversationsLoaded !== "function") return;
 
     const signature = JSON.stringify(conversations);
@@ -66,7 +68,7 @@ export default function ConversationList({
     // A refresh must notify even if an existing conversation produced identical data.
     lastNotifiedRef.current = { userId, signature, refreshKey };
     onConversationsLoaded(conversations, refreshKey);
-  }, [userId, isLoading, error, conversations, onConversationsLoaded, refreshKey]);
+  }, [userId, snapshotReady, conversations, onConversationsLoaded, refreshKey]);
 
   useEffect(() => {
     if (!focusRequest) return;
@@ -131,8 +133,7 @@ export default function ConversationList({
     content = (
       <ul aria-label="Conversations" className="px-2 pb-3">
         {filtered.map((conversation) => {
-          const mobile = conversation.otherUserMobileNumber?.trim() || "";
-          const displayName = mobile || "Sandesh user";
+          const displayName = getDisplayName(conversation.otherUserName, conversation.otherUserMobileNumber);
           const timestamp = formatTimestamp(conversation.lastMessageAt);
           return (
             <li
@@ -210,11 +211,21 @@ export default function ConversationList({
           )}
         </div>
       </div>
+      {isRefreshing && <p role="status" className={"px-4 pb-2 text-xs " + muted}>Updating conversations...</p>}
+      {refreshError && (
+        <div className="px-4 pb-3 text-xs">
+          <p role="alert" className={isDark ? "text-red-300" : "text-red-600"}>{refreshError}</p>
+          <button type="button" onClick={retry}
+            className="mt-2 min-h-11 rounded px-3 text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">
+            Retry refresh
+          </button>
+        </div>
+      )}
       <div
         id={listId}
         role="region"
         aria-label="Conversation results"
-        aria-busy={isLoading}
+        aria-busy={isLoading || isRefreshing}
         tabIndex={0}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500"
       >

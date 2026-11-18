@@ -1,6 +1,6 @@
 /**
  * File: NewChatDialog.jsx
- * Purpose: Finds a verified mobile number and creates or reuses a conversation.
+ * Purpose: Finds verified users by mobile, displays their names, and creates or reuses chats.
  * Responsibilities: Provide an accessible themed dialog, validate international
  * numbers, cancel stale requests, and return the selected conversation to the page.
  */
@@ -9,6 +9,7 @@ import { useContext, useEffect, useId, useRef, useState } from "react";
 import { LoaderCircle, Search, UserRound, X } from "lucide-react";
 import { AuthContext } from "../../../app/AuthContext";
 import { ThemeContext } from "../../../app/ThemeContext";
+import { getDisplayName } from "../../../shared/lib/displayIdentity";
 import {
   getNewChatErrorMessage,
   getOrCreateConversation,
@@ -198,12 +199,19 @@ export default function NewChatDialog({ onClose, onStarted }) {
               <div className="flex min-w-0 items-center gap-3">
                 <span aria-hidden="true" className={"flex size-11 shrink-0 items-center justify-center rounded-full " +
                   (isDark ? "bg-blue-600/20 text-blue-200" : "bg-blue-50 text-blue-700")}><UserRound size={22} /></span>
-                <p className="min-w-0 flex-1 truncate text-sm font-semibold" title={user.mobileNumber || ""}>
-                  {user.mobileNumber || "Mobile number unavailable"}
-                </p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold" title={getDisplayName(user.userName, user.mobileNumber)}>
+                    {getDisplayName(user.userName, user.mobileNumber)}
+                  </p>
+                  {user.mobileNumber && (
+                    <p className={"mt-1 truncate text-xs " + muted} title={user.mobileNumber}>
+                      {user.mobileNumber}
+                    </p>
+                  )}
+                </div>
               </div>
               <button type="button" onClick={() => handleStart(user)} disabled={creating !== null || searching}
-                aria-label={"Start chat with " + (user.mobileNumber || "this user")}
+                aria-label={"Start chat with " + getDisplayName(user.userName, user.mobileNumber)}
                 className="mt-3 min-h-11 w-full rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-wait disabled:opacity-60">
                 {creating === user.id ? "Opening chat..." : "Start Chat"}
               </button>

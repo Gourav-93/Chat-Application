@@ -6,7 +6,7 @@
  *
  * Responsibilities:
  * 1. Display the Sandesh branding and login interface.
- * 2. Switch between mobile login and OTP verification.
+ * 2. Coordinate mobile login, OTP verification, and first-time profile completion.
  * 3. Maintain a two-column desktop layout.
  * 4. Allow the page to expand when validation errors appear.
  * 5. Preserve the existing backend authentication flow.
@@ -17,26 +17,38 @@ import { MessageCircleMore } from "lucide-react";
 
 import MobileNumberForm from "../Components/MobileNumberForm";
 import OtpVerificationForm from "../Components/OtpVerificationForm";
+import CompleteProfileForm from "../Components/CompleteProfileForm";
 
 export default function LoginPage({ onLoginSuccess }) {
   const [step, setStep] = useState("mobile");
+  const [registration, setRegistration] = useState(null);
   const [mobileNumber, setMobileNumber] = useState("");
 
   // Switch to OTP verification after a successful OTP request.
   const handleOtpSent = (number) => {
+    setRegistration(null);
     setMobileNumber(number);
     setStep("otp");
   };
 
   // Allow the user to return to mobile number entry.
   const handleChangeNumber = () => {
+    setRegistration(null);
     setMobileNumber("");
     setStep("mobile");
   };
 
-  // Forward the verified login response to the parent.
-  const handleVerified = (authData) => {
-    onLoginSuccess?.(authData);
+  // Pending registration is kept in memory and cannot open the dashboard.
+  const handleVerified = (response) => {
+    if (response.status === "profileRequired") {
+      setRegistration({
+        token: response.registrationToken,
+        expiresAt: response.registrationExpiresAt,
+      });
+      setStep("profile");
+      return;
+    }
+    onLoginSuccess?.(response.login);
   };
 
   return (
@@ -84,6 +96,12 @@ export default function LoginPage({ onLoginSuccess }) {
           <div className="w-full rounded-[28px] border border-[#293854] bg-[#111d31] p-5 shadow-2xl shadow-black/20 sm:p-7">
             {step === "mobile" ? (
               <MobileNumberForm onOtpSent={handleOtpSent} />
+            ) : step === "profile" ? (
+              <CompleteProfileForm
+                registration={registration}
+                onCompleted={onLoginSuccess}
+                onRestart={handleChangeNumber}
+              />
             ) : (
               <OtpVerificationForm
                 mobileNumber={mobileNumber}

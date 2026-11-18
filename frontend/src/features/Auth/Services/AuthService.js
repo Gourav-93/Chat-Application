@@ -7,7 +7,7 @@
  *
  * Responsibilities:
  * 1. Send an OTP to the provided mobile number.
- * 2. Verify the OTP and receive the authenticated user's data.
+ * 2. Verify OTPs and complete first-time profiles before authentication.
  * 3. Keep API communication separate from UI components.
  */
 
@@ -17,6 +17,7 @@ import api from "../../../shared/lib/api";
 const AUTH_ENDPOINTS = {
   SEND_OTP: "/auth/send-otp",
   VERIFY_OTP: "/auth/verify-otp",
+  COMPLETE_PROFILE: "/auth/complete-profile",
 };
 
 /**
@@ -38,7 +39,7 @@ export const sendOtp = async (mobileNumber) => {
  *
  * @param {string} mobileNumber - User's mobile number.
  * @param {string} otp - Six-digit verification code.
- * @returns {Promise<object>} JWT token and user details.
+ * @returns {Promise<object>} Signed-in login data or a pending registration.
  */
 export const verifyOtp = async (mobileNumber, otp) => {
   const response = await api.post(AUTH_ENDPOINTS.VERIFY_OTP, {
@@ -46,7 +47,65 @@ export const verifyOtp = async (mobileNumber, otp) => {
     otp: otp.trim(),
   });
 
-  return response.data;
+  const data = response.data;
+  if (data?.status === "signedIn") {
+    return { status: "signedIn", login: validateLoginResponse(data.login) };
+  }
+  if (
+    data?.status === "profileRequired" &&
+    typeof data.registrationToken === "string" &&
+    data.registrationToken.trim() &&
+    typeof data.registrationExpiresAt === "string" &&
+    Number.isFinite(Date.parse(data.registrationExpiresAt))
+  ) {
+    return data;
+  }
+  throw invalidAuthResponse();
+};
+
+// Match .NET String.Trim whitespace and UTF-16 length without restricting names.
+const PROFILE_WHITESPACE = new Set([
+  0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680,
+  0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006,
+  0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+]);
+
+export const normalizeProfileName = (value) => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && PROFILE_WHITESPACE.has(value.charCodeAt(start))) start++;
+  while (end > start && PROFILE_WHITESPACE.has(value.charCodeAt(end - 1))) end--;
+  return value.slice(start, end);
+};
+
+function invalidAuthResponse() {
+  const error = new Error("The server returned an invalid sign-in response. Please try again.");
+  error.code = "INVALID_AUTH_RESPONSE";
+  return error;
+}
+
+function validateLoginResponse(data) {
+  if (
+    typeof data?.token !== "string" || !data.token.trim() ||
+    typeof data.userId !== "string" || !data.userId.trim() ||
+    typeof data.userName !== "string" ||
+    (data.mobileNumber != null && typeof data.mobileNumber !== "string") ||
+    typeof data.expiresAt !== "string" ||
+    !Number.isFinite(Date.parse(data.expiresAt)) ||
+    Date.parse(data.expiresAt) <= Date.now()
+  ) {
+    throw invalidAuthResponse();
+  }
+  return data;
+}
+
+// Registration credentials are used only for this endpoint, never as JWTs.
+export const completeProfile = async (registrationToken, userName, signal) => {
+  const response = await api.post(AUTH_ENDPOINTS.COMPLETE_PROFILE, {
+    registrationToken,
+    userName: normalizeProfileName(userName),
+  }, { signal });
+  return validateLoginResponse(response.data);
 };
 
 /**
@@ -58,6 +117,12 @@ export const verifyOtp = async (mobileNumber, otp) => {
  */
 export const getAuthErrorMessage = (error) => {
   const data = error?.response?.data;
+
+  // Server failures must never be presented as an incorrect OTP or name.
+  if (error?.response?.status >= 500) {
+    return "The server could not complete your request. Please try again.";
+  }
+  if (error?.code === "INVALID_AUTH_RESPONSE") return error.message;
 
   // Prefer the message provided by the backend.
   if (typeof data?.message === "string" && data.message.trim()) {
@@ -80,10 +145,6 @@ export const getAuthErrorMessage = (error) => {
 
   if (error.response.status === 429) {
     return "Too many requests. Please try again later.";
-  }
-
-  if (error.response.status >= 500) {
-    return "Invalid OTP. Please try again.";
   }
 
   return "Request failed. Please check your details and try again.";

@@ -1,7 +1,7 @@
 /**
- * Purpose: Owns the dashboard's lazy authenticated SignalR connection.
+ * Purpose: Owns the dashboard session's shared authenticated messaging connection.
  * Responsibilities: Serialize history requests, isolate session transport from
- * request cancellation, and await startup settlement plus complete transport stop.
+ * request cancellation, await complete transport stop, and offer best-effort typing.
  */
 import {
   HubConnectionBuilder, HubConnectionState, LogLevel,
@@ -21,7 +21,20 @@ async function awaitLatestCleanup() {
   }
 }
 
-export function createMessageHistoryService(token, expiresAt) {
+// Keep confirmed receipt timestamps when older/null payloads arrive later.
+export function mergeMessageReceipts(previous, incoming) {
+  const confirmed = (value) => typeof value === "string" && Number.isFinite(Date.parse(value));
+  const pick = (first, second) => {
+    if (!confirmed(first)) return confirmed(second) ? second : null;
+    return confirmed(second) && Date.parse(second) < Date.parse(first) ? second : first;
+  };
+  return {
+    deliveredAt: pick(previous?.deliveredAt, incoming?.deliveredAt),
+    readAt: pick(previous?.readAt, incoming?.readAt),
+  };
+}
+
+export function createMessageHistoryService(token, expiresAt, { onMessages, onState, onReceipt, onPresence, onTyping } = {}) {
   if (typeof token !== "string" || !token.trim() ||
       !Number.isFinite(expiresAt)) {
     throw new Error("Invalid authenticated history session.");
@@ -33,6 +46,19 @@ export function createMessageHistoryService(token, expiresAt) {
   let starting = null;
   let activeOperation = null;
   let queue = Promise.resolve();
+  let foregroundWork = 0;
+
+  const publishState = (status, error = "") => {
+    if (!disposed) onState?.({ status, error });
+  };
+  const validMessage = (message) => message &&
+    Number.isInteger(message.id) && message.id > 0 &&
+    Number.isInteger(message.conversationId) && message.conversationId > 0 &&
+    typeof message.senderId === "string" && message.senderId.length > 0 &&
+    typeof message.receiverId === "string" && message.receiverId.length > 0 &&
+    typeof message.text === "string" &&
+    typeof message.sentAt === "string" &&
+    Number.isFinite(Date.parse(message.sentAt));
 
   function checkSession() {
     if (disposed) throw new Error("History session was closed.");
@@ -48,6 +74,13 @@ export function createMessageHistoryService(token, expiresAt) {
 
     record.retired = true;
     record.connection.off("MessageHistory", record.handler);
+    record.connection.off("ReceiveMessage", record.receiveHandler);
+    record.connection.off("PendingMessages", record.pendingHandler);
+    record.connection.off("MessageStatusUpdated", record.receiptHandler);
+    record.connection.off("UserOnline", record.onlineHandler);
+    record.connection.off("UserOffline", record.offlineHandler);
+    record.connection.off("UserTyping", record.typingHandler);
+    record.typingIntent = null;
     record.pending?.reject(reason);
     record.pending = null;
 
@@ -77,6 +110,7 @@ export function createMessageHistoryService(token, expiresAt) {
   function invalidateConnection(reason) {
     // Also invalidates startup that has not created a transport yet.
     generation++;
+    publishState("disconnected", reason.message);
     const record = current;
     current = null;
     return stopRecord(record, reason);
@@ -91,6 +125,7 @@ export function createMessageHistoryService(token, expiresAt) {
     }
     if (starting?.generation === generation) return starting.promise;
 
+    publishState("connecting");
     const startGeneration = generation;
     const task = (async () => {
       await awaitLatestCleanup();
@@ -133,6 +168,8 @@ export function createMessageHistoryService(token, expiresAt) {
         handler: null,
         startSettled,
         stopTask: null,
+        typingIntent: null,
+        typingInFlight: false,
       };
 
       record.handler = (messages) => {
@@ -155,12 +192,60 @@ export function createMessageHistoryService(token, expiresAt) {
           Number.isFinite(Date.parse(message.sentAt)),
         );
 
-        if (valid) pending.resolve(messages);
+        if (valid) {
+          // Persist known history receipts in the same session cache as live events.
+          for (const message of messages) onReceipt?.({ ...message, messageId: message.id });
+          pending.resolve(messages);
+        }
         else pending.reject(new Error(
           "The server returned an unexpected message history response.",
         ));
       };
 
+      // PendingMessages can arrive before start() resolves: subscribe first.
+      const receive = (messages) => {
+        if (disposed || record.retired || current !== record ||
+            record.generation !== generation) return;
+        if (!Array.isArray(messages) || !messages.every(validMessage)) {
+          publishState("connected", "An unexpected message update was ignored. Reload history to check messages.");
+          return;
+        }
+        onMessages?.(messages);
+      };
+      record.receiveHandler = (message) => receive([message]);
+      record.pendingHandler = receive;
+      record.presenceVersions = new Map();
+      const liveRecord = () => !disposed && !record.retired &&
+        current === record && record.generation === generation;
+      record.receiptHandler = (status) => {
+        if (!liveRecord() || !status ||
+            !Number.isInteger(status.messageId) || status.messageId < 1 ||
+            !Number.isInteger(status.conversationId) || status.conversationId < 1 ||
+            typeof status.senderId !== "string" || typeof status.receiverId !== "string") return;
+        onReceipt?.(status);
+      };
+      const presence = (data, isOnline) => {
+        if (!liveRecord() || !data || typeof data.userId !== "string" ||
+            data.isOnline !== isOnline) return;
+        const id = data.userId.toLowerCase();
+        record.presenceVersions.set(id, (record.presenceVersions.get(id) || 0) + 1);
+        onPresence?.({ ...data, isOnline });
+      };
+      record.onlineHandler = (data) => presence(data, true);
+      record.offlineHandler = (data) => presence(data, false);
+      record.typingHandler = (data) => {
+        if (!liveRecord() || !data ||
+            !Number.isInteger(data.conversationId) || data.conversationId < 1 ||
+            typeof data.userId !== "string" || !data.userId.trim() ||
+            typeof data.isTyping !== "boolean") return;
+        onTyping?.({ conversationId: data.conversationId, userId: data.userId, isTyping: data.isTyping });
+      };
+      connection.on("UserTyping", record.typingHandler);
+      connection.on("MessageStatusUpdated", record.receiptHandler);
+      connection.on("UserOnline", record.onlineHandler);
+      connection.on("UserOffline", record.offlineHandler);
+      connection.on("ReceiveMessage", record.receiveHandler);
+      connection.on("PendingMessages", record.pendingHandler);
       connection.on("MessageHistory", record.handler);
       connection.onclose(() => {
         // SignalR has no public offclose API; retired callbacks remain inert.
@@ -184,6 +269,7 @@ export function createMessageHistoryService(token, expiresAt) {
             startGeneration !== generation) {
           throw new Error("History connection startup was superseded.");
         }
+        publishState("connected");
         return record;
       } catch {
         // Covers a synchronous start() throw as well as asynchronous failure.
@@ -195,6 +281,7 @@ export function createMessageHistoryService(token, expiresAt) {
         } else {
           void stopRecord(record, new Error("History transport was retired."));
         }
+        publishState("disconnected", "Unable to connect to chat. Check your connection or sign in again.");
         throw new Error(
           "Unable to connect to chat. Check your connection or sign in again.",
         );
@@ -305,13 +392,187 @@ export function createMessageHistoryService(token, expiresAt) {
     }
   }
 
+  function typingTransportReady(record) {
+    return Boolean(record && !disposed && !record.retired && current === record &&
+      record.generation === generation && Date.now() < expiresAt &&
+      record.connection.state === HubConnectionState.Connected);
+  }
+
+  function typingIntentCurrent(intent) {
+    try {
+      return Boolean(intent && Date.now() < intent.deadline && intent.isCurrent());
+    } catch {
+      // A caller's obsolete guard must never break messaging.
+      return false;
+    }
+  }
+
+  function flushTyping(record) {
+    // Ephemeral typing never enters or holds the history/receipt queue.
+    if (!typingTransportReady(record) || foregroundWork > 0 || record.typingInFlight) return;
+    const intent = record.typingIntent;
+    record.typingIntent = null;
+    if (!typingIntentCurrent(intent)) return;
+    record.typingInFlight = true;
+    const work = Promise.resolve().then(() => {
+      // Foreground work can arrive between scheduling and this microtask.
+      if (!typingTransportReady(record) || !typingIntentCurrent(intent)) return;
+      if (foregroundWork > 0) {
+        if (!record.typingIntent) record.typingIntent = intent;
+        return;
+      }
+      return record.connection.invoke("Typing", intent.conversationId, intent.isTyping);
+    });
+    const settled = () => {
+      record.typingInFlight = false;
+      // Failures are observed and dropped: no automatic retry or connection stop.
+      flushTyping(record);
+    };
+    work.then(settled, settled);
+  }
+
+  function finishForegroundWork() {
+    foregroundWork--;
+    flushTyping(current);
+  }
+
+  // New activity commands share the existing history queue. Their timers start
+  // only after dequeue, so acknowledgement backlog cannot consume a history timeout.
+  // Capture the transport at enqueue time; never retarget stale work after reconnect.
+  function command(method, args, isCurrent = () => true) {
+    const record = current;
+    foregroundWork++;
+    const request = queue.then(() => executeCommand(record, method, args, isCurrent));
+    queue = request.catch(() => undefined);
+    return request.finally(finishForegroundWork);
+  }
+
+  async function executeCommand(record, method, args, isCurrent) {
+    checkSession();
+    if (!isCurrent()) throw new Error("Chat activity request was superseded.");
+    if (!record || record !== current || record.retired ||
+        record.connection.state !== HubConnectionState.Connected) {
+      throw new Error("Chat is disconnected.");
+    }
+    let timer;
+    let timedOut = false;
+    try {
+      const invocation = Promise.resolve().then(() => {
+        checkSession();
+        if (record.retired || current !== record || !isCurrent()) {
+          throw new Error("Chat activity request was superseded.");
+        }
+        return record.connection.invoke(method, ...args);
+      });
+      const result = await Promise.race([invocation, new Promise((_, reject) => {
+        timer = window.setTimeout(() => {
+          timedOut = true;
+          const error = new Error("Chat update timed out.");
+          if (current === record) void invalidateConnection(error);
+          reject(error);
+        }, REQUEST_TIMEOUT);
+      })]);
+      checkSession();
+      if (record.retired || current !== record || !isCurrent()) {
+        throw new Error("Chat activity request was superseded.");
+      }
+      return { record, result };
+    } catch (error) {
+      // Do not release the queue while a timed-out transport is still stopping.
+      // Invocation rejection is observed by Promise.race even if it settles later.
+      if (timedOut) await awaitLatestCleanup();
+      throw new Error("Unable to update chat activity. Please try again.", { cause: error });
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
   return {
+    // Returns acceptance only, never a delivery promise. The caller handles
+    // 800ms refresh/1100ms inactivity; this layer only keeps one latest intent.
+    setTyping(conversationId, isTyping, isCurrent = () => true) {
+      const record = current;
+      if (!Number.isInteger(conversationId) || conversationId < 1 ||
+          typeof isTyping !== "boolean" || typeof isCurrent !== "function" ||
+          !typingTransportReady(record)) return false;
+      record.typingIntent = {
+        conversationId, isTyping, isCurrent,
+        deadline: Date.now() + (isTyping ? 1100 : 3000),
+      };
+      flushTyping(record);
+      return true;
+    },
+    markDelivered: (id) => command("MarkDelivered", [id]),
+    markRead: (id, isCurrent) => command("MarkRead", [id], isCurrent),
+    async getUserStatus(userId, isCurrent = () => true) {
+      const record = current;
+      const id = userId.toLowerCase();
+      const version = record?.presenceVersions.get(id) || 0;
+      const response = await command("GetUserStatus", [userId], isCurrent);
+      const status = response.result;
+      // A newer push event wins over a late presence snapshot.
+      if (!isCurrent() || response.record !== record || (record.presenceVersions.get(id) || 0) !== version) return;
+      if (status && typeof status.userId === "string" &&
+          status.userId.toLowerCase() === id && typeof status.isOnline === "boolean") {
+        onPresence?.(status);
+      } else {
+        throw new Error("The server returned an unexpected presence response.");
+      }
+    },
+    // Manual start/retry only; no automatic reconnect or uncertain-send retry.
+    start: connect,
+
+    async send(conversationId, value) {
+      checkSession();
+      const text = value.trim();
+      if (!Number.isInteger(conversationId) || conversationId < 1 ||
+          !text || text.length > 5000) {
+        throw new Error("Enter a message containing 1 to 5,000 characters.");
+      }
+      const record = current;
+      if (!record || record.retired ||
+          record.connection.state !== HubConnectionState.Connected) {
+        throw new Error("Chat is disconnected. Connect before sending.");
+      }
+      foregroundWork++;
+      let timer;
+      const invocation = Promise.resolve().then(() => {
+        checkSession();
+        if (record.retired || current !== record) {
+          throw new Error("Chat connection changed before sending.");
+        }
+        return record.connection.invoke("SendMessage", { conversationId, text });
+      });
+      const timeout = new Promise((_, reject) => {
+        timer = window.setTimeout(() => {
+          const error = new Error("Sending timed out.");
+          if (current === record) void invalidateConnection(error);
+          reject(error);
+        }, REQUEST_TIMEOUT);
+      });
+      try {
+        await Promise.race([invocation, timeout]);
+        checkSession();
+        if (record.retired || current !== record) throw new Error("Connection changed.");
+      } catch (error) {
+        // Saving can precede a lost response. Never resend automatically.
+        throw new Error(
+          "Send could not be confirmed. Your draft is kept. Check message history before sending it again.",
+          { cause: error },
+        );
+      } finally {
+        window.clearTimeout(timer);
+        finishForegroundWork();
+      }
+    },
+
     request(conversationId, page, pageSize, isCurrent) {
+      foregroundWork++;
       const request = queue.then(() =>
         execute(conversationId, page, pageSize, isCurrent),
       );
       queue = request.catch(() => undefined);
-      return request;
+      return request.finally(finishForegroundWork);
     },
 
     dispose() {

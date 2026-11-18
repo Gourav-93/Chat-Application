@@ -1,166 +1,207 @@
 # Sandesh — Frontend
 
-A responsive chat application frontend built with **React, JavaScript (JSX), Vite, and Tailwind CSS**. Sandesh integrates with an **ASP.NET Core (.NET 10)** backend for mobile-number OTP authentication, conversation management, message history, and SignalR-based communication.
+Sandesh is a responsive, team-developed chat application. Its frontend uses **React (JavaScript/JSX), Vite, Tailwind CSS, Axios, React Router, Lucide React, and SignalR**. It connects to an **ASP.NET Core (.NET 10)** backend for mobile-number OTP authentication, conversations, messages, and real-time updates.
 
-> **Project status:** Active team development. This README describes the frontend features currently implemented and distinguishes them from features that still require implementation or end-to-end verification.
+> **Project status:** Active development. Features below are implemented in the frontend, but full end-to-end, regression, and cross-browser testing is still in progress. Do not treat a successful build as proof of runtime correctness.
 
-## Features and current status
+## Features and verification status
 
-| Feature                                             | Status                                  | Notes                                                                                                   |
-| --------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Mobile-number OTP sign-in                           | Implemented                             | Send OTP, verify OTP, JWT-based authenticated session, validation and API error handling                |
-| Authentication-aware navigation and logout          | Implemented                             | Protected chat experience and token cleanup                                                             |
-| Conversation dashboard                              | Implemented                             | Conversation list, selection, search/filter of loaded conversations, empty/loading/error states         |
-| New Chat (pencil button)                            | Implemented                             | Search for a verified user using their full international mobile number; create or reuse a conversation |
-| Message history                                     | Implemented                             | Load conversation messages through SignalR, with older-message pagination and error handling            |
-| Responsive chat UI                                  | Implemented                             | Desktop/mobile layouts, message bubbles, timestamps, and mobile back navigation                         |
-| Dark/light theme                                    | Implemented                             | Theme support in the chat experience                                                                    |
-| Sending messages                                    | **Not yet implemented**                 | Do not assume outgoing-message delivery is available                                                    |
-| Live incoming-message updates, typing, and presence | **Pending implementation/verification** | Backend SignalR support alone does not establish working frontend behavior                              |
+| Feature                             | Implementation | Verification notes                                                                                           |
+| ----------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------ |
+| Mobile-number OTP sign-in           | Implemented    | Send/verify OTP, validation, JWT-authenticated session, API error handling; full OTP regression pending      |
+| Protected navigation and logout     | Implemented    | Token/session handling; expiry and edge-case testing pending                                                 |
+| Profile completion and profile menu | Implemented    | Full browser regression pending                                                                              |
+| Conversation dashboard              | Implemented    | Conversation list, selection, search/filter, loading/empty/error states                                      |
+| New Chat                            | Implemented    | Verified-user search by full international mobile number; create/reuse conversation; full regression pending |
+| Message history                     | Implemented    | SignalR history retrieval, deduplication, older-message pagination, errors                                   |
+| Sending and receiving messages      | Implemented    | Message composer and live SignalR updates; broader browser regression pending                                |
+| Delivery/read receipts              | Implemented    | Sent, delivered, read status based on backend timestamps; live blue-tick fix manually retested               |
+| Typing indicators                   | Implemented    | `typing...` in recipient header, throttled updates, inactivity stop, expiry; broader browser testing pending |
+| Presence and last seen              | Implemented    | Online/offline/last-seen recipient status; reconnect cases pending                                           |
+| Responsive chat UI                  | Implemented    | Desktop/mobile layouts, timestamps, navigation; device/browser coverage pending                              |
+| Dark/light theme                    | Implemented    | Chat experience theme support; visual regression pending                                                     |
 
-**Verification:** The New Chat frontend changes passed reported ESLint and production-build checks. Registered-user lookup through the pencil dialog was manually confirmed. Creating/reusing chats, responsive edge cases, and other full end-to-end scenarios still require separate runtime verification.
+**Automated verification:** Latest reported `npm.cmd run lint` and `npm.cmd run build` both passed (exit code 0, no warnings/errors). The live read-receipt focus fix was manually retested successfully. Other browser scenarios should be verified independently.
 
 ## Technology stack
 
 - **UI:** React 19, React DOM, JavaScript (JSX)
-- **Build and development server:** Vite 8 with `@vitejs/plugin-react`
+- **Build/dev server:** Vite 8 and `@vitejs/plugin-react`
 - **Styling:** Tailwind CSS 4 via `@tailwindcss/vite`
 - **Routing:** React Router DOM 7
 - **HTTP:** Axios
-- **Real-time transport:** `@microsoft/signalr`
+- **Real-time:** `@microsoft/signalr`
 - **Icons:** Lucide React
-- **Code quality:** ESLint and React Hooks/Refresh rules
+- **Quality:** ESLint with React Hooks/Refresh rules
 
-Dependency versions are defined in [`package.json`](./package.json); exact resolved versions are locked in [`package-lock.json`](./package-lock.json).
+See [`package.json`](./package.json) for declared dependencies and [`package-lock.json`](./package-lock.json) for locked versions. Install from the lockfile rather than installing these packages individually.
 
 ## Prerequisites
 
-Install the following before starting:
+1. **Git** — for cloning and collaborating.
+2. **Node.js and npm** — a Node.js release supported by the project's Vite version; **Node.js 22.12+ or a compatible 24 LTS release** is recommended. Check:
+   ```powershell
+   node --version
+   npm --version
+   ```
+3. **Running Sandesh backend** — the current Vite development proxy targets `http://localhost:5261`.
+4. **For local backend development:** .NET 10 SDK, SQL Server/database access, and backend configuration from the backend team. These are **not** installed by npm.
 
-1. **Git** — to clone the repository.
-2. **Node.js and npm** — use a supported modern Node.js LTS release (Node.js **22.12+ or 24 LTS** is recommended for Vite 8); verify with `node --version` and `npm --version`.
-3. **A running Sandesh backend** — the frontend's development proxy expects the ASP.NET Core API at **`http://localhost:5261`**.
-4. **Backend prerequisites, if running locally** — .NET 10 SDK, SQL Server/database access, and the backend's required configuration. Refer to backend project documentation and your team's configuration instructions; these are **not installed by npm**.
+VS Code is optional.
 
-VS Code is recommended but optional.
+## First-time setup (Windows PowerShell)
 
-## Clone and install
-
-Open **PowerShell** in the directory where you want the repository:
+### 1. Clone the repository
 
 ```powershell
 git clone https://github.com/Gourav-93/Chat-Appliction.git
 cd Chat-Appliction
 git fetch origin
+git branch -a
+```
+
+The GitHub repository uses the spelling `Chat-Appliction`. **Confirm the branch to use with the team**. For the current frontend development branch, if it is available and your working tree is clean:
+
+```powershell
 git switch Member-4
+```
+
+If you already have the repository, **do not clone it again**. Check your branch and local changes before switching:
+
+```powershell
+git branch --show-current
+git status --short
+```
+
+### 2. Install frontend dependencies
+
+From the repository root:
+
+```powershell
 cd frontend
 npm.cmd ci
 ```
 
-> The repository URL uses the existing GitHub repository spelling, `Chat-Appliction`. The local directory created by `git clone` will normally have the same name. If you already have the repository, do **not** clone it again; work from your existing checkout and coordinate branch changes with the team.
->
-> `Member-4` is the frontend development branch at the time of writing. Confirm with the team before switching branches in a checkout that contains other work.
+`npm.cmd ci` installs dependencies from the committed lockfile. Do not commit `node_modules/`.
 
-`npm.cmd ci` installs dependencies exactly from the committed lockfile. You **do not** need to install React, Vite, Tailwind, Axios, SignalR, or Lucide individually. Do not commit `node_modules/`.
+### 3. Start the backend
 
-### Start the backend
+Start the existing ASP.NET Core API using the backend team's approved instructions and confirm it is listening at:
 
-The backend must be available before testing OTP login, conversation search, or message history.
+```text
+http://localhost:5261
+```
 
-- Start the existing ASP.NET Core backend using your team's documented configuration.
-- Ensure its API is listening on **`http://localhost:5261`**.
-- Ensure the database connection, migrations, JWT settings, and OTP service are configured by the backend team.
-- During current development, OTP values may be printed to the **backend terminal** rather than sent as real SMS. Use the backend team's approved development flow.
+Backend owners must provide the correct database connection, migrations, JWT settings, and OTP service configuration. During development, OTPs may be printed in the **backend terminal** rather than sent by SMS; follow the team's approved test flow.
 
-**Do not commit** credentials, database passwords, JWT secrets, or real `.env` files. Backend setup details and connection strings must come from the backend owners; this README does not prescribe unverified backend commands.
+**Do not commit or share** database passwords, JWT secrets, OTPs, access tokens, or real environment files.
 
-### Start the frontend
+### 4. Start the frontend
 
-In a **second terminal**, from the `frontend` directory:
+Open a second PowerShell terminal in `frontend/`:
 
 ```powershell
 npm.cmd run dev
 ```
 
-Open the local URL printed by Vite (typically **`http://localhost:5173`**). If the default port is occupied, Vite may select another port; use the URL shown in your terminal.
+Open the URL shown by Vite, typically:
+
+```text
+http://localhost:5173
+```
+
+If port `5173` is occupied, use the URL printed in the terminal.
 
 **Quick setup summary**
 
-| Terminal | Working directory | Action                                             |
-| -------- | ----------------- | -------------------------------------------------- |
-| 1        | Backend project   | Run the configured ASP.NET Core API on port `5261` |
-| 2        | `frontend/`       | `npm.cmd ci` (first time), then `npm.cmd run dev`  |
-| Browser  | —                 | Open the URL displayed by Vite                     |
+| Terminal | Directory       | Action                                             |
+| -------- | --------------- | -------------------------------------------------- |
+| Backend  | Backend project | Run the configured ASP.NET Core API on port `5261` |
+| Frontend | `frontend/`     | `npm.cmd ci` once, then `npm.cmd run dev`          |
+| Browser  | —               | Open the Vite URL                                  |
 
-On macOS/Linux, replace `npm.cmd` with `npm`.
+On macOS/Linux, use `npm` instead of `npm.cmd`.
 
-## Available scripts
+## Available frontend commands
 
-Run these from `frontend/`:
+Run from `frontend/`:
 
-| Command (Windows PowerShell) | Purpose                                                   |
-| ---------------------------- | --------------------------------------------------------- |
-| `npm.cmd run dev`            | Start Vite development server with hot module replacement |
-| `npm.cmd run lint`           | Run ESLint checks                                         |
-| `npm.cmd run build`          | Create a production bundle in `frontend/dist/`            |
-| `npm.cmd run preview`        | Preview the production bundle locally after building      |
+| Command               | Purpose                                       |
+| --------------------- | --------------------------------------------- |
+| `npm.cmd ci`          | Install exact dependencies from lockfile      |
+| `npm.cmd run dev`     | Start Vite development server                 |
+| `npm.cmd run lint`    | Run ESLint                                    |
+| `npm.cmd run build`   | Build production assets into `frontend/dist/` |
+| `npm.cmd run preview` | Preview the built frontend                    |
 
-`dist/` is a generated output folder and is excluded from Git. A successful build does **not** mean that backend-dependent browser scenarios have been tested.
+No dedicated test script was configured at the latest automated review. Do not claim automated unit/E2E coverage unless it is added and executed. `dist/` is generated output and should not be committed.
 
 ## Backend integration
 
-The shared Axios client in `src/shared/lib/api.js` uses:
+The shared Axios client at `src/shared/lib/api.js` uses the `/api` base path, a 15-second request timeout, JSON headers, and the current in-memory JWT for authenticated requests.
 
-- Base URL: **`/api`**
-- Request timeout: **15 seconds**
-- JSON request headers
-- An in-memory JWT, attached to authenticated requests as `Authorization: Bearer <token>`
+The Vite development proxy in [`vite.config.js`](./vite.config.js) forwards:
 
-The Vite development proxy in `vite.config.js` forwards requests to the backend:
+| Frontend path | Backend target          | Purpose                                |
+| ------------- | ----------------------- | -------------------------------------- |
+| `/api/*`      | `http://localhost:5261` | REST API                               |
+| `/hubs/chat`  | `http://localhost:5261` | SignalR hub, including WebSocket proxy |
 
-| Frontend path | Local backend target    | Purpose                              |
-| ------------- | ----------------------- | ------------------------------------ |
-| `/api/*`      | `http://localhost:5261` | REST API                             |
-| `/hubs/chat`  | `http://localhost:5261` | SignalR hub; WebSocket proxy enabled |
+### API and SignalR operations
 
-### API endpoints used by the frontend
+| Operation                      | Method / transport | Endpoint / hub method                                                                  |
+| ------------------------------ | ------------------ | -------------------------------------------------------------------------------------- |
+| Request OTP                    | `POST`             | `/api/auth/send-otp`                                                                   |
+| Verify OTP                     | `POST`             | `/api/auth/verify-otp`                                                                 |
+| List conversations             | `GET`              | `/api/conversations`                                                                   |
+| Find verified users            | `GET`              | `/api/conversations/search?mobileNumber=...`                                           |
+| Create/reuse conversation      | `POST`             | `/api/conversations`                                                                   |
+| Retrieve history               | SignalR            | `GetMessages(conversationId, pageNumber, pageSize)` / `MessageHistory`                 |
+| Real-time messaging            | SignalR            | Existing backend hub messaging contract                                                |
+| Typing updates                 | SignalR            | `Typing(conversationId, isTyping)` / `UserTyping`                                      |
+| Delivery/read acknowledgements | SignalR            | Existing `MarkDelivered` / `MarkRead` hub operations and `MessageStatusUpdated` events |
 
-| Operation                 | Method  | Endpoint                                     | Request                                                                                                    |
-| ------------------------- | ------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Request OTP               | `POST`  | `/api/auth/send-otp`                         | `{ "mobileNumber": "+919876543210" }`                                                                      |
-| Verify OTP                | `POST`  | `/api/auth/verify-otp`                       | `{ "mobileNumber": "+919876543210", "otp": "123456" }`                                                     |
-| List conversations        | `GET`   | `/api/conversations`                         | Authenticated request                                                                                      |
-| Find verified users       | `GET`   | `/api/conversations/search?mobileNumber=...` | Exact full international number; query parameter encoded by Axios                                          |
-| Create/reuse conversation | `POST`  | `/api/conversations`                         | `{ "receiverId": "<user-guid>" }`                                                                          |
-| Retrieve message history  | SignalR | `/hubs/chat`                                 | Authorized hub method `GetMessages(conversationId, pageNumber, pageSize)`; receives `MessageHistory` event |
+**Example request bodies:**
 
-These are **development integration contracts**, not a complete public backend API reference. Do not change them without coordinating with the backend team.
+```json
+{ "mobileNumber": "+919876543210" }
+```
 
-### Local API target changes
+```json
+{ "mobileNumber": "+919876543210", "otp": "123456" }
+```
 
-If your backend uses a different port, update the `target` values for **both** `/api` and `/hubs/chat` in [`vite.config.js`](./vite.config.js), then restart the Vite dev server. Coordinate the change before committing it, because the configuration is shared.
+```json
+{ "receiverId": "<user-guid>" }
+```
 
-> **Deployment note:** Vite's `server.proxy` applies to the **development server only**. A production deployment needs an equivalent reverse-proxy/API routing strategy for `/api` and `/hubs/chat`, including WebSocket support, or a reviewed frontend configuration change.
+These are development integration examples, **not a complete backend API reference**. Preserve existing DTO and hub contracts. Coordinate backend changes with the backend team.
 
-## How to use the current application
+### Backend URL and production deployment
+
+If the local backend uses another port, update the targets for **both** `/api` and `/hubs/chat` in `vite.config.js`, then restart Vite. Coordinate shared config changes before committing.
+
+Vite's `server.proxy` works **only during development**. Production hosting needs appropriate API and SignalR routing, including WebSocket support, or a separately reviewed frontend configuration.
+
+## How to use Sandesh
 
 1. Start the backend and frontend.
-2. Enter a mobile number in international format, including the country code (for example, `+919876543210`).
-3. Request an OTP, obtain it using the backend's configured development method, and verify it.
-4. After authentication, view your conversation dashboard.
-5. Select an existing conversation to view its message history. Use the older-message control when available.
-6. Click the **pencil / New conversation** button, enter another verified user's full international mobile number, and search.
-7. Choose **Start Chat** to create or reuse a conversation. Message sending is not part of the completed frontend scope yet.
-8. Use the available theme and logout controls as needed.
+2. Enter your mobile number in international format, e.g. `+919876543210`.
+3. Request and verify the OTP using the backend's configured development flow.
+4. Open the authenticated conversation dashboard.
+5. Select a conversation to see its history. Load older messages using the available pagination control.
+6. Use the **New Chat** (pencil) action to find a verified user by their full international mobile number and create/reuse a conversation.
+7. Type and send messages using the composer. The interface shows incoming messages and persisted sent/delivered/read status.
+8. When the recipient is typing, the recipient status area can show `typing...`; otherwise it shows available presence/last-seen information.
+9. Use the theme, profile, navigation, and logout controls as appropriate.
 
-To test two accounts locally, use separate browser profiles or a normal window and an incognito window. Use only authorized test accounts.
+For local two-user testing, use separate browser profiles or a normal and incognito window, with authorized test accounts.
 
 ## Project structure
 
 ```text
 frontend/
 ├── public/
-│   └── favicon.svg
 ├── src/
 │   ├── app/
 │   │   ├── AuthContext.js
@@ -182,7 +223,9 @@ frontend/
 │   │       ├── hooks/
 │   │       └── services/
 │   ├── shared/
-│   │   └── lib/api.js
+│   │   └── lib/
+│   │       ├── api.js
+│   │       └── displayIdentity.js
 │   ├── App.jsx
 │   ├── index.css
 │   └── main.jsx
@@ -195,62 +238,73 @@ frontend/
 └── README.md
 ```
 
-### Important modules
+**Important modules**
 
-| File                                                         | Responsibility                                      |
-| ------------------------------------------------------------ | --------------------------------------------------- |
-| `src/app/AuthProvider.jsx`                                   | Authentication state and session lifecycle          |
-| `src/features/Auth/Services/AuthService.js`                  | OTP API requests and authentication error messages  |
-| `src/features/Conversations/Pages/ChatPage.jsx`              | Chat dashboard, selection, and New Chat integration |
-| `src/features/Conversations/Components/ConversationList.jsx` | Sidebar conversation list                           |
-| `src/features/Conversations/Components/NewChatDialog.jsx`    | Verified-user lookup and Start Chat dialog          |
-| `src/features/Conversations/Services/ConversationService.js` | Conversation list/search/create API methods         |
-| `src/features/Messages/components/ChatPanel.jsx`             | Message history display                             |
-| `src/features/Messages/hooks/useMessageHistory.js`           | Message-history state and pagination                |
-| `src/features/Messages/services/MessageHistoryService.js`    | SignalR history integration                         |
-| `src/shared/lib/api.js`                                      | Shared Axios client and JWT header                  |
-| `vite.config.js`                                             | Vite plugins and local API/SignalR proxies          |
+| File                                                         | Responsibility                         |
+| ------------------------------------------------------------ | -------------------------------------- |
+| `src/app/AuthProvider.jsx`                                   | Authentication state/session lifecycle |
+| `src/features/Auth/Services/AuthService.js`                  | OTP API and auth errors                |
+| `src/features/Auth/Components/CompleteProfileForm.jsx`       | Profile completion UI                  |
+| `src/features/Conversations/Pages/ChatPage.jsx`              | Chat dashboard and integration         |
+| `src/features/Conversations/Components/ConversationList.jsx` | Conversation sidebar                   |
+| `src/features/Conversations/Components/NewChatDialog.jsx`    | User lookup/new chat                   |
+| `src/features/Conversations/Services/ConversationService.js` | Conversation API                       |
+| `src/features/Messages/components/ChatPanel.jsx`             | Messages, status, chat header          |
+| `src/features/Messages/components/MessageComposer.jsx`       | Draft input, send, typing callbacks    |
+| `src/features/Messages/hooks/useChatSession.js`              | Shared chat session/SignalR events     |
+| `src/features/Messages/hooks/useMessageHistory.js`           | History and pagination                 |
+| `src/features/Messages/hooks/useConversationActivity.js`     | Typing, presence, read activity        |
+| `src/features/Messages/services/MessageHistoryService.js`    | SignalR transport/history/receipts     |
+| `src/shared/lib/api.js`                                      | Axios client/JWT header                |
+| `src/shared/lib/displayIdentity.js`                          | Shared display identity formatting     |
+| `vite.config.js`                                             | Vite plugins and local proxies         |
 
-Folder capitalization reflects the existing codebase; preserve import paths and casing, especially on case-sensitive systems.
+Folder capitalization reflects the current codebase; preserve exact import casing, especially on Linux.
 
 ## Troubleshooting
 
-| Problem                          | What to check                                                                                                  |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `npm` is not recognized          | Install Node.js, reopen the terminal, verify `node --version` and `npm --version`                              |
-| Install fails                    | Run `npm.cmd ci` from `frontend/`, check Node version and network access; avoid deleting the lockfile casually |
-| Vite opens but API requests fail | Confirm backend is running on `http://localhost:5261`; inspect browser Network tab and `vite.config.js`        |
-| OTP does not arrive by SMS       | Current development flow may print OTP in backend terminal; confirm with backend team                          |
-| OTP returns `429`                | Backend rate limit/cooldown; wait rather than repeatedly resending                                             |
-| OTP returns `5xx`                | Inspect backend logs and report the server error; do not automatically treat it as an invalid OTP              |
-| Unauthorized (`401`)             | Verify authenticated session and JWT; sign in again if expired                                                 |
-| New Chat finds no user           | Use a verified account other than your own and its exact international mobile number                           |
-| Message history does not load    | Verify JWT, backend availability, `/hubs/chat` connectivity, and WebSocket/network errors                      |
-| UI appears outdated              | Restart the dev server and refresh the browser; check console/build errors                                     |
+| Problem                      | What to check                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| `npm` not recognized         | Install Node.js, reopen terminal, check `node --version` and `npm --version`       |
+| Dependency install fails     | Run `npm.cmd ci` inside `frontend/`; check Node version/network; preserve lockfile |
+| Frontend opens but API fails | Start backend on port `5261`; check Network tab and Vite proxy                     |
+| OTP not received via SMS     | Development OTP may be printed in backend terminal                                 |
+| OTP returns `429`            | Rate limit/cooldown; wait before retrying                                          |
+| OTP returns `5xx`            | Inspect backend logs; do not mislabel server errors as invalid OTP                 |
+| API returns `401`            | Check JWT/session; log in again if expired                                         |
+| New Chat finds no user       | Use a different verified account and exact international mobile number             |
+| Messages/history fail        | Check JWT, backend, `/hubs/chat`, browser console, WebSocket/network               |
+| Typing/presence not updating | Check SignalR connectivity, selected conversation, tab/window state, reconnect     |
+| Read ticks seem delayed      | Check selected chat visibility and `MarkRead`/`MessageStatusUpdated` flow          |
+| UI seems outdated            | Restart dev server, refresh, inspect console and build output                      |
 
-For debugging, capture the request path, HTTP status, sanitized response, browser console details, and reproduction steps. Never share OTPs, JWTs, or secrets in issue reports.
+When reporting bugs, include reproduction steps, expected vs. actual behavior, request path/status, and sanitized console/network details. Never share OTPs, JWTs, credentials, or secrets.
 
-## Development and collaboration
+## Team development workflow
 
-This project is developed by a four-member team. Frontend work currently lives on the **`Member-4`** branch.
+This is a **four-member team project**. Frontend development currently uses the `Member-4` branch.
 
-- Review existing code and contracts before changing a feature.
-- Keep changes small and scoped; use **JavaScript/JSX**, not TypeScript.
-- Preserve the dark navy/royal-blue visual language, responsiveness, and theme behavior.
-- Add an English file-purpose comment at the top of new code files.
-- Do not modify shared backend contracts without agreement from backend owners.
+- Review existing code before changing a feature; keep modifications focused.
+- Use JavaScript/JSX, not TypeScript.
+- Preserve dark navy/royal-blue styling, responsive behavior, and dark/light theme.
+- Add an English file-purpose comment at the start of new code files.
+- Do not modify shared backend contracts without backend-team approval.
 - Run `npm.cmd run lint` and `npm.cmd run build` after frontend changes.
-- Test browser behavior separately; passing lint/build is not a substitute for runtime testing.
-- Do not commit `node_modules/`, `dist/`, `.env`, credentials, OTPs, or JWTs.
-- Check `git branch --show-current` and `git status` before Git operations. Push only to your intended branch; never force-push without team coordination.
+- Verify behavior in the browser; lint/build alone do not validate real-time features.
+- Never commit `node_modules/`, `dist/`, secrets, OTPs, JWTs, or local environment files.
+- Check `git branch --show-current` and `git status --short` before staging/committing.
+- Stage **specific reviewed files**, not `git add .`, when unrelated changes exist.
+- Coordinate merges and shared configuration changes. Do not force-push.
 
-## Known limitations and next steps
+## Known limitations and pending verification
 
-- Complete and verify message sending and live message delivery.
-- Implement/verify typing indicators and user presence in the frontend.
-- Complete browser-based regression testing of OTP, JWT expiry, New Chat create/reuse, pagination, mobile layouts, accessibility, and network failures.
-- Document production environment configuration and deployment once the backend/frontend hosting approach is agreed.
+- **Potential reconnect subscription gap (unconfirmed):** A rapid disconnect/reconnect may leave typing/presence subscriptions unattached if React batches connection state transitions. Runtime reproduction and a targeted fix are deferred.
+- **Missed read/delivery receipt recovery (existing limitation):** Read/delivery events missed while offline may leave sender ticks stale until status is refreshed. Reconnect history/status reconciliation is deferred.
+- Full browser regression is still pending for OTP cooldown/expiry, JWT expiry, new-chat create/reuse, pagination, hidden-tab read behavior, typing and presence reconnect, mobile layouts, accessibility, and network failures.
+- Production environment/routing and deployment steps must be documented once the team agrees on hosting.
+
+These are known risks, **not confirmed backend defects**. The team should track them during integration testing.
 
 ---
 
-**Sandesh** — a team-built chat application. This README documents the current frontend development setup; update it as features and verified test coverage evolve.
+**Sandesh** — a team-built chat application. Keep this README aligned with actual implementation and verified test coverage.

@@ -10,10 +10,11 @@
  * 3. Provide an accessible theme toggle.
  * 4. Integrate the signed-in user's profile and logout control.
  * 5. Manage conversation selection, successful list snapshots, and mobile Back focus.
- * 6. Search verified users in a New Chat dialog and open created conversations.
+ * 6. Preserve drafts, coordinate shared messaging, and open created conversations.
+ * 7. Coordinate recipient activity, typing, and visible-chat reads through the shared session.
  */
 
-import { useCallback, useContext, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { MessageCircleMore, Moon, SquarePen, Sun } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
 import ProfileMenu from "../Components/ProfileMenu";
@@ -21,6 +22,8 @@ import ConversationList from "../Components/ConversationList";
 import NewChatDialog from "../Components/NewChatDialog";
 import ChatPanel from "../../Messages/components/ChatPanel";
 import useMessageHistory from "../../Messages/hooks/useMessageHistory";
+import useChatSession from "../../Messages/hooks/useChatSession";
+import useConversationActivity from "../../Messages/hooks/useConversationActivity";
 
 export default function ChatPage() {
   const themeContext = useContext(ThemeContext);
@@ -39,8 +42,49 @@ export default function ChatPage() {
   const openNewChat = useCallback(() => setNewChatOpen(true), []);
   const closeNewChat = useCallback(() => setNewChatOpen(false), []);
 
-  // One dashboard-owned history hook; the sidebar retains its own list fetching.
-  const history = useMessageHistory(selection);
+  // Messaging and history share exactly one session-owned transport.
+  const session = useChatSession();
+  const history = useMessageHistory(selection, session);
+  // An open New Chat dialog pauses selected-chat typing and read acknowledgements.
+  const activity = useConversationActivity(selection, session, history, !newChatOpen);
+  const { onTypingInput, stopTyping, isTyping } = activity;
+  const [drafts, setDrafts] = useState({});
+  const draftsRef = useRef({});
+  const submittedRef = useRef(null);
+  const conversationId = selection.conversation?.conversationId;
+  const draft = drafts[conversationId]?.text || "";
+  const changeDraft = (text) => {
+    if (!conversationId) return;
+    const previous = draftsRef.current[conversationId];
+    const next = { text, revision: (previous?.revision || 0) + 1 };
+    draftsRef.current = { ...draftsRef.current, [conversationId]: next };
+    setDrafts(draftsRef.current);
+  };
+  const sendDraft = async () => {
+    const submitted = draftsRef.current[conversationId];
+    if (!submitted?.text.trim() || session.sending?.pending ||
+        submittedRef.current?.draft === submitted) return;
+    const operation = { conversationId, draft: submitted };
+    submittedRef.current = operation;
+    const success = await session.send(conversationId, submitted.text);
+    if (success && draftsRef.current[conversationId] === submitted) {
+      // Do not erase text typed during the request or another conversation's draft.
+      draftsRef.current = { ...draftsRef.current,
+        [conversationId]: { text: "", revision: submitted.revision + 1 } };
+      setDrafts(draftsRef.current);
+    }
+    if (submittedRef.current === operation) submittedRef.current = null;
+  };
+
+  useEffect(() => {
+    if (!session.revision) return undefined;
+    // Coalesce bursts; the version changes only when the refresh is issued.
+    const timer = window.setTimeout(() => {
+      const version = ++refreshVersionRef.current;
+      setRefreshKey(version);
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [session.revision]);
 
   const handleSelect = useCallback((conversation) => {
     if (!Number.isInteger(conversation?.conversationId) ||
@@ -185,6 +229,17 @@ export default function ChatPage() {
           </div>
         </header>
 
+        <div role="status" className={`flex shrink-0 items-center justify-between gap-2 px-4 py-2 text-xs ${colors.muted}`}>
+          <span>{session.status === "connected" ? "Connected" :
+            session.status === "connecting" ? "Connecting..." : "Disconnected"}</span>
+          {session.status === "disconnected" && !session.requiresSignIn && (
+            <button type="button" onClick={session.start}
+              className="rounded px-2 py-1 text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">
+              Connect
+            </button>
+          )}
+        </div>
+        {session.error && <p role="alert" className={`px-4 pb-2 text-xs ${colors.muted}`}>{session.error}</p>}
         <ConversationList
           onSelect={handleSelect}
           selectedConversationId={selection.conversation?.conversationId}
@@ -195,7 +250,9 @@ export default function ChatPage() {
       </aside>
 
       {selection.conversation ? (
-        <ChatPanel selection={selection} history={history} onBack={handleBack} />
+        <ChatPanel selection={selection} history={history} onBack={handleBack}
+          session={session} activity={activity} draft={draft} onDraftChange={changeDraft} onSend={sendDraft}
+          onTypingInput={onTypingInput} stopTyping={stopTyping} isTyping={isTyping} />
       ) : (
       <section className="hidden min-w-0 flex-1 items-center justify-center md:flex">
         <div className="max-w-sm px-6 text-center">

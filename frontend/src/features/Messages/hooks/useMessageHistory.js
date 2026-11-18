@@ -2,40 +2,27 @@
  * File: useMessageHistory.js
  * Purpose: Loads selected-conversation history through the existing SignalR service.
  * Responsibilities:
- * 1. Publish session-scoped service readiness and clean up replaced owners.
+ * 1. Consume the dashboard's shared session without creating another connection.
  * 2. Ignore stale selections and retain successful pages during older-page retries.
- * 3. Deduplicate and order messages, with 30-message pages and explicit UI states.
+ * 3. Merge confirmed receipts without downgrading history/live message status.
+ * 4. Deduplicate and order messages, with 30-message pages and explicit UI states.
  */
 
-import { useCallback, useContext, useEffect, useState } from "react";
-import { AuthContext } from "../../../app/AuthContext";
-import { createMessageHistoryService } from "../services/MessageHistoryService";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { mergeMessageReceipts } from "../services/MessageHistoryService";
 
 const PAGE_SIZE = 30;
 const EMPTY_MESSAGES = [];
 
 // Selection is the dashboard's { conversation, generation } object.
-export default function useMessageHistory(selection) {
-  const auth = useContext(AuthContext);
-  const token = auth?.isAuthenticated ? auth.user?.token : null;
-  const userId = auth?.user?.userId;
-  const expiresAt = auth?.user?.expiresAt;
-  const validSession = Boolean(
-    typeof token === "string" && token.trim() &&
-    typeof userId === "string" && userId &&
-    Number.isFinite(expiresAt),
-  );
-
-  const [owner, setOwner] = useState(null);
-  const [expiredOwner, setExpiredOwner] = useState(null);
+export default function useMessageHistory(selection, session) {
+  const { owner, userId, requiresSignIn } = session;
+  const validSession = !requiresSignIn;
+  const expired = requiresSignIn;
   const [result, setResult] = useState(null);
   const [ticket, setTicket] = useState(null);
 
-  const ownerReady = Boolean(
-    validSession && owner?.token === token &&
-    owner.userId === userId && owner.expiresAt === expiresAt,
-  );
-  const expired = ownerReady && expiredOwner === owner;
+  const ownerReady = Boolean(owner) && !requiresSignIn;
   const conversationId = selection?.conversation?.conversationId;
   const selectionKey = conversationId
     ? conversationId + ":" + (selection.generation ?? 0)
@@ -45,42 +32,6 @@ export default function useMessageHistory(selection) {
   const page = ticketMatches ? ticket.page : 1;
   const attempt = ticketMatches ? ticket.attempt : 0;
   const requestKey = selectionKey + ":" + page + ":" + attempt;
-
-  useEffect(() => {
-    if (!validSession) return undefined;
-
-    const service = createMessageHistoryService(token, expiresAt);
-    const nextOwner = { service, token, userId, expiresAt };
-    let active = true;
-    let expiryTimer;
-
-    // Publishing readiness reruns the request effect; it cannot miss startup.
-    // StrictMode cleanup prevents its discarded owner from being published.
-    Promise.resolve().then(() => {
-      if (active) setOwner(nextOwner);
-    });
-
-    const checkExpiry = () => {
-      if (!active) return;
-      const remaining = expiresAt - Date.now();
-      if (remaining <= 0) {
-        setExpiredOwner(nextOwner);
-        void service.dispose();
-      } else {
-        expiryTimer = window.setTimeout(
-          checkExpiry, Math.min(remaining, 2147483647),
-        );
-      }
-    };
-    expiryTimer = window.setTimeout(checkExpiry, 0);
-
-    return () => {
-      active = false;
-      window.clearTimeout(expiryTimer);
-      // The service gates replacement connections on complete transport cleanup.
-      void service.dispose();
-    };
-  }, [validSession, token, userId, expiresAt]);
 
   useEffect(() => {
     if (!ownerReady || expired || !conversationId) return undefined;
@@ -95,9 +46,11 @@ export default function useMessageHistory(selection) {
           const prior = page > 1 && same
             ? previous.messages
             : EMPTY_MESSAGES;
-          const unique = new Map(
-            [...messages, ...prior].map((message) => [message.id, message]),
-          );
+          const unique = new Map();
+          for (const message of [...messages, ...prior]) {
+            unique.set(message.id, { ...message,
+              ...mergeMessageReceipts(unique.get(message.id), message) });
+          }
           return {
             owner,
             selectionKey,
@@ -147,9 +100,32 @@ export default function useMessageHistory(selection) {
     validSession && conversationId && !expired &&
     (!ownerReady || !complete),
   );
-  const messages = sameSelection && !expired
-    ? result.messages
-    : EMPTY_MESSAGES;
+  // Live/startup events remain outside page-result replacement, so a history
+  // response cannot erase a confirmed message received while it was loading.
+  const pageMessages = sameSelection && !expired ? result.messages : EMPTY_MESSAGES;
+  const messages = useMemo(() => {
+    if (!ownerReady || !conversationId) return EMPTY_MESSAGES;
+    const unique = new Map(pageMessages.map((message) => [message.id,
+      { ...message, ...mergeMessageReceipts(null, message) }]));
+    for (const message of session.messages.values()) {
+      if (message.conversationId === conversationId) {
+        unique.set(message.id, { ...message,
+          ...mergeMessageReceipts(unique.get(message.id), message) });
+      }
+    }
+    // Receipts may arrive before their message. Apply the session cache last,
+    // matching participant and conversation identity before merging timestamps.
+    for (const [id, message] of unique) {
+      const receipt = session.receipts.get(id);
+      if (receipt && receipt.conversationId === message.conversationId &&
+          receipt.senderId.toLowerCase() === message.senderId.toLowerCase() &&
+          receipt.receiverId.toLowerCase() === message.receiverId.toLowerCase()) {
+        unique.set(id, { ...message, ...mergeMessageReceipts(message, receipt) });
+      }
+    }
+    return [...unique.values()].sort((a, b) =>
+      Date.parse(a.sentAt) - Date.parse(b.sentAt) || a.id - b.id);
+  }, [ownerReady, conversationId, pageMessages, session.messages, session.receipts]);
   const error = !validSession
     ? "Your session could not be authorized. Please sign in again."
     : expired
@@ -184,6 +160,8 @@ export default function useMessageHistory(selection) {
 
   return {
     messages,
+    // Activity/read coordination can distinguish loaded history from live-only data.
+    hasLoadedHistory: Boolean(sameSelection && result.loadedPage >= 1 && !expired),
     isLoading: loading && page === 1,
     isLoadingOlder: loading && page > 1,
     isEmpty: Boolean(conversationId && complete && !expired &&

@@ -1,65 +1,54 @@
 /**
  * File: useConversations.js
- * Purpose: Manages the signed-in user's conversation list request lifecycle.
- * Responsibilities:
- * 1. Fetch conversation summaries and expose loading, error, retry, and refresh state.
- * 2. Cancel requests and ignore late responses after cleanup or logout.
- * 3. Keep another user's or an earlier request's results out of the current UI.
+ * Purpose: Loads conversation summaries while retaining successful background data.
+ * Responsibilities: Cancel stale requests, isolate accounts, distinguish initial
+ * failures from refresh errors, and expose only successful current snapshots.
  */
-
 import { useCallback, useContext, useEffect, useState } from "react";
 import { AuthContext } from "../../../app/AuthContext";
-import {
-  getConversations,
-  getConversationErrorMessage,
-} from "../Services/ConversationService";
+import { getConversations, getConversationErrorMessage } from "../Services/ConversationService";
 
 export default function useConversations(refreshKey = 0) {
   const auth = useContext(AuthContext);
   const userId = auth?.isAuthenticated ? auth.user?.userId : null;
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState(null);
-  // A parent refresh immediately makes older list responses ineligible.
   const requestKey = userId ? userId + ":" + refreshKey + ":" + attempt : null;
 
   useEffect(() => {
     if (!userId) return undefined;
-
     const controller = new AbortController();
     let active = true;
-
     getConversations(controller.signal).then(
       (conversations) => {
         if (active && !controller.signal.aborted) {
-          setResult({ requestKey, conversations, error: "" });
+          setResult({ requestKey, userId, conversations, error: "", hasSnapshot: true });
         }
       },
       (error) => {
         if (active && !controller.signal.aborted) {
-          setResult({
-            requestKey,
-            conversations: [],
+          setResult((previous) => ({
+            requestKey, userId,
+            conversations: previous?.userId === userId ? previous.conversations : [],
+            hasSnapshot: previous?.userId === userId && previous.hasSnapshot,
             error: getConversationErrorMessage(error),
-          });
+          }));
         }
       },
     );
-
-    return () => {
-      // Both guards protect against late resolutions and StrictMode cleanup.
-      active = false;
-      controller.abort();
-    };
+    return () => { active = false; controller.abort(); };
   }, [userId, requestKey]);
 
   const retry = useCallback(() => setAttempt((current) => current + 1), []);
   const isCurrent = Boolean(requestKey && result?.requestKey === requestKey);
-
-  // Derive loading from request identity instead of setting state in the effect.
+  const hasSnapshot = Boolean(userId && result?.userId === userId && result.hasSnapshot);
   return {
-    conversations: isCurrent ? result.conversations : [],
-    isLoading: Boolean(userId) && !isCurrent,
-    error: isCurrent ? result.error : "",
+    conversations: hasSnapshot ? result.conversations : [],
+    isLoading: Boolean(userId) && !isCurrent && !hasSnapshot,
+    isRefreshing: Boolean(userId) && !isCurrent && hasSnapshot,
+    snapshotReady: Boolean(isCurrent && hasSnapshot && !result.error),
+    error: isCurrent && !hasSnapshot ? result.error : "",
+    refreshError: isCurrent && hasSnapshot ? result.error : "",
     retry,
   };
 }

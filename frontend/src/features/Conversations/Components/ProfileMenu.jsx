@@ -2,7 +2,7 @@
  * File: ProfileMenu.jsx
  * Purpose: Provides the signed-in user's profile dropdown.
  * Responsibilities:
- * 1. Display a generic user avatar and the authenticated mobile number.
+ * 1. Display a generic avatar, the authenticated name, and a secondary mobile number.
  * 2. Invoke the existing authentication logout action.
  * 3. Support themes, responsive sizing, and accessible dismissal.
  */
@@ -11,6 +11,7 @@ import { useContext, useEffect, useId, useRef, useState } from "react";
 import { LogOut, UserRound } from "lucide-react";
 import { AuthContext } from "../../../app/AuthContext";
 import { ThemeContext } from "../../../app/ThemeContext";
+import { getDisplayName } from "../../../shared/lib/displayIdentity";
 
 export default function ProfileMenu() {
   const auth = useContext(AuthContext);
@@ -23,6 +24,7 @@ export default function ProfileMenu() {
   const panelId = useId();
   const nameId = useId();
 
+  const userName = typeof auth?.user?.userName === "string" ? auth.user.userName.trim() : "";
   const mobileNumber =
     typeof auth?.user?.mobileNumber === "string"
       ? auth.user.mobileNumber.trim()
@@ -110,8 +112,13 @@ export default function ProfileMenu() {
               Signed in as
             </p>
             <h2 id={nameId} className="break-words text-sm font-semibold">
-              {mobileNumber || "Mobile number unavailable"}
+              {getDisplayName(userName, mobileNumber)}
             </h2>
+            {mobileNumber && (
+              <p className={"mt-1 break-words text-xs " + (isDark ? "text-slate-400" : "text-slate-500")}>
+                {mobileNumber}
+              </p>
+            )}
           </div>
 
           <div className="p-2">
