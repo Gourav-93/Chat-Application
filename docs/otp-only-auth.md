@@ -106,6 +106,18 @@ To run the test UI with local configuration, from project root:
 
 Open http://localhost:5261/index.html and hard-refresh. Sign out/use a fresh browser profile if an existing login hides the initial form.
 
+## Manual verification and profile completion results
+
+These are user-reported local API results on `stabilization/v1`.
+
+| Scenario | Expected result | Observed result | Status |
+|---|---|---|---|
+| Verify a valid OTP for a fresh mobile | HTTP 200 with `profileRequired`, a registration token, and a future registration expiry | HTTP 200 with `profileRequired`, a non-empty `registrationToken`, and a future `registrationExpiresAt` | Passed |
+| Complete the profile with the issued registration token | HTTP 200 with a login JWT, account ID, submitted name, verified mobile, and future login expiry | HTTP 200 with non-empty `token` and `userId`, `userName` equal to `Sandesh Test`, the verified mobile, and a future `expiresAt` | Passed |
+| Replay the same registration token after completion | HTTP 409 Conflict | HTTP 409 | Passed |
+
+These checks confirm the reported HTTP results. Direct database checks, JWT use against protected endpoints, credential expiry, concurrent completion, and frontend handling were outside this manual run. The automated harness was not run for these results.
+
 ## Proposed PR description (not submitted)
 
 Separate mobile OTP verification from new-user profile completion. Existing users sign in directly; new verified mobiles receive a hashed, short-lived, mobile-bound registration credential with no chat access. Complete registration atomically under the same mobile lock, preserving account identity/name and preventing duplicate registration on retries/concurrent requests. Persist pending state for restart/resume; retain multi-device JWT behaviour.
