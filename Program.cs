@@ -156,6 +156,17 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("ReactClient", policy =>
+    {
+        policy.WithOrigins("http://localhost:5173")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
 var app = builder.Build();
 
 //test
@@ -176,8 +187,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseRouting();
+app.UseCors("ReactClient");
 app.UseRateLimiter();
-
 app.UseAuthentication();
 app.UseAuthorization();
 
