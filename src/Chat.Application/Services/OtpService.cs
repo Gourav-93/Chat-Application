@@ -6,6 +6,7 @@ using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
+using Chat.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
@@ -17,6 +18,7 @@ public class OtpService : IOtpService
     private readonly ChatDbContext _context;
     private readonly ISmsSender _smsSender;
     private readonly byte[] _hashingKey;
+    private readonly bool _exposeDevelopmentOtp;
 
     private readonly int OtpExpiryMinutes;
     private readonly int ResendCooldownSeconds;
@@ -30,11 +32,16 @@ public class OtpService : IOtpService
         ChatDbContext context,
         ISmsSender smsSender,
         IConfiguration configuration,
+        IHostEnvironment environment,
         SingleSessionService singleSession)
     {
         _context = context;
         _smsSender = smsSender;
         _singleSession = singleSession;
+        _exposeDevelopmentOtp = environment.IsDevelopment()
+            && smsSender is DevelopmentSmsSender
+            && bool.TryParse(configuration["Otp:ExposeForLocalTesting"], out var exposeOtp)
+            && exposeOtp;
 
         OtpExpiryMinutes =
             configuration.GetValue<int>("Otp:ExpiryMinutes", 5);
@@ -72,62 +79,72 @@ public class OtpService : IOtpService
     // 1. SEND OTP
     // ==========================================
 
-    public async Task SendOtpAsync(SendOtpRequestDto request)
+    public async Task<string?> SendOtpAsync(SendOtpRequestDto request)
     {
         var mobileNumber = NormalizeMobileNumber(request.MobileNumber);
+        string otp;
 
-        var now = DateTime.UtcNow;
-        var windowStart = now.AddMinutes(-SendWindowMinutes);
-
-        var recentOtpCount = await _context.OtpVerifications
-            .CountAsync(o =>
-                o.MobileNumber == mobileNumber &&
-                o.CreatedAt >= windowStart);
-
-        if (recentOtpCount >= MaxSendRequests)
+        await using (var transaction =
+            await BeginVerificationTransactionAsync(mobileNumber))
         {
-            throw new AuthFlowException(
-            "Too many OTP requests. Try again later.", 429);
+            // Same mobile ki doosri request yahan wait karegi.
+            var now = DateTime.UtcNow;
+            var windowStart = now.AddMinutes(-SendWindowMinutes);
+
+            var recentOtpCount = await _context.OtpVerifications
+                .CountAsync(o =>
+                    o.MobileNumber == mobileNumber &&
+                    o.CreatedAt >= windowStart);
+
+            if (recentOtpCount >= MaxSendRequests)
+            {
+                throw new AuthFlowException(
+                    "Too many OTP requests. Try again later.", 429);
+            }
+
+            var latestOtp = await _context.OtpVerifications
+                .Where(o => o.MobileNumber == mobileNumber)
+                .OrderByDescending(o => o.CreatedAt)
+                .ThenByDescending(o => o.Id)
+                .FirstOrDefaultAsync();
+
+            if (latestOtp != null &&
+                now < latestOtp.CreatedAt.AddSeconds(ResendCooldownSeconds))
+            {
+                throw new AuthFlowException(
+                    "Please wait before requesting another OTP.", 429);
+            }
+
+            otp = RandomNumberGenerator.GetInt32(100000, 1000000)
+                .ToString();
+
+            var otpRecord = new OtpVerification
+            {
+                MobileNumber = mobileNumber,
+                OtpHash = HashOtp(mobileNumber, otp),
+                ExpiresAt = now.AddMinutes(OtpExpiryMinutes),
+                IsUsed = false,
+                Attempts = 0,
+                CreatedAt = now
+            };
+
+            _context.OtpVerifications.Add(otpRecord);
+            await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
         }
-
-        var latestOtp = await _context.OtpVerifications
-            .Where(o => o.MobileNumber == mobileNumber)
-            .OrderByDescending(o => o.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        if (latestOtp != null &&
-            DateTime.UtcNow < latestOtp.CreatedAt.AddSeconds(ResendCooldownSeconds))
-        {
-            throw new AuthFlowException(
-    "Please wait before requesting another OTP.", 429);
-        }
-
-        var otp = RandomNumberGenerator.GetInt32(100000, 1000000)
-            .ToString();
-
-        var otpRecord = new OtpVerification
-        {
-            MobileNumber = mobileNumber,
-            OtpHash = HashOtp(mobileNumber, otp),
-            ExpiresAt = DateTime.UtcNow.AddMinutes(OtpExpiryMinutes),
-            IsUsed = false,
-            Attempts = 0,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _context.OtpVerifications.Add(otpRecord);
-        await _context.SaveChangesAsync();
 
         try
-        {
+        {   // Database lock release hone ke baad delivery.
             await _smsSender.SendOtpAsync(mobileNumber, otp);
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _context.OtpVerifications.Remove(otpRecord);
-            await _context.SaveChangesAsync();
-            throw;
+            throw new AuthFlowException(
+                "Unable to send OTP right now. Please try again later.",
+                503);
         }
+
+        return _exposeDevelopmentOtp ? otp : null;
     }
 
     // ==========================================

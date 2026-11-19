@@ -36,6 +36,7 @@ export default function OtpVerificationForm({
   mobileNumber,
   onVerified,
   onChangeNumber,
+  onDevelopmentOtp,
 }) {
   const [digits, setDigits] = useState(Array(OTP_LENGTH).fill(""));
 
@@ -224,10 +225,12 @@ onVerified?.(response);
 
     setError("");
     setSuccessMessage("");
+    onDevelopmentOtp(null);
     setIsResending(true);
 
     try {
-      await sendOtp(mobileNumber);
+      const response = await sendOtp(mobileNumber);
+      onDevelopmentOtp(response?.developmentOtp ?? null);
 
       // Clear the previous code after a successful resend.
       setDigits(Array(OTP_LENGTH).fill(""));
