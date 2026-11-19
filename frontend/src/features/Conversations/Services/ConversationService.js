@@ -35,7 +35,12 @@ export async function getConversations(signal) {
     throw new Error("The server returned an unexpected conversation response.");
   }
 
-  return conversations;
+  return conversations.map((conversation) => ({
+    ...conversation,
+    unreadCount: Number.isSafeInteger(conversation.unreadCount) && conversation.unreadCount >= 0
+      ? conversation.unreadCount
+      : null,
+  }));
 }
 
 export function getConversationErrorMessage(error) {

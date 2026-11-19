@@ -44,8 +44,10 @@ export default function ConversationList({
   const auth = useContext(AuthContext);
   const userId = auth?.isAuthenticated ? auth.user?.userId : null;
   const isDark = theme?.isDark ?? true;
-  const { conversations, isLoading, isRefreshing, snapshotReady, error, refreshError, retry } =
-    useConversations(refreshKey);
+  const {
+    conversations, isLoading, isRefreshing, snapshotReady, unreadCountsAvailable,
+    error, refreshError, retry,
+  } = useConversations(refreshKey);
   const [query, setQuery] = useState("");
   const searchId = useId();
   const listId = useId();
@@ -135,6 +137,11 @@ export default function ConversationList({
         {filtered.map((conversation) => {
           const displayName = getDisplayName(conversation.otherUserName, conversation.otherUserMobileNumber);
           const timestamp = formatTimestamp(conversation.lastMessageAt);
+          const unreadCount = unreadCountsAvailable ? conversation.unreadCount : null;
+          const showUnread = unreadCount > 0;
+          const unreadLabel = showUnread
+            ? `, ${unreadCount} unread ${unreadCount === 1 ? "message" : "messages"}`
+            : "";
           return (
             <li
               key={conversation.conversationId}
@@ -143,7 +150,7 @@ export default function ConversationList({
               <button
                 type="button"
                 data-conversation-id={conversation.conversationId}
-                aria-label={"Open conversation with " + displayName}
+                aria-label={"Open conversation with " + displayName + unreadLabel}
                 aria-pressed={selectedConversationId === conversation.conversationId}
                 disabled={typeof onSelect !== "function"}
                 onClick={() => onSelect?.(conversation)}
@@ -168,8 +175,21 @@ export default function ConversationList({
                     </time>
                   )}
                 </span>
-                <span className={"mt-1 block truncate text-sm " + muted}>
-                  {conversation.lastMessage?.trim() || "No messages yet"}
+                <span className="mt-1 flex min-w-0 items-center gap-2">
+                  <span className={"min-w-0 flex-1 truncate text-sm " + muted}>
+                    {conversation.lastMessage?.trim() || "No messages yet"}
+                  </span>
+                  {showUnread && (
+                    <span
+                      aria-hidden="true"
+                      className={"inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs leading-none font-semibold text-white tabular-nums " +
+                        (isDark
+                          ? "bg-[#3B82F6] [text-shadow:1px_0_#111827,-1px_0_#111827,0_1px_#111827,0_-1px_#111827]"
+                          : "bg-[#2563EB]")}
+                    >
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  )}
                 </span>
               </span>
               </button>
@@ -181,7 +201,7 @@ export default function ConversationList({
   }
 
   return (
-    <section ref={containerRef} aria-label="Conversation list and search" className="flex min-h-0 flex-1 flex-col">
+    <section ref={containerRef} aria-label="Conversation list and search" className="flex min-h-0 flex-1 flex-col overflow-clip">
       <div className="shrink-0 px-4 py-4">
         <label htmlFor={searchId} className="sr-only">Search conversations by username or mobile number</label>
         <div className={"flex items-center gap-3 rounded-xl border px-3 focus-within:ring-2 focus-within:ring-blue-500 " +
@@ -211,9 +231,9 @@ export default function ConversationList({
           )}
         </div>
       </div>
-      {isRefreshing && <p role="status" className={"px-4 pb-2 text-xs " + muted}>Updating conversations...</p>}
+      {isRefreshing && <p role="status" className="sr-only">Updating conversations...</p>}
       {refreshError && (
-        <div className="px-4 pb-3 text-xs">
+        <div className="shrink-0 px-4 pb-3 text-xs">
           <p role="alert" className={isDark ? "text-red-300" : "text-red-600"}>{refreshError}</p>
           <button type="button" onClick={retry}
             className="mt-2 min-h-11 rounded px-3 text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">
@@ -227,7 +247,7 @@ export default function ConversationList({
         aria-label="Conversation results"
         aria-busy={isLoading || isRefreshing}
         tabIndex={0}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500"
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500"
       >
         {content}
       </div>
