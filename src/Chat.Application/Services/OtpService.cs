@@ -6,6 +6,7 @@ using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
+using Chat.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
@@ -17,6 +18,7 @@ public class OtpService : IOtpService
     private readonly ChatDbContext _context;
     private readonly ISmsSender _smsSender;
     private readonly byte[] _hashingKey;
+    private readonly bool _exposeDevelopmentOtp;
 
     private readonly int OtpExpiryMinutes;
     private readonly int ResendCooldownSeconds;
@@ -30,11 +32,16 @@ public class OtpService : IOtpService
         ChatDbContext context,
         ISmsSender smsSender,
         IConfiguration configuration,
+        IHostEnvironment environment,
         SingleSessionService singleSession)
     {
         _context = context;
         _smsSender = smsSender;
         _singleSession = singleSession;
+        _exposeDevelopmentOtp = environment.IsDevelopment()
+            && smsSender is DevelopmentSmsSender
+            && bool.TryParse(configuration["Otp:ExposeForLocalTesting"], out var exposeOtp)
+            && exposeOtp;
 
         OtpExpiryMinutes =
             configuration.GetValue<int>("Otp:ExpiryMinutes", 5);
@@ -72,7 +79,7 @@ public class OtpService : IOtpService
     // 1. SEND OTP
     // ==========================================
 
-    public async Task SendOtpAsync(SendOtpRequestDto request)
+    public async Task<string?> SendOtpAsync(SendOtpRequestDto request)
     {
         var mobileNumber = NormalizeMobileNumber(request.MobileNumber);
         string otp;
@@ -136,6 +143,8 @@ public class OtpService : IOtpService
                 "Unable to send OTP right now. Please try again later.",
                 503);
         }
+
+        return _exposeDevelopmentOtp ? otp : null;
     }
 
     // ==========================================

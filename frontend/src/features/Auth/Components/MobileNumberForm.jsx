@@ -62,10 +62,10 @@ export default function MobileNumberForm({ onOtpSent }) {
     setIsLoading(true);
 
     try {
-      await sendOtp(fullMobileNumber);
+      const response = await sendOtp(fullMobileNumber);
 
       // Move to OTP verification after a successful request.
-      onOtpSent?.(fullMobileNumber);
+      onOtpSent?.(fullMobileNumber, response?.developmentOtp);
     } catch (apiError) {
       setError(getAuthErrorMessage(apiError));
     } finally {

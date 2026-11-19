@@ -15,7 +15,9 @@ POST /api/auth/send-otp
 
     { "mobileNumber": "+919876543210" }
 
-HTTP 200 returns a message. Development delivery prints the OTP to the local backend terminal. Invalid input returns 400. Cooldown or an exhausted send quota returns 429. If delivery fails after the database commit, the API returns 503 and the saved OTP still counts toward cooldown and quota.
+HTTP 200 returns a message. Development delivery prints the OTP to the local backend terminal. Invalid input returns 400. Cooldown or an exhausted send quota returns 429. If delivery fails after the database commit, the API returns 503 and the saved OTP still counts toward cooldown and quota. The console sender runs only in Development. Other environments require an SMS provider for delivery to succeed.
+
+`Otp:ExposeForLocalTesting` defaults to `false`. With the flag explicitly `true`, the Development environment and its console sender can include `developmentOtp` in a successful response after delivery. The response uses `Cache-Control: no-store`. React shows the value in a dismissible dialog that closes after 30 seconds. The code stays in component state while the dialog is open.
 
 POST /api/auth/verify-otp
 
@@ -101,6 +103,15 @@ To run the test UI with local configuration, from project root:
 
 Open http://localhost:5261/index.html and hard-refresh. Sign out/use a fresh browser profile if an existing login hides the initial form.
 
+### Run the optional React OTP preview locally
+
+Use the existing local authentication settings and a confirmed isolated SQL Server test database. From the backend project root, set the opt-in flag in the PowerShell terminal that runs the backend.
+
+    $env:Otp__ExposeForLocalTesting = 'true'
+    dotnet run --project Two-Way-Com.csproj --launch-profile http
+
+The `http` profile starts the backend in Development on port 5261. From `frontend`, run `npm ci` and `npm run dev`, then open http://localhost:5173. If a backend is already running, stop it in its terminal before starting it with the new flag. To disable the preview, set `$env:Otp__ExposeForLocalTesting = 'false'` and restart using the same profile. Development OTPs remain available in the backend terminal.
+
 ## Manual OTP sign-in and profile completion results
 
 These are user-reported local API results on `stabilization/v1`.
@@ -113,8 +124,9 @@ These are user-reported local API results on `stabilization/v1`.
 | Sign in with a fresh OTP for the registered mobile | HTTP 200 with `signedIn`, the same user ID and name as profile completion, and a non-empty login JWT | HTTP 200 with `signedIn`, matching `login.userId` and `login.userName`, and a non-empty `login.token` | Passed |
 | Resubmit the same OTP after successful sign-in | HTTP 400 with `OTP not found or already used.` and no new login JWT | User confirmed the expected rejection | Passed |
 | Submit one wrong OTP, then retry with the original correct OTP | HTTP 400 with `Incorrect OTP.` for the wrong OTP. `Attempts` increases by one on the same row, `IsUsed` stays false, and the correct OTP returns HTTP 200 with `signedIn` | Baseline `Attempts = 0` and `IsUsed = false`. The wrong OTP returned HTTP 400 with `Incorrect OTP.` The same row then had `Attempts = 1` and `IsUsed = false`. The correct OTP returned HTTP 200 with `signedIn` | Passed |
+| Submit a fresh, unused OTP after its configured expiry | Expired OTP is rejected | The user observed `OTP has expired.` | HTTP status pending confirmation |
 
-These results cover the reported HTTP responses and the OTP-row check for the wrong attempt. JWT use against protected endpoints, credential expiry, concurrent completion, and frontend handling were outside this manual run. The automated harness was not run for these results.
+These results cover the reported HTTP responses and the OTP-row check for the wrong attempt. JWT use against protected endpoints, registration-token expiry, concurrent completion, and frontend handling were outside these manual checks. The automated harness was not run for these results.
 
 ## Manual Chrome and Edge session takeover results
 
@@ -145,6 +157,24 @@ Automated checks used one backend instance, real SQL Server LocalDB, and tempora
 | OTP regression | Registration succeeds, completion replay and OTP reuse fail, and a wrong attempt can be followed by a correct OTP | Registration completed. Completion replay gave 409. Wrong OTP gave 400, increased attempts by one, and left the OTP unused. Correct OTP signed in and replay returned 400 | Passed |
 
 Real SMS, physical devices, natural OTP expiry, and multiple backend instances were outside this trial.
+
+## Local OTP popup verification
+
+Automated HTTP checks used a separate disposable SQL Server LocalDB database. Development with the flag enabled returned the same six-digit OTP used by the console sender. That code verified against the saved hash, and the response used `Cache-Control: no-store`. Development with the flag off, missing or invalid omitted `developmentOtp`. Production and Staging omitted it with the flag enabled. The default unconfigured sender returned 503 in those environments and emitted no terminal OTP. A simulated successful provider omitted the field in all three environments. A simulated delivery failure returned 503 and retained the committed hashed row.
+
+The backend and React builds passed. A headless Chrome check verified the initial and resend dialogs, dismissal, the 30-second display timeout, and successful verification with the resent code.
+
+The user separately confirmed the following manual results on `stabilization/v1`.
+
+| Scenario | Expected result | User-reported result | Status |
+|---|---|---|---|
+| Send OTP with the flag enabled | React opens the development OTP preview | The `Development test OTP` popup appeared | Passed |
+| Verify the displayed code | The code completes OTP verification | The displayed code verified successfully | Passed |
+| Resend after cooldown | The popup shows the OTP issued by the resend request | The popup displayed the newly issued OTP | Passed |
+| Dismiss the popup | The displayed code clears | Dismissal cleared the code | Passed |
+| Restart with the flag disabled | The response omits `developmentOtp`, the popup stays closed, and the terminal OTP can verify | The field and popup were absent and the normal terminal-based OTP flow worked | Passed |
+
+These checks cover the local OTP preview. Real SMS delivery, physical devices, and multiple backend instances remain unverified. The natural OTP-expiry response message was observed, and its exact HTTP status is pending confirmation.
 
 ## Historical OTP-only PR draft (not submitted)
 

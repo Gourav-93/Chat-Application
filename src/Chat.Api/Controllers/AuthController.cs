@@ -44,12 +44,15 @@ public class AuthController : ControllerBase
     {
         try
         {
-            await _otpService.SendOtpAsync(request);
-
-            return Ok(new
+            var developmentOtp = await _otpService.SendOtpAsync(request);
+            const string message = "OTP generated successfully. Check backend terminal.";
+            if (developmentOtp is null)
             {
-                message = "OTP generated successfully. Check backend terminal."
-            });
+                return Ok(new { message });
+            }
+
+            Response.Headers.CacheControl = "no-store";
+            return Ok(new { message, developmentOtp });
         }
         catch (ArgumentException ex)
         {

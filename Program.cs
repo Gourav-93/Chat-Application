@@ -43,7 +43,15 @@ builder.Services.AddSwaggerGen(options =>
 // SignalR
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
-builder.Services.AddScoped<ISmsSender, DevelopmentSmsSender>();
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddScoped<ISmsSender, DevelopmentSmsSender>();
+}
+else
+{
+    builder.Services.AddScoped<ISmsSender, UnconfiguredSmsSender>();
+}
+
 builder.Services.AddScoped<IOtpService, OtpService>();
 builder.Services.AddDataProtection();
 
