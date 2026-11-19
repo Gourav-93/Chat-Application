@@ -50,6 +50,7 @@ export function createMessageHistoryService(
     onPresence,
     onTyping,
     onSessionReplaced,
+    onConversationsInvalidated,
   } = {},
 ) {
   if (
@@ -70,6 +71,12 @@ export function createMessageHistoryService(
 
   const publishState = (status, error = "") => {
     if (!disposed) onState?.({ status, error });
+  };
+  const invalidateConversations = (record) => {
+    if (!disposed && current === record && !record.retired &&
+        record.generation === generation && Date.now() < expiresAt) {
+      onConversationsInvalidated?.();
+    }
   };
   const validMessage = (message) =>
     message &&
@@ -100,6 +107,7 @@ export function createMessageHistoryService(
     record.retired = true;
     record.connection.off("MessageHistory", record.handler);
     record.connection.off("ReceiveMessage", record.receiveHandler);
+    record.connection.off("ConversationUnreadChanged", record.unreadHandler);
     record.connection.off("PendingMessages", record.pendingHandler);
     record.connection.off("MessageStatusUpdated", record.receiptHandler);
     record.connection.off("UserOnline", record.onlineHandler);
@@ -341,6 +349,12 @@ export function createMessageHistoryService(
           isTyping: data.isTyping,
         });
       };
+      record.unreadHandler = (event) => {
+        if (!liveRecord() || !Number.isSafeInteger(event?.conversationId) ||
+            event.conversationId < 1) return;
+        invalidateConversations(record);
+      };
+      connection.on("ConversationUnreadChanged", record.unreadHandler);
       record.replacedHandler = (data) => {
         if (!liveRecord()) return;
 
@@ -394,6 +408,8 @@ export function createMessageHistoryService(
           throw new Error("History connection startup was superseded.");
         }
         publishState("connected");
+        // Events missed during a disconnect are recovered from the list API.
+        invalidateConversations(record);
         return record;
       } catch {
         void api
@@ -683,7 +699,12 @@ export function createMessageHistoryService(
       return true;
     },
     markDelivered: (id) => command("MarkDelivered", [id]),
-    markRead: (id, isCurrent) => command("MarkRead", [id], isCurrent),
+    async markRead(id, isCurrent) {
+      const response = await command("MarkRead", [id], isCurrent);
+      // Refresh the initiating device after the server acknowledges the read.
+      invalidateConversations(response.record);
+      return response;
+    },
     async getUserStatus(userId, isCurrent = () => true) {
       const record = current;
       const id = userId.toLowerCase();

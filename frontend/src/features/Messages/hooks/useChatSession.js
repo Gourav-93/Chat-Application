@@ -119,6 +119,9 @@ export default function useChatSession() {
       void flushDelivery();
     };
     owner.service = createMessageHistoryService(token, expiresAt, {
+      onConversationsInvalidated: () => update((previous) => ({
+        ...previous, revision: previous.revision + 1,
+      })),
       onSessionReplaced: (message) => {
   if (active) {
     endSession?.(message, token);
