@@ -3,10 +3,15 @@ using Chat.Application.Interfaces;
 
 namespace Chat.Infrastructure.Services;
 
-public class DevelopmentSmsSender : ISmsSender
+public sealed class DevelopmentSmsSender(IHostEnvironment environment) : ISmsSender
 {
     public Task SendOtpAsync(string mobileNumber, string otp)
     {
+        if (!environment.IsDevelopment())
+        {
+            throw new InvalidOperationException("The development SMS sender requires Development.");
+        }
+
         Console.ForegroundColor = ConsoleColor.Green;
 
         Console.WriteLine("\n========== DEVELOPMENT OTP ==========");
