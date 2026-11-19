@@ -116,6 +116,15 @@ These are user-reported local API results on `stabilization/v1`.
 
 These results cover the reported HTTP responses and the OTP-row check for the wrong attempt. JWT use against protected endpoints, credential expiry, concurrent completion, and frontend handling were outside this manual run. The automated harness was not run for these results.
 
+## Manual Chrome and Edge session takeover results
+
+The user reported these observations from the two-browser demo on integrated `stabilization/v1`.
+
+| Scenario | Expected result | Observed result | Status |
+|---|---|---|---|
+| Cancel the takeover prompt in Browser B | Browser A remains signed in | Browser A stayed signed in | Passed |
+| Confirm takeover in Browser B | Browser B signs in and Browser A returns to login | Browser B signed in and Browser A returned to the login screen | Passed |
+
 ## Local session integration trial results
 
 Automated checks used one backend instance, real SQL Server LocalDB, and temporary test accounts. The React smoke used two isolated Chromium browser contexts. The simulated sender changed only the test harness.
