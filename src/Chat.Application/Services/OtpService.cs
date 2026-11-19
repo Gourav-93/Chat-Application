@@ -22,16 +22,19 @@ public class OtpService : IOtpService
     private readonly int ResendCooldownSeconds;
     private readonly int MaxSendRequests;
     private readonly int SendWindowMinutes;
+    private readonly SingleSessionService _singleSession;
 
     private const int MaxAttempts = 5;
 
     public OtpService(
         ChatDbContext context,
         ISmsSender smsSender,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        SingleSessionService singleSession)
     {
         _context = context;
         _smsSender = smsSender;
+        _singleSession = singleSession;
 
         OtpExpiryMinutes =
             configuration.GetValue<int>("Otp:ExpiryMinutes", 5);
@@ -209,6 +212,12 @@ public class OtpService : IOtpService
         DateTime? registrationExpiresAt = null;
         if (user != null)
         {
+            await _singleSession.PrepareAsync(
+             user,
+             $"otp:{otpRecord.Id}",
+             request.ConfirmExistingSession,
+             request.ConfirmationToken
+            );
             // Existing user logging in with OTP.
             user.IsMobileVerified = true;
         }
@@ -275,11 +284,21 @@ public class OtpService : IOtpService
         {
             user = new User
             {
-                Id = Guid.NewGuid(), UserName = userName,
-                MobileNumber = mobile, IsMobileVerified = true
+                Id = Guid.NewGuid(),
+                UserName = userName,
+                MobileNumber = mobile,
+                IsMobileVerified = true
             };
             _context.Users.Add(user);
         }
+
+        // New user ko current transaction mein persist karo.
+        await _context.SaveChangesAsync();
+
+        await _singleSession.PrepareAsync(
+            user,
+            $"registration:{pending.Id:N}"
+        );
 
         user.IsMobileVerified = true;
         pending.CompletedAt = DateTime.UtcNow;

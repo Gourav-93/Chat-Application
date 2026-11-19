@@ -19,7 +19,7 @@ import MobileNumberForm from "../Components/MobileNumberForm";
 import OtpVerificationForm from "../Components/OtpVerificationForm";
 import CompleteProfileForm from "../Components/CompleteProfileForm";
 
-export default function LoginPage({ onLoginSuccess }) {
+export default function LoginPage({ onLoginSuccess, logoutReason }) {
   const [step, setStep] = useState("mobile");
   const [registration, setRegistration] = useState(null);
   const [mobileNumber, setMobileNumber] = useState("");
@@ -94,6 +94,11 @@ export default function LoginPage({ onLoginSuccess }) {
         <section className="mx-auto w-full max-w-md min-w-0">
           {/* The card grows naturally when an error appears. */}
           <div className="w-full rounded-[28px] border border-[#293854] bg-[#111d31] p-5 shadow-2xl shadow-black/20 sm:p-7">
+            {logoutReason && (
+              <p role="status" className="mb-4 text-sm text-blue-200">
+                {logoutReason}
+              </p>
+            )}
             {step === "mobile" ? (
               <MobileNumberForm onOtpSent={handleOtpSent} />
             ) : step === "profile" ? (

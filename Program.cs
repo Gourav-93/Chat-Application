@@ -11,6 +11,8 @@ using Chat.Application.Interfaces;
 using Chat.Infrastructure.Services;
 using Chat.Infrastructure.Presence;
 using System.Threading.RateLimiting;
+using Chat.Api.Filters;
+using Microsoft.AspNetCore.SignalR;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,9 +45,18 @@ builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
 builder.Services.AddScoped<ISmsSender, DevelopmentSmsSender>();
 builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddDataProtection();
 
+builder.Services.AddScoped<SingleSessionService>();
 
-builder.Services.AddSignalR();
+builder.Services.AddSingleton<ActiveSessionValidator>();
+builder.Services.AddSingleton<SessionConnectionManager>();
+builder.Services.AddSingleton<ActiveSessionHubFilter>();
+
+builder.Services.AddSignalR(options =>
+{
+    options.AddFilter<ActiveSessionHubFilter>();
+});
 builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
 builder.Services.AddSingleton<IPresenceService, PresenceService>();
 
@@ -86,6 +97,7 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -123,7 +135,22 @@ builder.Services
                 }
 
                 return Task.CompletedTask;
-            }
+            },
+            OnTokenValidated = async context =>
+{
+    var validator = context.HttpContext.RequestServices
+        .GetRequiredService<ActiveSessionValidator>();
+
+    var active = await validator.IsActiveAsync(
+        context.Principal,
+        context.HttpContext.RequestAborted
+    );
+
+    if (!active)
+    {
+        context.Fail("Session expired or replaced.");
+    }
+}
         };
     });
 
@@ -206,6 +233,10 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHub<ChatHub>("/hubs/chat");
+// app.MapHub<ChatHub>("/hubs/chat");
+app.MapHub<ChatHub>("/hubs/chat", options =>
+{
+    options.CloseOnAuthenticationExpiration = true;
+});
 
 app.Run();

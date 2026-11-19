@@ -12,6 +12,7 @@ const EMPTY_MESSAGES = new Map();
 
 export default function useChatSession() {
   const auth = useContext(AuthContext);
+  const endSession = auth?.endSession;
   const token = auth?.isAuthenticated ? auth.user?.token : null;
   const userId = auth?.user?.userId;
   const expiresAt = auth?.user?.expiresAt;
@@ -118,6 +119,11 @@ export default function useChatSession() {
       void flushDelivery();
     };
     owner.service = createMessageHistoryService(token, expiresAt, {
+      onSessionReplaced: (message) => {
+  if (active) {
+    endSession?.(message, token);
+  }
+},
       onState: ({ status, error }) => {
         connectionStatus = status;
         if (status !== "connected") clearTypingSubscriptions();
@@ -216,7 +222,7 @@ export default function useChatSession() {
       if (sendRef.current?.owner === owner) sendRef.current = null;
       void owner.service.dispose();
     };
-  }, [validSession, token, userId, expiresAt]);
+  }, [validSession, token, userId, expiresAt, endSession]);
 
   const current = validSession && state?.owner.token === token &&
     state.owner.userId === userId && state.owner.expiresAt === expiresAt;

@@ -15,6 +15,11 @@ import axios from "axios";
 
 // In-memory token: cleared automatically when the page reloads.
 let accessToken = null;
+let unauthorizedHandler = null;
+
+export const setUnauthorizedHandler = (handler) => {
+  unauthorizedHandler = handler;
+};
 
 /**
  * Updates the JWT used by authenticated API requests.
@@ -35,11 +40,36 @@ const api = axios.create({
 
 // Attach the JWT only when an access token is available.
 api.interceptors.request.use((config) => {
-  if (accessToken) {
+  if (accessToken && !config.headers.has("Authorization")) {
     config.headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+
+  (error) => {
+    const authorization =
+      error.config?.headers?.get?.("Authorization");
+
+    const anonymousAuth =
+      /\/auth\/(send-otp|verify-otp|complete-profile)(?:$|\?)/.test(
+        error.config?.url || ""
+      );
+
+    if (
+      !anonymousAuth &&
+      error.response?.status === 401 &&
+      accessToken &&
+      authorization === `Bearer ${accessToken}`
+    ) {
+      unauthorizedHandler?.(accessToken);
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 export default api;

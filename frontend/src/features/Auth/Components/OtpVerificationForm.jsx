@@ -172,10 +172,43 @@ export default function OtpVerificationForm({
     setIsVerifying(true);
 
     try {
-      const response = await verifyOtp(mobileNumber, otp);
+      let response;
 
-      // The parent will manage authenticated user state.
-      onVerified?.(response);
+try {
+  response = await verifyOtp(mobileNumber, otp);
+} catch (failure) {
+  const conflict = failure.response?.data;
+
+  if (
+    failure.response?.status !== 409 ||
+    conflict?.requiresConfirmation !== true ||
+    typeof conflict.confirmationToken !== "string" ||
+    !conflict.confirmationToken
+  ) {
+    throw failure;
+  }
+
+  const confirmed = window.confirm(
+    (conflict.message ||
+      "This account is already signed in elsewhere.") +
+      "\n\nContinue here and sign out the other session?"
+  );
+
+  if (!confirmed) {
+    setSuccessMessage(
+      "Login cancelled. Your other session is unchanged."
+    );
+    return;
+  }
+
+  response = await verifyOtp(
+    mobileNumber,
+    otp,
+    conflict.confirmationToken
+  );
+}
+
+onVerified?.(response);
     } catch (apiError) {
       setError(getAuthErrorMessage(apiError));
     } finally {

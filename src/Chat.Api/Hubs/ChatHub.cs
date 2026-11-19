@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.SignalR;
 using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
+using Chat.Application.Services;
 
 namespace Chat.Api.Hubs;
 
@@ -11,15 +12,21 @@ public partial class ChatHub : Hub
     private readonly IChatService _chatService;
     private readonly IPresenceService _presenceService;
     private readonly IConversationService _conversationService;
+    private readonly ActiveSessionValidator _activeSessions;
+    private readonly SessionConnectionManager _sessionConnections;
 
     public ChatHub(
         IChatService chatService,
         IPresenceService presenceService,
-        IConversationService conversationService)
+        IConversationService conversationService,
+        ActiveSessionValidator activeSessions,
+SessionConnectionManager sessionConnections)
     {
         _chatService = chatService;
         _presenceService = presenceService;
         _conversationService = conversationService;
+        _activeSessions = activeSessions;
+        _sessionConnections = sessionConnections;
     }
     public override async Task OnConnectedAsync()
     {
@@ -29,9 +36,29 @@ public partial class ChatHub : Hub
             throw new HubException("User identity not found.");
 
         // Add connection to the authenticated user's group.
-        await Groups.AddToGroupAsync(
-            Context.ConnectionId,
-            $"user-{userId}");
+        var sessionIdValue = Context.User?
+    .FindFirst("sid")?.Value;
+
+        if (!Guid.TryParse(sessionIdValue, out var sessionId))
+        {
+            Context.Abort();
+            return;
+        }
+
+        var registered = await _sessionConnections.RegisterAsync(
+            currentUserId,
+            sessionId,
+            Context,
+            () => _activeSessions.IsActiveAsync(
+                Context.User,
+                Context.ConnectionAborted
+            )
+        );
+
+        if (!registered)
+        {
+            return;
+        }
 
         // Register this SignalR connection.
         bool isFirstConnection = await _presenceService.UserConnectedAsync(
@@ -124,9 +151,16 @@ public partial class ChatHub : Hub
     {
         if (Guid.TryParse(Context.UserIdentifier, out var userId))
         {
-            Console.WriteLine(
-                $"Connection disconnected: {Context.ConnectionId}");
+            var sessionIdValue = Context.User?
+     .FindFirst("sid")?.Value;
 
+            if (Guid.TryParse(sessionIdValue, out var sessionId))
+            {
+                await _sessionConnections.RemoveAsync(
+                    sessionId,
+                    Context.ConnectionId
+                );
+            }
             // Remove this connection and wait for the grace period.
             bool isOffline = await _presenceService.UserDisconnectedAsync(
                 userId,
