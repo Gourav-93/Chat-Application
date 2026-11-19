@@ -1,3 +1,4 @@
+// Handles authenticated SignalR messaging, receipts, presence, and typing.
 using Microsoft.AspNetCore.SignalR;
 using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
@@ -266,6 +267,13 @@ SessionConnectionManager sessionConnections)
             {
                 await Clients.Group($"user-{status.SenderId}")
                     .SendAsync("MessageStatusUpdated", status);
+            }
+
+            // Notifies the reader's devices to refresh unread counts after a read change.
+            if (statuses.Count > 0)
+            {
+                await Clients.Group($"user-{Context.UserIdentifier}")
+                    .SendAsync("ConversationUnreadChanged", new { conversationId });
             }
         }
         catch (UnauthorizedAccessException)

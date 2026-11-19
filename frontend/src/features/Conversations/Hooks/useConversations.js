@@ -1,54 +1,90 @@
 /**
  * File: useConversations.js
- * Purpose: Loads conversation summaries while retaining successful background data.
- * Responsibilities: Cancel stale requests, isolate accounts, distinguish initial
- * failures from refresh errors, and expose only successful current snapshots.
+ * Purpose: Loads conversation summaries and coalesces background refreshes.
+ * Responsibilities: Isolate account snapshots, serialize requests, and retain
+ * the last successful rows and unread counts through refresh failures.
  */
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AuthContext } from "../../../app/AuthContext";
 import { getConversations, getConversationErrorMessage } from "../Services/ConversationService";
+
+const REFRESH_DELAY_MS = 150;
 
 export default function useConversations(refreshKey = 0) {
   const auth = useContext(AuthContext);
   const userId = auth?.isAuthenticated ? auth.user?.userId : null;
+  const token = auth?.isAuthenticated ? auth.user?.token : null;
+  const scope = useMemo(() => userId && token ? { userId } : null, [userId, token]);
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState(null);
-  const requestKey = userId ? userId + ":" + refreshKey + ":" + attempt : null;
+  const workRef = useRef(null);
+  const requestKey = `${refreshKey}:${attempt}`;
 
-  useEffect(() => {
-    if (!userId) return undefined;
+  useLayoutEffect(() => {
+    if (!scope) return undefined;
     const controller = new AbortController();
-    let active = true;
-    getConversations(controller.signal).then(
-      (conversations) => {
-        if (active && !controller.signal.aborted) {
-          setResult({ requestKey, userId, conversations, error: "", hasSnapshot: true });
-        }
-      },
-      (error) => {
-        if (active && !controller.signal.aborted) {
+    const work = { controller, timer: null, pendingKey: null, running: false };
+    workRef.current = work;
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(work.timer);
+      workRef.current = null;
+    };
+  }, [scope]);
+
+  useLayoutEffect(() => {
+    const work = workRef.current;
+    if (!work) return;
+    const { signal } = work.controller;
+    work.pendingKey = requestKey;
+
+    // Later events replace the pending version without restarting the timer
+    // or aborting the current request. A completed request drains the queue.
+    function schedule() {
+      if (signal.aborted || work.running || work.timer !== null || work.pendingKey === null) return;
+      work.timer = window.setTimeout(load, REFRESH_DELAY_MS);
+    }
+
+    async function load() {
+      work.timer = null;
+      const key = work.pendingKey;
+      work.pendingKey = null;
+      work.running = true;
+      const isLatest = () => !signal.aborted && work.pendingKey === null;
+
+      try {
+        const conversations = await getConversations(signal);
+        if (isLatest()) setResult({ scope, key, conversations, error: "" });
+      } catch (error) {
+        if (isLatest()) {
           setResult((previous) => ({
-            requestKey, userId,
-            conversations: previous?.userId === userId ? previous.conversations : [],
-            hasSnapshot: previous?.userId === userId && previous.hasSnapshot,
+            scope, key,
+            conversations: previous?.scope === scope ? previous.conversations : null,
             error: getConversationErrorMessage(error),
           }));
         }
-      },
-    );
-    return () => { active = false; controller.abort(); };
-  }, [userId, requestKey]);
+      } finally {
+        work.running = false;
+        schedule();
+      }
+    }
+
+    schedule();
+  }, [scope, requestKey]);
 
   const retry = useCallback(() => setAttempt((current) => current + 1), []);
-  const isCurrent = Boolean(requestKey && result?.requestKey === requestKey);
-  const hasSnapshot = Boolean(userId && result?.userId === userId && result.hasSnapshot);
+  const current = result?.scope === scope ? result : null;
+  const isCurrent = current?.key === requestKey;
+  const hasSnapshot = Boolean(current?.conversations);
   return {
-    conversations: hasSnapshot ? result.conversations : [],
-    isLoading: Boolean(userId) && !isCurrent && !hasSnapshot,
-    isRefreshing: Boolean(userId) && !isCurrent && hasSnapshot,
-    snapshotReady: Boolean(isCurrent && hasSnapshot && !result.error),
-    error: isCurrent && !hasSnapshot ? result.error : "",
-    refreshError: isCurrent && hasSnapshot ? result.error : "",
+    conversations: current?.conversations ?? [],
+    isLoading: Boolean(scope) && !isCurrent && !hasSnapshot,
+    isRefreshing: Boolean(scope) && !isCurrent && hasSnapshot,
+    snapshotReady: isCurrent && hasSnapshot && !current.error,
+    unreadCountsAvailable: hasSnapshot,
+    error: isCurrent && !hasSnapshot ? current.error : "",
+    refreshError: isCurrent && hasSnapshot ? current.error : "",
     retry,
   };
 }

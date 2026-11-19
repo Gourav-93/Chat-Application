@@ -14,7 +14,7 @@
  * 7. Coordinate recipient activity, typing, and visible-chat reads through the shared session.
  */
 
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useRef, useState } from "react";
 import { MessageCircleMore, Moon, SquarePen, Sun } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
 import ProfileMenu from "../Components/ProfileMenu";
@@ -35,8 +35,8 @@ export default function ChatPage() {
   });
 
   const [newChatOpen, setNewChatOpen] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const refreshVersionRef = useRef(0);
+  const [creationVersion, setCreationVersion] = useState(0);
+  const creationVersionRef = useRef(0);
   const pendingCreatedRef = useRef(null);
 
   const openNewChat = useCallback(() => setNewChatOpen(true), []);
@@ -44,6 +44,7 @@ export default function ChatPage() {
 
   // Messaging and history share exactly one session-owned transport.
   const session = useChatSession();
+  const refreshKey = `${creationVersion}:${session.revision}`;
   const history = useMessageHistory(selection, session);
   // An open New Chat dialog pauses selected-chat typing and read acknowledgements.
   const activity = useConversationActivity(selection, session, history, !newChatOpen);
@@ -76,16 +77,6 @@ export default function ChatPage() {
     if (submittedRef.current === operation) submittedRef.current = null;
   };
 
-  useEffect(() => {
-    if (!session.revision) return undefined;
-    // Coalesce bursts; the version changes only when the refresh is issued.
-    const timer = window.setTimeout(() => {
-      const version = ++refreshVersionRef.current;
-      setRefreshKey(version);
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [session.revision]);
-
   const handleSelect = useCallback((conversation) => {
     if (!Number.isInteger(conversation?.conversationId) ||
         conversation.conversationId <= 0) return;
@@ -116,17 +107,16 @@ export default function ChatPage() {
 
   const handleConversationStarted = useCallback((conversation) => {
     // Advance synchronously before any older response can reconcile selection.
-    const version = refreshVersionRef.current + 1;
-    refreshVersionRef.current = version;
+    const version = ++creationVersionRef.current;
     handleSelect(conversation);
     pendingCreatedRef.current = conversation.conversationId;
-    setRefreshKey(version);
+    setCreationVersion(version);
     setNewChatOpen(false);
   }, [handleSelect]);
 
   const handleConversationsLoaded = useCallback((conversations, snapshotVersion = 0) => {
-    if (!Array.isArray(conversations) ||
-        snapshotVersion !== refreshVersionRef.current) return;
+    if (!Array.isArray(conversations) || snapshotVersion !== refreshKey ||
+        creationVersion !== creationVersionRef.current) return;
 
     // Wait for server confirmation before a list snapshot can remove a new chat.
     const pendingId = pendingCreatedRef.current;
@@ -169,7 +159,7 @@ export default function ChatPage() {
         generation: previous.generation + (participantChanged ? 1 : 0),
       };
     });
-  }, []);
+  }, [creationVersion, refreshKey]);
 
   const colors = {
     page: isDark ? "bg-[#080e1c] text-white" : "bg-slate-50 text-slate-900",
@@ -186,13 +176,13 @@ export default function ChatPage() {
   };
 
   return (
-    <main className={`flex h-dvh overflow-hidden ${colors.page}`}>
+    <main data-chat-dashboard className={`flex h-dvh overflow-hidden ${colors.page}`}>
       {/* Conversation sidebar */}
       <aside
         className={`${selection.conversation ? "hidden md:flex" : "flex"} min-h-0 w-full shrink-0 flex-col border-r md:w-[360px] lg:w-[400px] ${colors.sidebar}`}
       >
         <header
-          className={`flex items-center justify-between gap-2 border-b px-3 py-5 sm:px-5 ${colors.border}`}
+          className={`flex shrink-0 items-center justify-between gap-2 border-b px-3 py-5 sm:px-5 md:h-17 md:py-0 ${colors.border}`}
         >
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <MessageCircleMore className={`shrink-0 ${colors.icon}`} size={26} />
@@ -229,17 +219,18 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <div role="status" className={`flex shrink-0 items-center justify-between gap-2 px-4 py-2 text-xs ${colors.muted}`}>
-          <span>{session.status === "connected" ? "Connected" :
-            session.status === "connecting" ? "Connecting..." : "Disconnected"}</span>
-          {session.status === "disconnected" && !session.requiresSignIn && (
-            <button type="button" onClick={session.start}
-              className="rounded px-2 py-1 text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">
-              Connect
-            </button>
-          )}
-        </div>
-        {session.error && <p role="alert" className={`px-4 pb-2 text-xs ${colors.muted}`}>{session.error}</p>}
+        {session.status !== "connected" && (
+          <div role="status" className={`flex shrink-0 items-center justify-between gap-2 px-4 py-2 text-xs ${colors.muted}`}>
+            <span>{session.status === "connecting" ? "Connecting..." : "Disconnected"}</span>
+            {session.status === "disconnected" && !session.requiresSignIn && (
+              <button type="button" onClick={session.start}
+                className="rounded px-2 py-1 text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">
+                Connect
+              </button>
+            )}
+          </div>
+        )}
+        {session.error && <p role="alert" className={`shrink-0 px-4 pb-2 text-xs ${colors.muted}`}>{session.error}</p>}
         <ConversationList
           onSelect={handleSelect}
           selectedConversationId={selection.conversation?.conversationId}

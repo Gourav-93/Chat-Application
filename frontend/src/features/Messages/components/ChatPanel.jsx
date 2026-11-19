@@ -14,6 +14,8 @@ import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
 import MessageComposer from "./MessageComposer";
 
+const OLDER_HISTORY_THRESHOLD = 120;
+
 // Compare local calendar dates, including across DST changes and pagination.
 function getLocalDateKey(date) {
   return [
@@ -62,6 +64,8 @@ export default function ChatPanel({
   const headingRef = useRef(null);
   const viewportRef = useRef(null);
   const anchorRef = useRef(null);
+  const scrollTopRef = useRef(0);
+  const touchStartRef = useRef(null);
   const positionedRef = useRef(null);
   const paginationFocusRef = useRef(null);
   const retryButtonRef = useRef(null);
@@ -74,14 +78,15 @@ export default function ChatPanel({
     : null;
   const mobile = conversation?.otherUserMobileNumber?.trim() || "";
   const displayName = getDisplayName(conversation?.otherUserName, mobile);
+  const showMobile = Boolean(mobile && mobile !== displayName);
   const messages = history.messages;
   const busy = history.isLoading || history.isLoadingOlder;
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const activityAvailable = session.status === "connected" && !session.requiresSignIn;
   const recipientActivity = activityAvailable ? activity.label : "Activity unavailable";
   const activityError = activity.error || session.receiptError;
-  const showOlder = history.isLoadingOlder ||
-    (!history.isLoading && !history.error && history.hasMore);
+  const canLoadOlder = Boolean(selectionKey && history.hasMore && !busy &&
+    !history.error && !history.requiresSignIn);
 
   useEffect(() => {
     paginationFocusRef.current = null;
@@ -108,11 +113,21 @@ export default function ChatPanel({
     if (paginationFocusRef.current?.selectionKey !== selectionKey) {
       paginationFocusRef.current = null;
     }
+    if (anchorRef.current?.selectionKey !== selectionKey) anchorRef.current = null;
     const viewport = viewportRef.current;
     if (!viewport || busy) return;
 
     const anchor = anchorRef.current;
-    if (anchor?.selectionKey === selectionKey) {
+    const last = messages.at(-1);
+    const previousLast = lastMessageRef.current;
+    const needsInitialPosition = messages.length > 0 && positionedRef.current !== selectionKey;
+    const shouldFollowBottom = positionedRef.current === selectionKey &&
+      (followBottomRef.current || (
+        previousLast?.selectionKey === selectionKey && previousLast.id !== last?.id &&
+        last?.senderId.toLowerCase() === String(history.userId).toLowerCase()
+      ));
+
+    if (anchor) {
       const item = Array.from(
         viewport.querySelectorAll("[data-message-id]"),
       ).find((node) => node.dataset.messageId === anchor.id);
@@ -126,19 +141,15 @@ export default function ChatPanel({
         viewport.scrollTop = anchor.top;
       }
       anchorRef.current = null;
-    } else if (messages.length > 0 && positionedRef.current !== selectionKey) {
+    } else if (needsInitialPosition || shouldFollowBottom) {
       // Delay initial positioning until messages arrive, including after retry.
       viewport.scrollTop = viewport.scrollHeight;
       positionedRef.current = selectionKey;
+      followBottomRef.current = true;
     }
-    const last = messages.at(-1);
-    const previousLast = lastMessageRef.current;
-    if (!anchor && positionedRef.current === selectionKey &&
-        (followBottomRef.current || (
-          previousLast?.selectionKey === selectionKey && previousLast.id !== last?.id &&
-          last?.senderId.toLowerCase() === String(history.userId).toLowerCase()
-        ))) {
-      viewport.scrollTop = viewport.scrollHeight;
+    if (anchor || needsInitialPosition || shouldFollowBottom) {
+      // Ignore the scroll event queued by our own positioning.
+      scrollTopRef.current = Math.max(0, viewport.scrollTop);
     }
     lastMessageRef.current = { selectionKey, id: last?.id };
     const pending = paginationFocusRef.current;
@@ -156,12 +167,7 @@ export default function ChatPanel({
     }
   }, [messages, history.error, history.requiresSignIn, history.userId, busy, selectionKey]);
 
-  const rememberPosition = (button) => {
-    paginationFocusRef.current = document.activeElement === button
-      ? { button, selectionKey }
-      : null;
-    const viewport = viewportRef.current;
-    if (!viewport) return;
+  const captureScrollAnchor = (viewport) => {
     const bounds = viewport.getBoundingClientRect();
     const item = Array.from(
       viewport.querySelectorAll("[data-message-id]"),
@@ -176,15 +182,53 @@ export default function ChatPanel({
   };
 
   const handleRetry = (event) => {
-    if (busy || history.requiresSignIn) return;
-    if (history.page > 1) rememberPosition(event.currentTarget);
+    if (busy || history.requiresSignIn || anchorRef.current?.selectionKey === selectionKey) return;
+    const viewport = viewportRef.current;
+    if (history.page > 1 && viewport) {
+      const button = event.currentTarget;
+      paginationFocusRef.current = document.activeElement === button
+        ? { button, selectionKey }
+        : null;
+      captureScrollAnchor(viewport);
+    }
     history.retry();
   };
 
-  const handleLoadOlder = (event) => {
-    if (busy) return;
-    rememberPosition(event.currentTarget);
+  const requestOlder = (viewport) => {
+    if (!canLoadOlder || positionedRef.current !== selectionKey ||
+        anchorRef.current?.selectionKey === selectionKey) return;
+
+    // The anchor also guards against duplicate events before the loading render.
+    captureScrollAnchor(viewport);
+    followBottomRef.current = false;
     history.loadOlder();
+  };
+
+  const handleScroll = (event) => {
+    const viewport = event.currentTarget;
+    const top = Math.max(0, viewport.scrollTop);
+    const previousTop = scrollTopRef.current;
+    if (top === previousTop) return;
+
+    scrollTopRef.current = top;
+    const movingUp = top < previousTop;
+    const pendingPage = anchorRef.current?.selectionKey === selectionKey;
+    followBottomRef.current = !(pendingPage && movingUp) &&
+      viewport.scrollHeight - viewport.clientHeight - top < 80;
+
+    if (pendingPage) {
+      // If the reader keeps scrolling, preserve the position they reach.
+      captureScrollAnchor(viewport);
+    } else if (movingUp && top <= OLDER_HISTORY_THRESHOLD) {
+      requestOlder(viewport);
+    }
+  };
+
+  const requestOlderWithoutOverflow = (viewport) => {
+    // An upward gesture on short history may not produce a scroll event.
+    if (viewport.clientHeight > 0 && viewport.scrollHeight <= viewport.clientHeight) {
+      requestOlder(viewport);
+    }
   };
 
   if (!conversation) return null;
@@ -196,7 +240,7 @@ export default function ChatPanel({
         (isDark ? "bg-[#080e1c] text-white" : "bg-slate-50 text-slate-900")}
     >
       <header
-        className={"flex shrink-0 items-center gap-3 border-b px-4 py-4 sm:px-6 " +
+        className={"flex shrink-0 items-center gap-2 border-b px-3 py-2 sm:gap-3 sm:px-6 sm:py-3 md:h-17 md:py-0 " +
           (isDark
             ? "border-[#293854] bg-[#111d31]"
             : "border-slate-200 bg-white")}
@@ -226,18 +270,18 @@ export default function ChatPanel({
             id={headingId}
             ref={headingRef}
             tabIndex={-1}
-            title={displayName}
-            className="truncate rounded text-base font-semibold focus-visible:outline-2 focus-visible:outline-blue-500"
+            title={showMobile ? displayName + " (" + mobile + ")" : displayName}
+            className="flex min-w-0 items-baseline gap-1.5 rounded text-base font-semibold focus-visible:outline-2 focus-visible:outline-blue-500"
           >
-            {displayName}
+            <span className="min-w-0 truncate">{displayName}</span>
+            {showMobile && (
+              <span className={"min-w-0 max-w-[60%] shrink-0 truncate text-xs font-normal " + muted}>
+                ({mobile})
+              </span>
+            )}
           </h2>
-          {mobile && (
-            <p title={mobile} className={"mt-1 truncate text-xs " + muted}>
-              {mobile}
-            </p>
-          )}
           <p role="status" title={recipientActivity}
-            className={"mt-1 text-xs [overflow-wrap:anywhere] " +
+            className={"mt-0.5 text-xs [overflow-wrap:anywhere] md:truncate " +
               (activityAvailable && isTyping ? "italic " : "") +
               (recipientActivity === "Online"
                 ? isDark ? "text-blue-300" : "text-blue-600"
@@ -245,20 +289,19 @@ export default function ChatPanel({
             {recipientActivity}
           </p>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          <span role="status" aria-label={"Chat connection: " + session.status}
-            className={"rounded-full border px-2.5 py-1 text-[11px] font-medium " +
-              (session.status === "connected"
-                ? isDark ? "border-blue-400/20 bg-blue-600/15 text-blue-200" : "border-blue-200 bg-blue-50 text-blue-700"
-                : isDark ? "border-slate-600 bg-slate-800 text-slate-300" : "border-slate-200 bg-slate-100 text-slate-600")}>
-            {session.status === "connected" ? "Connected" :
-              session.status === "connecting" ? "Connecting..." : "Disconnected"}
-          </span>
-          {session.status === "disconnected" && !session.requiresSignIn && (
-            <button type="button" onClick={session.start}
-              className="min-h-11 rounded px-2 text-xs text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">Connect</button>
-          )}
-        </div>
+        {session.status !== "connected" && (
+          <div className="flex shrink-0 flex-col items-end gap-1 md:flex-row md:items-center md:gap-2">
+            <span role="status" aria-label={"Chat connection: " + session.status}
+              className={"rounded-full border px-2.5 py-1 text-[11px] font-medium " +
+                (isDark ? "border-slate-600 bg-slate-800 text-slate-300" : "border-slate-200 bg-slate-100 text-slate-600")}>
+              {session.status === "connecting" ? "Connecting..." : "Disconnected"}
+            </span>
+            {session.status === "disconnected" && !session.requiresSignIn && (
+              <button type="button" onClick={session.start}
+                className="min-h-11 rounded px-2 text-xs text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">Connect</button>
+            )}
+          </div>
+        )}
       </header>
       {session.error && <p role="alert" className={"px-4 pb-2 text-xs " + muted}>{session.error}</p>}
       {activityError && (
@@ -276,18 +319,50 @@ export default function ChatPanel({
         </div>
       )}
 
+      <span role="status" className="sr-only">
+        {history.isLoadingOlder ? "Loading older messages" : ""}
+      </span>
       <div
-        onScroll={(event) => {
-          const viewport = event.currentTarget;
-          followBottomRef.current = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 80;
+        onScroll={handleScroll}
+        onWheel={(event) => {
+          if (!event.ctrlKey && event.deltaY < 0) requestOlderWithoutOverflow(event.currentTarget);
         }}
+        onKeyDown={(event) => {
+          const scrollsUp = ["ArrowUp", "PageUp", "Home"].includes(event.key) ||
+            (event.key === " " && event.shiftKey);
+          if (event.target === event.currentTarget && scrollsUp && !event.repeat) {
+            requestOlderWithoutOverflow(event.currentTarget);
+          }
+        }}
+        onTouchStart={(event) => {
+          const touch = event.touches.length === 1 ? event.touches[0] : null;
+          touchStartRef.current = touch && { selectionKey, id: touch.identifier, y: touch.clientY };
+        }}
+        onTouchEnd={(event) => {
+          const start = touchStartRef.current;
+          touchStartRef.current = null;
+          const touch = event.changedTouches[0];
+          if (start?.selectionKey === selectionKey && touch?.identifier === start.id &&
+              touch.clientY - start.y >= 24) {
+            requestOlderWithoutOverflow(event.currentTarget);
+          }
+        }}
+        onTouchCancel={() => { touchStartRef.current = null; }}
         ref={viewportRef}
         role="region"
         aria-label="Message history"
         aria-busy={busy}
         tabIndex={0}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 sm:px-6"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-5 pb-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 sm:px-6"
       >
+        {history.isLoadingOlder && (
+          <div aria-hidden="true" className="pointer-events-none sticky top-0 z-10 flex h-0 justify-center">
+            <span className={"absolute flex size-7 items-center justify-center rounded-full shadow-sm " +
+              (isDark ? "bg-[#18243a] text-blue-300" : "bg-white text-blue-600")}>
+              <LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" />
+            </span>
+          </div>
+        )}
         {history.isLoading && (
           <p
             role="status"
@@ -327,28 +402,6 @@ export default function ChatPanel({
                 Try again
               </button>
             )}
-          </div>
-        )}
-
-        {showOlder && (
-          <div className="mb-5 text-center">
-            <button
-              type="button"
-              disabled={history.isLoadingOlder}
-              aria-busy={history.isLoadingOlder}
-              onClick={handleLoadOlder}
-              className={"min-h-11 rounded-xl border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-wait disabled:opacity-60 " +
-                (isDark
-                  ? "border-[#293854] text-blue-300 hover:bg-white/5"
-                  : "border-slate-200 text-blue-700 hover:bg-blue-50")}
-            >
-              {history.isLoadingOlder
-                ? "Loading older messages..."
-                : "Load older messages"}
-            </button>
-            <span role="status" className="sr-only">
-              {history.isLoadingOlder ? "Loading older messages" : ""}
-            </span>
           </div>
         )}
 
