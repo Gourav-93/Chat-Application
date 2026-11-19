@@ -156,6 +156,9 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("ActiveSessionId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<bool>("IsMobileVerified")
                         .HasColumnType("bit");
 
@@ -164,6 +167,9 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.Property<string>("MobileNumber")
                         .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTime?>("SessionExpiresAt")
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("UserName")
                         .IsRequired()
