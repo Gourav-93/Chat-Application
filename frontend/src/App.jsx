@@ -19,7 +19,12 @@ export default function App() {
   const auth = useContext(AuthContext);
 
   if (!auth?.isAuthenticated) {
-    return <LoginPage onLoginSuccess={auth?.login} />;
+    return (
+      <LoginPage
+      onLoginSuccess={auth?.login}
+      logoutReason={auth?.logoutReason}
+    />
+    );
   }
 
   return <ChatPage />;

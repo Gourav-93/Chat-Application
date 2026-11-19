@@ -18,16 +18,19 @@ import { MessageCircleMore } from "lucide-react";
 import MobileNumberForm from "../Components/MobileNumberForm";
 import OtpVerificationForm from "../Components/OtpVerificationForm";
 import CompleteProfileForm from "../Components/CompleteProfileForm";
+import DevelopmentOtpDialog from "../Components/DevelopmentOtpDialog";
 
-export default function LoginPage({ onLoginSuccess }) {
+export default function LoginPage({ onLoginSuccess, logoutReason }) {
   const [step, setStep] = useState("mobile");
   const [registration, setRegistration] = useState(null);
   const [mobileNumber, setMobileNumber] = useState("");
+  const [developmentOtp, setDevelopmentOtp] = useState(null);
 
   // Switch to OTP verification after a successful OTP request.
-  const handleOtpSent = (number) => {
+  const handleOtpSent = (number, code) => {
     setRegistration(null);
     setMobileNumber(number);
+    setDevelopmentOtp(code ?? null);
     setStep("otp");
   };
 
@@ -35,11 +38,13 @@ export default function LoginPage({ onLoginSuccess }) {
   const handleChangeNumber = () => {
     setRegistration(null);
     setMobileNumber("");
+    setDevelopmentOtp(null);
     setStep("mobile");
   };
 
   // Pending registration is kept in memory and cannot open the dashboard.
   const handleVerified = (response) => {
+    setDevelopmentOtp(null);
     if (response.status === "profileRequired") {
       setRegistration({
         token: response.registrationToken,
@@ -94,6 +99,11 @@ export default function LoginPage({ onLoginSuccess }) {
         <section className="mx-auto w-full max-w-md min-w-0">
           {/* The card grows naturally when an error appears. */}
           <div className="w-full rounded-[28px] border border-[#293854] bg-[#111d31] p-5 shadow-2xl shadow-black/20 sm:p-7">
+            {logoutReason && (
+              <p role="status" className="mb-4 text-sm text-blue-200">
+                {logoutReason}
+              </p>
+            )}
             {step === "mobile" ? (
               <MobileNumberForm onOtpSent={handleOtpSent} />
             ) : step === "profile" ? (
@@ -107,11 +117,19 @@ export default function LoginPage({ onLoginSuccess }) {
                 mobileNumber={mobileNumber}
                 onVerified={handleVerified}
                 onChangeNumber={handleChangeNumber}
+                onDevelopmentOtp={setDevelopmentOtp}
               />
             )}
           </div>
         </section>
       </div>
+
+      {developmentOtp && (
+        <DevelopmentOtpDialog
+          otp={developmentOtp}
+          onClose={() => setDevelopmentOtp(null)}
+        />
+      )}
 
       {/* Application footer */}
       <footer className="relative z-10 px-6 py-2 text-center text-xs text-slate-500">

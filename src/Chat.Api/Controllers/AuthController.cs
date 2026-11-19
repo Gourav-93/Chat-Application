@@ -1,4 +1,4 @@
-
+using Microsoft.AspNetCore.Authorization;
 using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
 using Chat.Application.Services;
@@ -21,15 +21,21 @@ public class AuthController : ControllerBase
     private readonly ChatDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly IOtpService _otpService;
+    private readonly SingleSessionService _singleSession;
+    private readonly SessionConnectionManager _sessionConnections;
 
     public AuthController(
         ChatDbContext context,
         IConfiguration configuration,
-        IOtpService otpService)
+        IOtpService otpService,
+        SingleSessionService singleSession,
+        SessionConnectionManager sessionConnections)
     {
         _context = context;
         _configuration = configuration;
         _otpService = otpService;
+        _singleSession = singleSession;
+        _sessionConnections = sessionConnections;
     }
 
     [EnableRateLimiting("otp-send")]
@@ -38,12 +44,15 @@ public class AuthController : ControllerBase
     {
         try
         {
-            await _otpService.SendOtpAsync(request);
-
-            return Ok(new
+            var developmentOtp = await _otpService.SendOtpAsync(request);
+            const string message = "OTP generated successfully. Check backend terminal.";
+            if (developmentOtp is null)
             {
-                message = "OTP generated successfully. Check backend terminal."
-            });
+                return Ok(new { message });
+            }
+
+            Response.Headers.CacheControl = "no-store";
+            return Ok(new { message, developmentOtp });
         }
         catch (ArgumentException ex)
         {
@@ -70,6 +79,15 @@ public class AuthController : ControllerBase
         try
         {
             result = await _otpService.VerifyOtpAsync(request);
+        }
+        catch (SessionConfirmationRequiredException ex)
+        {
+            return Conflict(new
+            {
+                requiresConfirmation = true,
+                message = ex.Message,
+                confirmationToken = ex.ConfirmationToken
+            });
         }
         catch (ArgumentException ex)
         {
@@ -99,7 +117,15 @@ public class AuthController : ControllerBase
             });
         }
 
-        return Ok(new { status = "signedIn", login = GenerateLoginResponse(user) });
+        var loginResponse = GenerateLoginResponse(user);
+
+        await RevokePreviousSessionAsync();
+
+        return Ok(new
+        {
+            status = "signedIn",
+            login = loginResponse
+        });
     }
 
     [HttpPost("complete-profile")]
@@ -109,7 +135,18 @@ public class AuthController : ControllerBase
         {
             var userId = await _otpService.CompleteProfileAsync(request);
             var user = await _context.Users.SingleAsync(u => u.Id == userId);
-            return Ok(GenerateLoginResponse(user));
+            var loginResponse = GenerateLoginResponse(user);
+            await RevokePreviousSessionAsync();
+            return Ok(loginResponse);
+        }
+        catch (SessionConfirmationRequiredException)
+        {
+            return Conflict(new
+            {
+                message =
+                    "This account is already active. " +
+                    "Verify a fresh OTP to sign in."
+            });
         }
         catch (ArgumentException ex)
         {
@@ -133,11 +170,9 @@ public class AuthController : ControllerBase
         var issuer = _configuration["Jwt:Issuer"];
         var audience = _configuration["Jwt:Audience"];
 
-        var expiryDays = int.Parse(
-            _configuration["Jwt:ExpiryInDays"] ?? "45"
-        );
+        var session = _singleSession.RequireCurrent();
 
-        var expiresAt = DateTime.UtcNow.AddDays(expiryDays);
+        var expiresAt = session.ExpiresAt;
 
         var claims = new[]
         {
@@ -148,7 +183,11 @@ public class AuthController : ControllerBase
             new Claim(
                 ClaimTypes.Name,
                 user.UserName
-            )
+            ),
+            new Claim(
+        "sid",
+        session.SessionId.ToString()
+    )
         };
 
         var key = new SymmetricSecurityKey(
@@ -179,5 +218,62 @@ public class AuthController : ControllerBase
             MobileNumber = user.MobileNumber,
             ExpiresAt = expiresAt
         };
+    }
+    private async Task RevokePreviousSessionAsync()
+    {
+        var session = _singleSession.RequireCurrent();
+
+        if (session.PreviousSessionId.HasValue)
+        {
+            await _sessionConnections.RevokeSessionAsync(
+                session.UserId,
+                session.PreviousSessionId.Value
+            );
+        }
+    }
+    [Authorize]
+    [HttpGet("session")]
+    public IActionResult CheckSession()
+    {
+        return Ok(new { isActive = true });
+    }
+
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        var userIdValue =
+            User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        var sessionIdValue =
+            User.FindFirst("sid")?.Value;
+
+        if (!Guid.TryParse(userIdValue, out var userId) ||
+            !Guid.TryParse(sessionIdValue, out var sessionId))
+        {
+            return Unauthorized();
+        }
+
+        await _context.Users
+            .Where(u =>
+                u.Id == userId &&
+                u.ActiveSessionId == sessionId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(
+                    u => u.ActiveSessionId,
+                    (Guid?)null
+                )
+                .SetProperty(
+                    u => u.SessionExpiresAt,
+                    (DateTime?)null
+                )
+            );
+
+        await _sessionConnections.RevokeSessionAsync(
+            userId,
+            sessionId
+        );
+
+        return NoContent();
     }
 }

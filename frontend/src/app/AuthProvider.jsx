@@ -11,11 +11,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { setAccessToken } from "../shared/lib/api";
+// import { setAccessToken } from "../shared/lib/api";
 import { AuthContext } from "./AuthContext";
+// import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRef } from "react";
+import api, { setAccessToken, setUnauthorizedHandler, } from "../shared/lib/api";
 
 const SESSION_KEY = "sandesh-auth-session";
 const MAX_TIMEOUT = 2147483647;
+
+ 
 
 // Read the saved session and reject expired or malformed data.
 function restoreSession() {
@@ -45,14 +50,56 @@ function restoreSession() {
   }
 }
 
+
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(restoreSession);
+  const [logoutReason, setLogoutReason] = useState("");
+  const sessionRef = useRef(session);
+  
 
-  const logout = useCallback(() => {
+  const endSession = useCallback(
+  (reason = "", expectedToken) => {
+    if (
+      expectedToken &&
+      sessionRef.current?.token !== expectedToken
+    ) {
+      return;
+    }
+
+    sessionRef.current = null;
+
     setAccessToken(null);
     sessionStorage.removeItem(SESSION_KEY);
+
     setSession(null);
-  }, []);
+    setLogoutReason(reason);
+  },
+  []
+);
+
+const logout = useCallback(async () => {
+  const token = sessionRef.current?.token;
+
+  if (!token) return;
+
+  try {
+    await api.post(
+      "/auth/logout",
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+  } catch {
+    // Local logout offline bhi complete hoga.
+    // Server session next login par replace ho sakti hai.
+  } finally {
+    endSession("", token);
+  }
+}, [endSession]);
+
 
   const login = useCallback((response) => {
     const token = response?.token ?? response?.Token;
@@ -81,8 +128,11 @@ export function AuthProvider({ children }) {
 
     // Save the session for refresh restoration.
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
-    setAccessToken(nextSession.token);
-    setSession(nextSession);
+    sessionRef.current = nextSession;
+
+setAccessToken(nextSession.token);
+setLogoutReason("");
+setSession(nextSession);
   }, []);
 
   useEffect(() => {
@@ -108,14 +158,64 @@ export function AuthProvider({ children }) {
     return () => window.clearTimeout(timeoutId);
   }, [session, logout]);
 
+  useEffect(() => {
+  setUnauthorizedHandler((token) => {
+    endSession(
+      "Your session expired or was replaced. Please sign in again.",
+      token
+    );
+  });
+
+  return () => {
+    setUnauthorizedHandler(null);
+  };
+}, [endSession]);
+
+useEffect(() => {
+  if (!session) return undefined;
+
+  const validateSession = () => {
+    if (document.visibilityState !== "visible") return;
+
+    void api
+      .get("/auth/session", {
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+        },
+      })
+      .catch(() => undefined);
+  };
+
+  window.addEventListener("focus", validateSession);
+
+  document.addEventListener(
+    "visibilitychange",
+    validateSession
+  );
+
+  return () => {
+    window.removeEventListener(
+      "focus",
+      validateSession
+    );
+
+    document.removeEventListener(
+      "visibilitychange",
+      validateSession
+    );
+  };
+}, [session]);
+
   const value = useMemo(
     () => ({
       user: session,
       isAuthenticated: Boolean(session),
       login,
       logout,
+      endSession,
+      logoutReason,
     }),
-    [session, login, logout],
+    [session, login, logout, endSession, logoutReason],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

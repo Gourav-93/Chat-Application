@@ -3,8 +3,11 @@
  * Responsibilities: Serialize history requests, isolate session transport from
  * request cancellation, await complete transport stop, and offer best-effort typing.
  */
+import api from "../../../shared/lib/api";
 import {
-  HubConnectionBuilder, HubConnectionState, LogLevel,
+  HubConnectionBuilder,
+  HubConnectionState,
+  LogLevel,
 } from "@microsoft/signalr";
 
 // Shared across replacement owners, including React StrictMode cleanup.
@@ -23,10 +26,13 @@ async function awaitLatestCleanup() {
 
 // Keep confirmed receipt timestamps when older/null payloads arrive later.
 export function mergeMessageReceipts(previous, incoming) {
-  const confirmed = (value) => typeof value === "string" && Number.isFinite(Date.parse(value));
+  const confirmed = (value) =>
+    typeof value === "string" && Number.isFinite(Date.parse(value));
   const pick = (first, second) => {
     if (!confirmed(first)) return confirmed(second) ? second : null;
-    return confirmed(second) && Date.parse(second) < Date.parse(first) ? second : first;
+    return confirmed(second) && Date.parse(second) < Date.parse(first)
+      ? second
+      : first;
   };
   return {
     deliveredAt: pick(previous?.deliveredAt, incoming?.deliveredAt),
@@ -34,11 +40,24 @@ export function mergeMessageReceipts(previous, incoming) {
   };
 }
 
-export function createMessageHistoryService(token, expiresAt, {
-  onMessages, onState, onReceipt, onPresence, onTyping, onConversationsInvalidated,
-} = {}) {
-  if (typeof token !== "string" || !token.trim() ||
-      !Number.isFinite(expiresAt)) {
+export function createMessageHistoryService(
+  token,
+  expiresAt,
+  {
+    onMessages,
+    onState,
+    onReceipt,
+    onPresence,
+    onTyping,
+    onSessionReplaced,
+    onConversationsInvalidated,
+  } = {},
+) {
+  if (
+    typeof token !== "string" ||
+    !token.trim() ||
+    !Number.isFinite(expiresAt)
+  ) {
     throw new Error("Invalid authenticated history session.");
   }
 
@@ -59,11 +78,16 @@ export function createMessageHistoryService(token, expiresAt, {
       onConversationsInvalidated?.();
     }
   };
-  const validMessage = (message) => message &&
-    Number.isInteger(message.id) && message.id > 0 &&
-    Number.isInteger(message.conversationId) && message.conversationId > 0 &&
-    typeof message.senderId === "string" && message.senderId.length > 0 &&
-    typeof message.receiverId === "string" && message.receiverId.length > 0 &&
+  const validMessage = (message) =>
+    message &&
+    Number.isInteger(message.id) &&
+    message.id > 0 &&
+    Number.isInteger(message.conversationId) &&
+    message.conversationId > 0 &&
+    typeof message.senderId === "string" &&
+    message.senderId.length > 0 &&
+    typeof message.receiverId === "string" &&
+    message.receiverId.length > 0 &&
     typeof message.text === "string" &&
     typeof message.sentAt === "string" &&
     Number.isFinite(Date.parse(message.sentAt));
@@ -89,6 +113,7 @@ export function createMessageHistoryService(token, expiresAt, {
     record.connection.off("UserOnline", record.onlineHandler);
     record.connection.off("UserOffline", record.offlineHandler);
     record.connection.off("UserTyping", record.typingHandler);
+    record.connection.off("SessionReplaced", record.replacedHandler);
     record.typingIntent = null;
     record.pending?.reject(reason);
     record.pending = null;
@@ -96,9 +121,7 @@ export function createMessageHistoryService(token, expiresAt, {
     const previousBarrier = transportBarrier;
 
     // Initiate stop while startup is pending; never await startup first.
-    const stopAttempt = Promise.resolve().then(() =>
-      record.connection.stop(),
-    );
+    const stopAttempt = Promise.resolve().then(() => record.connection.stop());
 
     // Observe stop and startup separately. The barrier never rejects.
     record.stopTask = Promise.allSettled([
@@ -106,8 +129,10 @@ export function createMessageHistoryService(token, expiresAt, {
       record.startSettled,
       stopAttempt,
     ]).then((outcomes) => {
-      if (outcomes.some((outcome) => outcome.status === "rejected") ||
-          record.connection.state !== HubConnectionState.Disconnected) {
+      if (
+        outcomes.some((outcome) => outcome.status === "rejected") ||
+        record.connection.state !== HubConnectionState.Disconnected
+      ) {
         cleanupBlocked = true;
       }
     });
@@ -128,8 +153,11 @@ export function createMessageHistoryService(token, expiresAt, {
   function connect() {
     checkSession();
 
-    if (current && !current.retired &&
-        current.connection.state === HubConnectionState.Connected) {
+    if (
+      current &&
+      !current.retired &&
+      current.connection.state === HubConnectionState.Connected
+    ) {
       return Promise.resolve(current);
     }
     if (starting?.generation === generation) return starting.promise;
@@ -147,6 +175,27 @@ export function createMessageHistoryService(token, expiresAt, {
         throw new Error(
           "Connection cleanup failed. Please reload before retrying.",
         );
+      }
+
+      try {
+        await api.get("/auth/session", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      } catch {
+        publishState(
+          "disconnected",
+          "Unable to validate your session. Please try again.",
+        );
+
+        throw new Error("Unable to validate your session. Please try again.");
+      }
+
+      checkSession();
+
+      if (startGeneration !== generation) {
+        throw new Error("Connection startup was superseded.");
       }
 
       let record;
@@ -183,40 +232,63 @@ export function createMessageHistoryService(token, expiresAt, {
 
       record.handler = (messages) => {
         const pending = record.pending;
-        if (disposed || record.retired || current !== record ||
-            record.generation !== generation ||
-            !pending || pending.received) return;
+        if (
+          disposed ||
+          record.retired ||
+          current !== record ||
+          record.generation !== generation ||
+          !pending ||
+          pending.received
+        )
+          return;
 
         pending.received = true;
 
         // Empty arrays are valid and belong to the single in-flight invocation.
-        const valid = Array.isArray(messages) && messages.every((message) =>
-          message &&
-          Number.isInteger(message.id) && message.id > 0 &&
-          message.conversationId === pending.conversationId &&
-          typeof message.senderId === "string" && message.senderId.length > 0 &&
-          typeof message.receiverId === "string" && message.receiverId.length > 0 &&
-          typeof message.text === "string" &&
-          typeof message.sentAt === "string" &&
-          Number.isFinite(Date.parse(message.sentAt)),
-        );
+        const valid =
+          Array.isArray(messages) &&
+          messages.every(
+            (message) =>
+              message &&
+              Number.isInteger(message.id) &&
+              message.id > 0 &&
+              message.conversationId === pending.conversationId &&
+              typeof message.senderId === "string" &&
+              message.senderId.length > 0 &&
+              typeof message.receiverId === "string" &&
+              message.receiverId.length > 0 &&
+              typeof message.text === "string" &&
+              typeof message.sentAt === "string" &&
+              Number.isFinite(Date.parse(message.sentAt)),
+          );
 
         if (valid) {
           // Persist known history receipts in the same session cache as live events.
-          for (const message of messages) onReceipt?.({ ...message, messageId: message.id });
+          for (const message of messages)
+            onReceipt?.({ ...message, messageId: message.id });
           pending.resolve(messages);
-        }
-        else pending.reject(new Error(
-          "The server returned an unexpected message history response.",
-        ));
+        } else
+          pending.reject(
+            new Error(
+              "The server returned an unexpected message history response.",
+            ),
+          );
       };
 
       // PendingMessages can arrive before start() resolves: subscribe first.
       const receive = (messages) => {
-        if (disposed || record.retired || current !== record ||
-            record.generation !== generation) return;
+        if (
+          disposed ||
+          record.retired ||
+          current !== record ||
+          record.generation !== generation
+        )
+          return;
         if (!Array.isArray(messages) || !messages.every(validMessage)) {
-          publishState("connected", "An unexpected message update was ignored. Reload history to check messages.");
+          publishState(
+            "connected",
+            "An unexpected message update was ignored. Reload history to check messages.",
+          );
           return;
         }
         onMessages?.(messages);
@@ -224,30 +296,58 @@ export function createMessageHistoryService(token, expiresAt, {
       record.receiveHandler = (message) => receive([message]);
       record.pendingHandler = receive;
       record.presenceVersions = new Map();
-      const liveRecord = () => !disposed && !record.retired &&
-        current === record && record.generation === generation;
+      const liveRecord = () =>
+        !disposed &&
+        !record.retired &&
+        current === record &&
+        record.generation === generation;
       record.receiptHandler = (status) => {
-        if (!liveRecord() || !status ||
-            !Number.isInteger(status.messageId) || status.messageId < 1 ||
-            !Number.isInteger(status.conversationId) || status.conversationId < 1 ||
-            typeof status.senderId !== "string" || typeof status.receiverId !== "string") return;
+        if (
+          !liveRecord() ||
+          !status ||
+          !Number.isInteger(status.messageId) ||
+          status.messageId < 1 ||
+          !Number.isInteger(status.conversationId) ||
+          status.conversationId < 1 ||
+          typeof status.senderId !== "string" ||
+          typeof status.receiverId !== "string"
+        )
+          return;
         onReceipt?.(status);
       };
       const presence = (data, isOnline) => {
-        if (!liveRecord() || !data || typeof data.userId !== "string" ||
-            data.isOnline !== isOnline) return;
+        if (
+          !liveRecord() ||
+          !data ||
+          typeof data.userId !== "string" ||
+          data.isOnline !== isOnline
+        )
+          return;
         const id = data.userId.toLowerCase();
-        record.presenceVersions.set(id, (record.presenceVersions.get(id) || 0) + 1);
+        record.presenceVersions.set(
+          id,
+          (record.presenceVersions.get(id) || 0) + 1,
+        );
         onPresence?.({ ...data, isOnline });
       };
       record.onlineHandler = (data) => presence(data, true);
       record.offlineHandler = (data) => presence(data, false);
       record.typingHandler = (data) => {
-        if (!liveRecord() || !data ||
-            !Number.isInteger(data.conversationId) || data.conversationId < 1 ||
-            typeof data.userId !== "string" || !data.userId.trim() ||
-            typeof data.isTyping !== "boolean") return;
-        onTyping?.({ conversationId: data.conversationId, userId: data.userId, isTyping: data.isTyping });
+        if (
+          !liveRecord() ||
+          !data ||
+          !Number.isInteger(data.conversationId) ||
+          data.conversationId < 1 ||
+          typeof data.userId !== "string" ||
+          !data.userId.trim() ||
+          typeof data.isTyping !== "boolean"
+        )
+          return;
+        onTyping?.({
+          conversationId: data.conversationId,
+          userId: data.userId,
+          isTyping: data.isTyping,
+        });
       };
       record.unreadHandler = (event) => {
         if (!liveRecord() || !Number.isSafeInteger(event?.conversationId) ||
@@ -255,6 +355,19 @@ export function createMessageHistoryService(token, expiresAt, {
         invalidateConversations(record);
       };
       connection.on("ConversationUnreadChanged", record.unreadHandler);
+      record.replacedHandler = (data) => {
+        if (!liveRecord()) return;
+
+        void invalidateConnection(new Error("Your session was replaced."));
+
+        onSessionReplaced?.(
+          typeof data?.message === "string"
+            ? data.message
+            : "Your session was replaced.",
+        );
+      };
+
+      connection.on("SessionReplaced", record.replacedHandler);
       connection.on("UserTyping", record.typingHandler);
       connection.on("MessageStatusUpdated", record.receiptHandler);
       connection.on("UserOnline", record.onlineHandler);
@@ -265,6 +378,13 @@ export function createMessageHistoryService(token, expiresAt, {
       connection.onclose(() => {
         // SignalR has no public offclose API; retired callbacks remain inert.
         if (record.retired || current !== record) return;
+        void api
+          .get("/auth/session", {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          })
+          .catch(() => undefined);
         const error = new Error("Chat connection closed. Please try again.");
         if (activeOperation) activeOperation.cancel(error);
         else void invalidateConnection(error);
@@ -280,8 +400,11 @@ export function createMessageHistoryService(token, expiresAt, {
         await rawStart;
 
         checkSession();
-        if (record.retired || current !== record ||
-            startGeneration !== generation) {
+        if (
+          record.retired ||
+          current !== record ||
+          startGeneration !== generation
+        ) {
           throw new Error("History connection startup was superseded.");
         }
         publishState("connected");
@@ -289,6 +412,13 @@ export function createMessageHistoryService(token, expiresAt, {
         invalidateConversations(record);
         return record;
       } catch {
+        void api
+          .get("/auth/session", {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          })
+          .catch(() => undefined);
         // Covers a synchronous start() throw as well as asynchronous failure.
         settleStart();
 
@@ -298,7 +428,10 @@ export function createMessageHistoryService(token, expiresAt, {
         } else {
           void stopRecord(record, new Error("History transport was retired."));
         }
-        publishState("disconnected", "Unable to connect to chat. Check your connection or sign in again.");
+        publishState(
+          "disconnected",
+          "Unable to connect to chat. Check your connection or sign in again.",
+        );
         throw new Error(
           "Unable to connect to chat. Check your connection or sign in again.",
         );
@@ -336,9 +469,13 @@ export function createMessageHistoryService(token, expiresAt, {
     };
     activeOperation = operation;
 
-    const timer = window.setTimeout(() => operation.cancel(
-      new Error("Loading message history timed out. Please try again."),
-    ), REQUEST_TIMEOUT);
+    const timer = window.setTimeout(
+      () =>
+        operation.cancel(
+          new Error("Loading message history timed out. Please try again."),
+        ),
+      REQUEST_TIMEOUT,
+    );
 
     const work = (async () => {
       const record = await connect();
@@ -370,7 +507,10 @@ export function createMessageHistoryService(token, expiresAt, {
             throw new Error("History request cancelled.");
           }
           return record.connection.invoke(
-            "GetMessages", conversationId, page, pageSize,
+            "GetMessages",
+            conversationId,
+            page,
+            pageSize,
           );
         });
 
@@ -394,13 +534,17 @@ export function createMessageHistoryService(token, expiresAt, {
       operation.cancel(error);
 
       if (error.message.includes("Unable to access this conversation")) {
-        throw new Error("Unable to access this conversation.", { cause: error });
+        throw new Error("Unable to access this conversation.", {
+          cause: error,
+        });
       }
       if (error.message.includes("Invalid message history request")) {
         throw new Error("Invalid message history request.", { cause: error });
       }
       if (error.message.startsWith("Failed to invoke")) {
-        throw new Error("Unable to load message history. Please try again.", { cause: error });
+        throw new Error("Unable to load message history. Please try again.", {
+          cause: error,
+        });
       }
       throw error;
     } finally {
@@ -410,14 +554,22 @@ export function createMessageHistoryService(token, expiresAt, {
   }
 
   function typingTransportReady(record) {
-    return Boolean(record && !disposed && !record.retired && current === record &&
-      record.generation === generation && Date.now() < expiresAt &&
-      record.connection.state === HubConnectionState.Connected);
+    return Boolean(
+      record &&
+      !disposed &&
+      !record.retired &&
+      current === record &&
+      record.generation === generation &&
+      Date.now() < expiresAt &&
+      record.connection.state === HubConnectionState.Connected,
+    );
   }
 
   function typingIntentCurrent(intent) {
     try {
-      return Boolean(intent && Date.now() < intent.deadline && intent.isCurrent());
+      return Boolean(
+        intent && Date.now() < intent.deadline && intent.isCurrent(),
+      );
     } catch {
       // A caller's obsolete guard must never break messaging.
       return false;
@@ -426,7 +578,12 @@ export function createMessageHistoryService(token, expiresAt, {
 
   function flushTyping(record) {
     // Ephemeral typing never enters or holds the history/receipt queue.
-    if (!typingTransportReady(record) || foregroundWork > 0 || record.typingInFlight) return;
+    if (
+      !typingTransportReady(record) ||
+      foregroundWork > 0 ||
+      record.typingInFlight
+    )
+      return;
     const intent = record.typingIntent;
     record.typingIntent = null;
     if (!typingIntentCurrent(intent)) return;
@@ -438,7 +595,11 @@ export function createMessageHistoryService(token, expiresAt, {
         if (!record.typingIntent) record.typingIntent = intent;
         return;
       }
-      return record.connection.invoke("Typing", intent.conversationId, intent.isTyping);
+      return record.connection.invoke(
+        "Typing",
+        intent.conversationId,
+        intent.isTyping,
+      );
     });
     const settled = () => {
       record.typingInFlight = false;
@@ -459,7 +620,9 @@ export function createMessageHistoryService(token, expiresAt, {
   function command(method, args, isCurrent = () => true) {
     const record = current;
     foregroundWork++;
-    const request = queue.then(() => executeCommand(record, method, args, isCurrent));
+    const request = queue.then(() =>
+      executeCommand(record, method, args, isCurrent),
+    );
     queue = request.catch(() => undefined);
     return request.finally(finishForegroundWork);
   }
@@ -467,8 +630,12 @@ export function createMessageHistoryService(token, expiresAt, {
   async function executeCommand(record, method, args, isCurrent) {
     checkSession();
     if (!isCurrent()) throw new Error("Chat activity request was superseded.");
-    if (!record || record !== current || record.retired ||
-        record.connection.state !== HubConnectionState.Connected) {
+    if (
+      !record ||
+      record !== current ||
+      record.retired ||
+      record.connection.state !== HubConnectionState.Connected
+    ) {
       throw new Error("Chat is disconnected.");
     }
     let timer;
@@ -481,14 +648,17 @@ export function createMessageHistoryService(token, expiresAt, {
         }
         return record.connection.invoke(method, ...args);
       });
-      const result = await Promise.race([invocation, new Promise((_, reject) => {
-        timer = window.setTimeout(() => {
-          timedOut = true;
-          const error = new Error("Chat update timed out.");
-          if (current === record) void invalidateConnection(error);
-          reject(error);
-        }, REQUEST_TIMEOUT);
-      })]);
+      const result = await Promise.race([
+        invocation,
+        new Promise((_, reject) => {
+          timer = window.setTimeout(() => {
+            timedOut = true;
+            const error = new Error("Chat update timed out.");
+            if (current === record) void invalidateConnection(error);
+            reject(error);
+          }, REQUEST_TIMEOUT);
+        }),
+      ]);
       checkSession();
       if (record.retired || current !== record || !isCurrent()) {
         throw new Error("Chat activity request was superseded.");
@@ -498,7 +668,9 @@ export function createMessageHistoryService(token, expiresAt, {
       // Do not release the queue while a timed-out transport is still stopping.
       // Invocation rejection is observed by Promise.race even if it settles later.
       if (timedOut) await awaitLatestCleanup();
-      throw new Error("Unable to update chat activity. Please try again.", { cause: error });
+      throw new Error("Unable to update chat activity. Please try again.", {
+        cause: error,
+      });
     } finally {
       window.clearTimeout(timer);
     }
@@ -509,11 +681,18 @@ export function createMessageHistoryService(token, expiresAt, {
     // 800ms refresh/1100ms inactivity; this layer only keeps one latest intent.
     setTyping(conversationId, isTyping, isCurrent = () => true) {
       const record = current;
-      if (!Number.isInteger(conversationId) || conversationId < 1 ||
-          typeof isTyping !== "boolean" || typeof isCurrent !== "function" ||
-          !typingTransportReady(record)) return false;
+      if (
+        !Number.isInteger(conversationId) ||
+        conversationId < 1 ||
+        typeof isTyping !== "boolean" ||
+        typeof isCurrent !== "function" ||
+        !typingTransportReady(record)
+      )
+        return false;
       record.typingIntent = {
-        conversationId, isTyping, isCurrent,
+        conversationId,
+        isTyping,
+        isCurrent,
         deadline: Date.now() + (isTyping ? 1100 : 3000),
       };
       flushTyping(record);
@@ -533,9 +712,18 @@ export function createMessageHistoryService(token, expiresAt, {
       const response = await command("GetUserStatus", [userId], isCurrent);
       const status = response.result;
       // A newer push event wins over a late presence snapshot.
-      if (!isCurrent() || response.record !== record || (record.presenceVersions.get(id) || 0) !== version) return;
-      if (status && typeof status.userId === "string" &&
-          status.userId.toLowerCase() === id && typeof status.isOnline === "boolean") {
+      if (
+        !isCurrent() ||
+        response.record !== record ||
+        (record.presenceVersions.get(id) || 0) !== version
+      )
+        return;
+      if (
+        status &&
+        typeof status.userId === "string" &&
+        status.userId.toLowerCase() === id &&
+        typeof status.isOnline === "boolean"
+      ) {
         onPresence?.(status);
       } else {
         throw new Error("The server returned an unexpected presence response.");
@@ -547,13 +735,20 @@ export function createMessageHistoryService(token, expiresAt, {
     async send(conversationId, value) {
       checkSession();
       const text = value.trim();
-      if (!Number.isInteger(conversationId) || conversationId < 1 ||
-          !text || text.length > 5000) {
+      if (
+        !Number.isInteger(conversationId) ||
+        conversationId < 1 ||
+        !text ||
+        text.length > 5000
+      ) {
         throw new Error("Enter a message containing 1 to 5,000 characters.");
       }
       const record = current;
-      if (!record || record.retired ||
-          record.connection.state !== HubConnectionState.Connected) {
+      if (
+        !record ||
+        record.retired ||
+        record.connection.state !== HubConnectionState.Connected
+      ) {
         throw new Error("Chat is disconnected. Connect before sending.");
       }
       foregroundWork++;
@@ -563,7 +758,10 @@ export function createMessageHistoryService(token, expiresAt, {
         if (record.retired || current !== record) {
           throw new Error("Chat connection changed before sending.");
         }
-        return record.connection.invoke("SendMessage", { conversationId, text });
+        return record.connection.invoke("SendMessage", {
+          conversationId,
+          text,
+        });
       });
       const timeout = new Promise((_, reject) => {
         timer = window.setTimeout(() => {
@@ -575,7 +773,8 @@ export function createMessageHistoryService(token, expiresAt, {
       try {
         await Promise.race([invocation, timeout]);
         checkSession();
-        if (record.retired || current !== record) throw new Error("Connection changed.");
+        if (record.retired || current !== record)
+          throw new Error("Connection changed.");
       } catch (error) {
         // Saving can precede a lost response. Never resend automatically.
         throw new Error(

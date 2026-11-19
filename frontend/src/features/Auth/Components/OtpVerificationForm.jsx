@@ -36,6 +36,7 @@ export default function OtpVerificationForm({
   mobileNumber,
   onVerified,
   onChangeNumber,
+  onDevelopmentOtp,
 }) {
   const [digits, setDigits] = useState(Array(OTP_LENGTH).fill(""));
 
@@ -172,10 +173,43 @@ export default function OtpVerificationForm({
     setIsVerifying(true);
 
     try {
-      const response = await verifyOtp(mobileNumber, otp);
+      let response;
 
-      // The parent will manage authenticated user state.
-      onVerified?.(response);
+try {
+  response = await verifyOtp(mobileNumber, otp);
+} catch (failure) {
+  const conflict = failure.response?.data;
+
+  if (
+    failure.response?.status !== 409 ||
+    conflict?.requiresConfirmation !== true ||
+    typeof conflict.confirmationToken !== "string" ||
+    !conflict.confirmationToken
+  ) {
+    throw failure;
+  }
+
+  const confirmed = window.confirm(
+    (conflict.message ||
+      "This account is already signed in elsewhere.") +
+      "\n\nContinue here and sign out the other session?"
+  );
+
+  if (!confirmed) {
+    setSuccessMessage(
+      "Login cancelled. Your other session is unchanged."
+    );
+    return;
+  }
+
+  response = await verifyOtp(
+    mobileNumber,
+    otp,
+    conflict.confirmationToken
+  );
+}
+
+onVerified?.(response);
     } catch (apiError) {
       setError(getAuthErrorMessage(apiError));
     } finally {
@@ -191,10 +225,12 @@ export default function OtpVerificationForm({
 
     setError("");
     setSuccessMessage("");
+    onDevelopmentOtp(null);
     setIsResending(true);
 
     try {
-      await sendOtp(mobileNumber);
+      const response = await sendOtp(mobileNumber);
+      onDevelopmentOtp(response?.developmentOtp ?? null);
 
       // Clear the previous code after a successful resend.
       setDigits(Array(OTP_LENGTH).fill(""));

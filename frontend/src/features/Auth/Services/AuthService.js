@@ -41,11 +41,23 @@ export const sendOtp = async (mobileNumber) => {
  * @param {string} otp - Six-digit verification code.
  * @returns {Promise<object>} Signed-in login data or a pending registration.
  */
-export const verifyOtp = async (mobileNumber, otp) => {
+export const verifyOtp = async (
+  mobileNumber,
+  otp,
+  confirmationToken = null,
+) => {
   const response = await api.post(AUTH_ENDPOINTS.VERIFY_OTP, {
     mobileNumber: mobileNumber.trim(),
     otp: otp.trim(),
+
+    confirmExistingSession: Boolean(confirmationToken),
+
+    confirmationToken: confirmationToken || undefined,
+    
+    
   });
+
+  
 
   const data = response.data;
   if (data?.status === "signedIn") {
@@ -65,29 +77,35 @@ export const verifyOtp = async (mobileNumber, otp) => {
 
 // Match .NET String.Trim whitespace and UTF-16 length without restricting names.
 const PROFILE_WHITESPACE = new Set([
-  0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680,
-  0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006,
-  0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+  0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2001,
+  0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
+  0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
 ]);
 
 export const normalizeProfileName = (value) => {
   let start = 0;
   let end = value.length;
-  while (start < end && PROFILE_WHITESPACE.has(value.charCodeAt(start))) start++;
-  while (end > start && PROFILE_WHITESPACE.has(value.charCodeAt(end - 1))) end--;
+  while (start < end && PROFILE_WHITESPACE.has(value.charCodeAt(start)))
+    start++;
+  while (end > start && PROFILE_WHITESPACE.has(value.charCodeAt(end - 1)))
+    end--;
   return value.slice(start, end);
 };
 
 function invalidAuthResponse() {
-  const error = new Error("The server returned an invalid sign-in response. Please try again.");
+  const error = new Error(
+    "The server returned an invalid sign-in response. Please try again.",
+  );
   error.code = "INVALID_AUTH_RESPONSE";
   return error;
 }
 
 function validateLoginResponse(data) {
   if (
-    typeof data?.token !== "string" || !data.token.trim() ||
-    typeof data.userId !== "string" || !data.userId.trim() ||
+    typeof data?.token !== "string" ||
+    !data.token.trim() ||
+    typeof data.userId !== "string" ||
+    !data.userId.trim() ||
     typeof data.userName !== "string" ||
     (data.mobileNumber != null && typeof data.mobileNumber !== "string") ||
     typeof data.expiresAt !== "string" ||
@@ -101,10 +119,14 @@ function validateLoginResponse(data) {
 
 // Registration credentials are used only for this endpoint, never as JWTs.
 export const completeProfile = async (registrationToken, userName, signal) => {
-  const response = await api.post(AUTH_ENDPOINTS.COMPLETE_PROFILE, {
-    registrationToken,
-    userName: normalizeProfileName(userName),
-  }, { signal });
+  const response = await api.post(
+    AUTH_ENDPOINTS.COMPLETE_PROFILE,
+    {
+      registrationToken,
+      userName: normalizeProfileName(userName),
+    },
+    { signal },
+  );
   return validateLoginResponse(response.data);
 };
 

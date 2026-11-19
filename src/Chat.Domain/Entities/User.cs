@@ -11,6 +11,8 @@ public class User
     public string? MobileNumber { get; set; } // For mobile unique
 
     public bool IsMobileVerified { get; set; } = false; // verified or not
+    public Guid? ActiveSessionId { get; set; }
+    public DateTime? SessionExpiresAt { get; set; }
 
     // Navigation properties
     public ICollection<Conversation> ConversationsAsUserA { get; set; }
