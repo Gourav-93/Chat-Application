@@ -1,6 +1,18 @@
 @Two_Way_Com_HostAddress = http://localhost:5261
 
-GET {{Two_Way_Com_HostAddress}}/weatherforecast/
+# Obtain an active login JWT through the OTP flow in docs/otp-only-auth.md.
+# Use login.token from signedIn, or token from complete-profile.
+# In your HTTP client's private/local environment editor, create a variable
+# named SandeshLoginJwt and paste only the token value (without "Bearer ").
+# Select that environment before sending this request. If the client uses
+# environment files, store the file outside this repository and select it
+# through the client's environment configuration. Keep the JWT out of this file.
+# The {{SandeshLoginJwt}} reference below is resolved by the HTTP client.
+# Expected with an active session: HTTP 200 and { "isActive": true }.
+# Missing, invalid, expired, or replaced session JWT: HTTP 401 from authentication.
+# This is an authenticated session check, not a general health endpoint.
+GET {{Two_Way_Com_HostAddress}}/api/auth/session
 Accept: application/json
+Authorization: Bearer {{SandeshLoginJwt}}
 
 ###

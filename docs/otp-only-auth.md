@@ -2,6 +2,8 @@
 
 ## Current flow and ownership
 
+See the [root architecture and setup guide](../README.md) for prerequisites, local User Secrets configuration, and startup. React in `frontend/` is the primary application. The HTML/JS utility in `wwwroot/` supports focused developer checks against the same backend.
+
 The single .NET 10 backend serves an HTML test client under `wwwroot`. The React client in `frontend` implements the session-confirmation and replacement flow.
 
 1. Collect only mobile, send OTP, then submit mobile + OTP.
@@ -95,7 +97,7 @@ Use .NET 10 and existing EF 10.0.14 tooling/packages. Configure local secrets/en
     dotnet build Two-Way-Com.csproj
     dotnet ef migrations has-pending-model-changes --project Two-Way-Com.csproj --context ChatDbContext
 
-See `frontend/README.md` for React setup. Trial results below used temporary test helpers and an isolated SQL Server LocalDB database.
+See the [React development guide](../frontend/README.md). Trial results below used temporary test helpers and an isolated SQL Server LocalDB database. The project already has a User Secrets ID. Use the root guide's configuration steps and explicitly select Development for EF design-time commands when relying on User Secrets. EF CLI and EF packages are version 10.0.14.
 
 To run the test UI with local configuration, from project root:
 

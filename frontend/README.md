@@ -39,7 +39,7 @@ See [`package.json`](./package.json) for declared dependencies and [`package-loc
 ## Prerequisites
 
 1. **Git** — for cloning and collaborating.
-2. **Node.js and npm** — a Node.js release supported by the project's Vite version; **Node.js 22.12+ or a compatible 24 LTS release** is recommended. Check:
+2. **Node.js and npm** — a Node.js release supported by the project's Vite version; **Node.js 22.13+ or a compatible 24 LTS release** is recommended. Check:
    ```powershell
    node --version
    npm --version
@@ -51,22 +51,11 @@ VS Code is optional.
 
 ## First-time setup (Windows PowerShell)
 
-### 1. Clone the repository
+### 1. Prepare the integrated backend
 
-```powershell
-git clone https://github.com/Gourav-93/Chat-Appliction.git
-cd Chat-Appliction
-git fetch origin
-git branch -a
-```
+Follow the [root setup guide](../README.md) for repository prerequisites, local SQL Server configuration, User Secrets, EF migrations, and backend startup. React is the primary frontend. The backend also hosts an HTML/JS developer utility in root `wwwroot/`.
 
-The GitHub repository uses the spelling `Chat-Appliction`. **Confirm the branch to use with the team**. For the current frontend development branch, if it is available and your working tree is clean:
-
-```powershell
-git switch Member-4
-```
-
-If you already have the repository, **do not clone it again**. Check your branch and local changes before switching:
+Check your existing branch and local changes before development.
 
 ```powershell
 git branch --show-current
@@ -86,13 +75,13 @@ npm.cmd ci
 
 ### 3. Start the backend
 
-Start the existing ASP.NET Core API using the backend team's approved instructions and confirm it is listening at:
+Start the root ASP.NET Core project using the [backend setup guide](../README.md#prepare-and-start-locally) and confirm it is listening at:
 
 ```text
 http://localhost:5261
 ```
 
-Backend owners must provide the correct database connection, migrations, JWT settings, and OTP service configuration. During development, OTPs may be printed in the **backend terminal** rather than sent by SMS; follow the team's approved test flow.
+The root guide documents database configuration, migrations, JWT keys, and OTP hashing settings. During development, OTPs may be printed in the **backend terminal** rather than sent by SMS; follow the team's approved test flow.
 
 **Do not commit or share** database passwords, JWT secrets, OTPs, access tokens, or real environment files.
 
@@ -110,7 +99,7 @@ Open the URL shown by Vite, typically:
 http://localhost:5173
 ```
 
-If port `5173` is occupied, use the URL printed in the terminal.
+Vite uses strict port `5173`. If occupied, stop the conflicting development server or coordinate an explicit port and CORS change.
 
 **Quick setup summary**
 
@@ -147,6 +136,8 @@ The Vite development proxy in [`vite.config.js`](./vite.config.js) forwards:
 | `/api/*`      | `http://localhost:5261` | REST API                               |
 | `/hubs/chat`  | `http://localhost:5261` | SignalR hub, including WebSocket proxy |
 
+See the [auth contract and observed results](../docs/otp-only-auth.md) for profile completion, session confirmation, logout, and expected error responses.
+
 ### API and SignalR operations
 
 | Operation                      | Method / transport | Endpoint / hub method                                                                  |
@@ -179,15 +170,15 @@ These are development integration examples, **not a complete backend API referen
 
 ### Backend URL and production deployment
 
-If the local backend uses another port, update the targets for **both** `/api` and `/hubs/chat` in `vite.config.js`, then restart Vite. Coordinate shared config changes before committing.
+Set `$env:VITE_API_BASE_URL = 'http://localhost:<port>'` in the frontend PowerShell terminal before starting Vite to target another backend. Both proxies use this URL. The `.env.development.example` and `.env.team.example` files show the variable format. Actual local environment values belong in ignored files or the terminal environment.
 
 Vite's `server.proxy` works **only during development**. Production hosting needs appropriate API and SignalR routing, including WebSocket support, or a separately reviewed frontend configuration.
 
 ## How to use Sandesh
 
 1. Start the backend and frontend.
-2. Enter your mobile number in international format, e.g. `+919876543210`.
-3. Request and verify the OTP using the backend's configured development flow.
+2. Enter a 10-digit Indian mobile number starting with 6–9. The sign-in form supplies the fixed `+91` prefix.
+3. Request and verify the OTP using the Development console sender or the optional [OTP preview](../README.md#development-otp). Complete the profile for a fresh mobile, or confirm takeover when another session is active.
 4. Open the authenticated conversation dashboard.
 5. Select a conversation to see its history. Load older messages using the available pagination control.
 6. Use the **New Chat** (pencil) action to find a verified user by their full international mobile number and create/reuse a conversation.
@@ -282,7 +273,7 @@ When reporting bugs, include reproduction steps, expected vs. actual behavior, r
 
 ## Team development workflow
 
-This is a **four-member team project**. Frontend development currently uses the `Member-4` branch.
+Use the team-agreed working branch for the integrated project. The root [architecture and setup guide](../README.md) describes the shared backend and both clients.
 
 - Review existing code before changing a feature; keep modifications focused.
 - Use JavaScript/JSX, not TypeScript.
