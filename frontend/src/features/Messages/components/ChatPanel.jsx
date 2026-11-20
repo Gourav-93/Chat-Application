@@ -8,8 +8,8 @@
  * 4. Preserve scroll position and keyboard focus during older-message pagination.
  */
 
-import { Fragment, useContext, useEffect, useId, useLayoutEffect, useRef } from "react";
-import { ArrowLeft, Check, CheckCheck, LoaderCircle, MessageCircleMore, UserRound } from "lucide-react";
+import { Fragment, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { ArrowLeft, Check, CheckCheck, EllipsisVertical, LoaderCircle, MessageCircleMore, UserRound } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
 import MessageComposer from "./MessageComposer";
@@ -51,6 +51,74 @@ function getReceiptStatus(message) {
   if (confirmed(message.readAt)) return "Read";
   if (confirmed(message.deliveredAt)) return "Delivered";
   return "Sent";
+}
+
+function ChatHeaderActions({ isDark, onClose }) {
+  const [open, setOpen] = useState(false);
+  const actionsRef = useRef(null);
+  const triggerRef = useRef(null);
+  const popupId = useId();
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!actionsRef.current?.contains(event.target)) setOpen(false);
+    };
+    const handleEscape = (event) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus({ preventScroll: true });
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={actionsRef}
+      className="relative hidden shrink-0 md:block"
+      onBlur={(event) => {
+        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) {
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label="Chat actions"
+        aria-expanded={open}
+        aria-controls={popupId}
+        onClick={() => setOpen((previous) => !previous)}
+        className={"flex size-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 " +
+          (isDark ? "hover:bg-white/10" : "hover:bg-slate-100")}
+      >
+        <EllipsisVertical size={21} aria-hidden="true" />
+      </button>
+      <div
+        id={popupId}
+        hidden={!open}
+        className={"absolute top-full right-0 z-20 mt-2 w-36 rounded-xl border p-1 shadow-lg " +
+          (isDark ? "border-[#293854] bg-[#111d31]" : "border-slate-200 bg-white")}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className={"min-h-10 w-full rounded-lg px-3 text-left text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 " +
+            (isDark ? "hover:bg-white/10" : "hover:bg-slate-100")}
+        >
+          Close chat
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // History comes from the dashboard-owned hook; this component never fetches.
@@ -301,6 +369,9 @@ export default function ChatPanel({
                 className="min-h-11 rounded px-2 text-xs text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">Connect</button>
             )}
           </div>
+        )}
+        {typeof onBack === "function" && (
+          <ChatHeaderActions key={selectionKey} isDark={isDark} onClose={onBack} />
         )}
       </header>
       {session.error && <p role="alert" className={"px-4 pb-2 text-xs " + muted}>{session.error}</p>}
