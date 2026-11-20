@@ -56,6 +56,8 @@ builder.Services.AddScoped<IOtpService, OtpService>();
 builder.Services.AddDataProtection();
 
 builder.Services.AddScoped<SingleSessionService>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<BrowserSessionService>();
 
 builder.Services.AddSingleton<ActiveSessionValidator>();
 builder.Services.AddSingleton<SessionConnectionManager>();

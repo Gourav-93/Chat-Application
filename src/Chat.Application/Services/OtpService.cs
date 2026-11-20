@@ -87,6 +87,8 @@ public class OtpService : IOtpService
         await using (var transaction =
             await BeginVerificationTransactionAsync(mobileNumber))
         {
+            await _singleSession.EnsureBrowserAvailableAsync();
+
             // Same mobile ki doosri request yahan wait karegi.
             var now = DateTime.UtcNow;
             var windowStart = now.AddMinutes(-SendWindowMinutes);
@@ -158,6 +160,8 @@ public class OtpService : IOtpService
         // Serialize verification for this normalized mobile across app instances.
         // The database unique index also prevents duplicates from other writers.
         await using var transaction = await BeginVerificationTransactionAsync(mobileNumber);
+
+        await _singleSession.EnsureBrowserAvailableAsync();
 
         var windowStart = DateTime.UtcNow.AddMinutes(-15);
 

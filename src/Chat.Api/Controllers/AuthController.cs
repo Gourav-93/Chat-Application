@@ -12,6 +12,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.RateLimiting;
 
+
 namespace Chat.Api.Controllers;
 
 [ApiController]
@@ -23,20 +24,34 @@ public class AuthController : ControllerBase
     private readonly IOtpService _otpService;
     private readonly SingleSessionService _singleSession;
     private readonly SessionConnectionManager _sessionConnections;
+    private readonly BrowserSessionService _browserSessions;
 
     public AuthController(
         ChatDbContext context,
         IConfiguration configuration,
         IOtpService otpService,
         SingleSessionService singleSession,
-        SessionConnectionManager sessionConnections)
+        SessionConnectionManager sessionConnections,
+        BrowserSessionService browserSessions)
     {
         _context = context;
         _configuration = configuration;
         _otpService = otpService;
         _singleSession = singleSession;
         _sessionConnections = sessionConnections;
+        _browserSessions = browserSessions;
     }
+
+    [AllowAnonymous]
+[HttpPost("browser")]
+public IActionResult InitializeBrowser()
+{
+    Response.Headers.CacheControl = "no-store";
+
+    _browserSessions.EnsureCookie();
+
+    return NoContent();
+}
 
     [EnableRateLimiting("otp-send")]
     [HttpPost("send-otp")]
@@ -266,6 +281,10 @@ public class AuthController : ControllerBase
                 .SetProperty(
                     u => u.SessionExpiresAt,
                     (DateTime?)null
+                )
+                .SetProperty(
+                    u => u.ActiveBrowserId,
+                    (Guid?)null
                 )
             );
 

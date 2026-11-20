@@ -13,6 +13,7 @@ public class User
     public bool IsMobileVerified { get; set; } = false; // verified or not
     public Guid? ActiveSessionId { get; set; }
     public DateTime? SessionExpiresAt { get; set; }
+    public Guid? ActiveBrowserId { get; set; }
 
     // Navigation properties
     public ICollection<Conversation> ConversationsAsUserA { get; set; }

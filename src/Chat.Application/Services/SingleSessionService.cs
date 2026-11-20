@@ -5,6 +5,7 @@ using Chat.Infrastructure.Data;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
+
 namespace Chat.Application.Services;
 
 public sealed class SingleSessionService
@@ -12,16 +13,19 @@ public sealed class SingleSessionService
     private readonly ChatDbContext _db;
     private readonly IConfiguration _configuration;
     private readonly IDataProtector _protector;
+    private readonly BrowserSessionService _browserSessions;
 
     private SessionLease? _current;
 
     public SingleSessionService(
         ChatDbContext db,
         IConfiguration configuration,
-        IDataProtectionProvider protection)
+        IDataProtectionProvider protection,
+        BrowserSessionService browserSessions)
     {
         _db = db;
         _configuration = configuration;
+        _browserSessions = browserSessions;
 
         _protector = protection.CreateProtector(
             "Sandesh.SingleSession.Confirmation.v1"
@@ -35,6 +39,11 @@ public sealed class SingleSessionService
                 "No login session was prepared for this request."
             );
     }
+
+    public Task<Guid> EnsureBrowserAvailableAsync()
+{
+    return _browserSessions.RequireAvailableAsync();
+}
 
     // Existing mobile-locked authentication transaction ke andar call karo.
     public async Task PrepareAsync(
@@ -51,6 +60,8 @@ public sealed class SingleSessionService
                 "Session preparation requires an authentication transaction."
             );
         }
+
+        var browserId = await EnsureBrowserAvailableAsync();
 
         var snapshot = await _db.Users
             .AsNoTracking()
@@ -135,6 +146,10 @@ public sealed class SingleSessionService
                     u => u.SessionExpiresAt,
                     (DateTime?)expiresAt
                 )
+                .SetProperty(
+                    u => u.ActiveBrowserId,
+                    (Guid?)browserId
+               )
         );
 
         if (updatedRows != 1)

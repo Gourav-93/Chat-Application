@@ -156,6 +156,9 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("ActiveBrowserId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid?>("ActiveSessionId")
                         .HasColumnType("uniqueidentifier");
 

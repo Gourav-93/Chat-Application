@@ -20,6 +20,20 @@ const AUTH_ENDPOINTS = {
   COMPLETE_PROFILE: "/auth/complete-profile",
 };
 
+async function ensureBrowserSession() {
+  if (!navigator.locks) {
+    throw new Error(
+      "Browser coordination is unavailable. Open the app on localhost or HTTPS in a supported browser."
+    );
+  }
+
+  await navigator.locks.request(
+    "sandesh-browser-initialization",
+    async () => {
+      await api.post("/auth/browser");
+    },
+  );
+}
 /**
  * Sends an OTP request to the backend.
  *
@@ -27,6 +41,8 @@ const AUTH_ENDPOINTS = {
  * @returns {Promise<object>} Backend response data.
  */
 export const sendOtp = async (mobileNumber) => {
+  await ensureBrowserSession();
+
   const response = await api.post(AUTH_ENDPOINTS.SEND_OTP, {
     mobileNumber: mobileNumber.trim(),
   });
@@ -46,6 +62,8 @@ export const verifyOtp = async (
   otp,
   confirmationToken = null,
 ) => {
+  await ensureBrowserSession();
+  
   const response = await api.post(AUTH_ENDPOINTS.VERIFY_OTP, {
     mobileNumber: mobileNumber.trim(),
     otp: otp.trim(),
@@ -119,6 +137,7 @@ function validateLoginResponse(data) {
 
 // Registration credentials are used only for this endpoint, never as JWTs.
 export const completeProfile = async (registrationToken, userName, signal) => {
+  await ensureBrowserSession();
   const response = await api.post(
     AUTH_ENDPOINTS.COMPLETE_PROFILE,
     {
