@@ -5,6 +5,8 @@ let apiBase = window.location.origin;
 // let connection = null;
 
 const SESSION_KEY = "chatflow_auth";
+const PENDING_KEY = "chatflow_pending_registration";
+let pendingRegistration = null;
 
 // Restore previous login session
 let savedSession = null;
@@ -272,7 +274,9 @@ async function apiRequest(path, options = {}) {
             : response.status === 429
               ? "Too many requests. Please wait a moment and try again."
               : "Unable to complete the request. Please try again.";
-    throw new Error(safeMessage);
+    const error = new Error(safeMessage);
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -311,7 +315,7 @@ $("sendOtpBtn").addEventListener("click", async () => {
     $("otp").focus();
     error.style.color = "var(--green)";
     error.textContent =
-      "OTP sent. Check your SMS or development server output.";
+      "Development OTP generated. Check the backend terminal; no real SMS is sent.";
   } catch (err) {
     error.textContent = err.message || "Unable to send OTP. Please try again.";
   } finally {
@@ -350,50 +354,12 @@ $("loginForm").addEventListener("submit", async (event) => {
       body: JSON.stringify({ mobileNumber, otp }),
     });
 
-    // The verify endpoint must return the same fields as the login response.
-    // token = result.token ?? result.Token;
-    // currentUserId = result.userId ?? result.UserId;
-    // currentUserName = displayIdentity(result.mobileNumber ?? result.MobileNumber ?? mobileNumber, result.userName ?? result.UserName);
-
-    token = result.token ?? result.Token;
-    currentUserId = result.userId ?? result.UserId;
-
-    currentUserName = displayIdentity(
-      result.mobileNumber ?? result.MobileNumber ?? mobileNumber,
-      result.userName ?? result.UserName,
-    );
-
-    expiresAt = result.expiresAt ?? result.ExpiresAt;
-
-    if (!token || !currentUserId || !expiresAt) {
+    if (result.status === "profileRequired") {
+      showPendingRegistration(result);
+    } else if (result.status === "signedIn" && result.login) {
+      await acceptLogin(result.login);
+    } else {
       throw new Error("Invalid authentication response.");
-    }
-
-    // Save login session
-    sessionStorage.setItem(
-      SESSION_KEY,
-      JSON.stringify({
-        token: token,
-        userId: currentUserId,
-        userName: currentUserName,
-        expiresAt: expiresAt,
-      }),
-    );
-
-    if (!token || !currentUserId) {
-      throw new Error(
-        "OTP verification must return token and userId. Check the verify-otp controller response.",
-      );
-    }
-
-    $("currentUserLabel").textContent = `Signed in as ${currentUserName}`;
-    loginView.classList.add("hidden");
-    chatView.classList.remove("hidden");
-    // await connectSignalR();
-    try {
-      await connectSignalR();
-    } catch (error) {
-      console.error("SignalR connection failed:", error);
     }
   } catch (err) {
     error.textContent =
@@ -404,6 +370,81 @@ $("loginForm").addEventListener("submit", async (event) => {
     button.disabled = false;
     button.textContent = "Verify OTP & sign in";
   }
+});
+
+function showPendingRegistration(result) {
+  const expiry = new Date(result.registrationExpiresAt).getTime();
+  if (!result.registrationToken || !Number.isFinite(expiry) || expiry <= Date.now())
+    throw new Error("Verify your mobile again to complete registration.");
+  pendingRegistration = {
+    registrationToken: result.registrationToken,
+    registrationExpiresAt: result.registrationExpiresAt,
+  };
+  sessionStorage.setItem(PENDING_KEY, JSON.stringify(pendingRegistration));
+  loginView.classList.add("hidden");
+  chatView.classList.add("hidden");
+  $("profileView").classList.remove("hidden");
+  $("profileError").textContent = "";
+  $("userName").focus();
+}
+
+async function acceptLogin(result) {
+  if (!result.token || !result.userId || !result.expiresAt)
+    throw new Error("Invalid authentication response.");
+  token = result.token;
+  currentUserId = result.userId;
+  currentUserName = displayIdentity(result.mobileNumber, result.userName);
+  expiresAt = result.expiresAt;
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, userId: currentUserId, userName: currentUserName, expiresAt }));
+  sessionStorage.removeItem(PENDING_KEY);
+  pendingRegistration = null;
+  $("profileView").classList.add("hidden");
+  loginView.classList.add("hidden");
+  chatView.classList.remove("hidden");
+  $("currentUserLabel").textContent = `Signed in as ${currentUserName}`;
+  try { await connectSignalR(); }
+  catch { setConnectionStatus("Connection failed"); }
+}
+
+$("profileForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const userName = $("userName").value.trim();
+  const error = $("profileError");
+  error.textContent = "";
+  if (!userName || userName.length > 100) {
+    error.textContent = "Enter a name of 1 to 100 characters.";
+    return;
+  }
+  if (!pendingRegistration) {
+    error.textContent = "Verify your mobile again to complete registration.";
+    return;
+  }
+  $("completeProfileBtn").disabled = true;
+  try {
+    const result = await apiRequest("/api/auth/complete-profile", {
+      method: "POST",
+      body: JSON.stringify({ userName, registrationToken: pendingRegistration.registrationToken }),
+    });
+    await acceptLogin(result);
+  } catch (err) {
+    error.textContent = [401, 409, 410].includes(err.status)
+      ? "Verify your mobile again to sign in or resume registration."
+      : err.message;
+    if ([401, 409, 410].includes(err.status)) {
+      pendingRegistration = null;
+      sessionStorage.removeItem(PENDING_KEY);
+    }
+  } finally { $("completeProfileBtn").disabled = false; }
+});
+
+$("restartRegistrationBtn").addEventListener("click", () => {
+  sessionStorage.removeItem(PENDING_KEY);
+  pendingRegistration = null;
+  $("profileView").classList.add("hidden");
+  loginView.classList.remove("hidden");
+  $("otp").value = "";
+  $("otpSection").classList.add("hidden");
+  $("loginError").textContent = "";
 });
 
 async function connectSignalR() {
@@ -1007,4 +1048,11 @@ $("logoutBtn").addEventListener("click", async () => {
 });
 
 // Restore existing user session on page refresh
-restoreSession();
+if (token) {
+  restoreSession();
+} else {
+  try {
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_KEY));
+    if (pending) showPendingRegistration(pending);
+  } catch { sessionStorage.removeItem(PENDING_KEY); }
+}

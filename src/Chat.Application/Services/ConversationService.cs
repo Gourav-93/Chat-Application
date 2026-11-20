@@ -1,3 +1,4 @@
+// Handles conversation lookup, creation, and summary queries.
 
 using System.Text.RegularExpressions;
 using Chat.Application.DTOs;
@@ -139,7 +140,10 @@ public class ConversationService : IConversationService
                     .OrderByDescending(m => m.SentAt)
                     .ThenByDescending(m => m.Id)
                     .Select(m => (Guid?)m.SenderId)
-                    .FirstOrDefault()
+                    .FirstOrDefault(),
+
+                // Counts incoming messages the current user has not read.
+                UnreadCount = c.Messages.Count(m => m.SenderId != currentUserId && m.ReadAt == null)
             })
             .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
             .ThenByDescending(c => c.ConversationId)

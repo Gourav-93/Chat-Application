@@ -1,0 +1,29 @@
+/* File: index.css. Imports Tailwind and defines global styles and chat dashboard scroll containment. */
+@import "tailwindcss";
+
+:root {
+  font-family: Inter, system-ui, Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+/* Lock document scrolling only while the chat dashboard is mounted. */
+html:has(#root > [data-chat-dashboard]),
+body:has(> #root > [data-chat-dashboard]) {
+  overflow: hidden;
+}
+
+body:has(> #root > [data-chat-dashboard]) {
+  min-height: 100dvh;
+}
+
+button {
+  cursor: pointer;
+}

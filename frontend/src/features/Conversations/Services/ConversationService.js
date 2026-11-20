@@ -1,0 +1,111 @@
+/**
+ * File: ConversationService.js
+ * Purpose: Retrieves conversation lists and supports verified-user search and chat creation.
+ * Responsibilities:
+ * 1. Request the existing conversation list without changing its API contract.
+ * 2. Validate response data before it reaches the UI.
+ * 3. Provide readable errors without disguising server failures as empty lists.
+ * 4. Search verified mobile numbers and create or reuse conversations.
+ */
+
+import api from "../../../shared/lib/api";
+
+export async function getConversations(signal) {
+  const response = await api.get("/conversations", { signal });
+  const conversations = response.data;
+  const isNullableString = (value) => value == null || typeof value === "string";
+
+  // An invalid payload is an error, not evidence that the user has no chats.
+  if (
+    !Array.isArray(conversations) ||
+    !conversations.every((item) =>
+      item !== null &&
+      typeof item === "object" &&
+      Number.isInteger(item.conversationId) &&
+      item.conversationId > 0 &&
+      typeof item.otherUserId === "string" &&
+      item.otherUserId.trim().length > 0 &&
+      typeof item.otherUserName === "string" &&
+      isNullableString(item.otherUserMobileNumber) &&
+      isNullableString(item.lastMessage) &&
+      isNullableString(item.lastMessageAt) &&
+      isNullableString(item.lastMessageSenderId)
+    )
+  ) {
+    throw new Error("The server returned an unexpected conversation response.");
+  }
+
+  return conversations.map((conversation) => ({
+    ...conversation,
+    unreadCount: Number.isSafeInteger(conversation.unreadCount) && conversation.unreadCount >= 0
+      ? conversation.unreadCount
+      : null,
+  }));
+}
+
+export function getConversationErrorMessage(error) {
+  const status = error?.response?.status;
+  if (status === 401) return "Your session could not be authorized. Please log out and sign in again.";
+  if (status === 403) return "You do not have permission to view these conversations.";
+  if (status === 429) return "Too many requests. Please wait before trying again.";
+  if (status >= 500) return "The server could not load your conversations. Please try again later.";
+  if (error?.code === "ECONNABORTED") return "Loading conversations timed out. Please try again.";
+  if (error?.isAxiosError && !error.response) return "Unable to connect to the server. Check your connection and try again.";
+  if (error?.isAxiosError) return "Unable to load conversations. Please try again.";
+  return "The server returned an unexpected conversation response. Please try again.";
+}
+
+/**
+ * Finds other verified users by an exact international mobile number.
+ */
+export async function searchUsersByMobileNumber(mobileNumber, signal) {
+  const response = await api.get("/conversations/search", {
+    params: { mobileNumber: mobileNumber.trim() },
+    signal,
+  });
+  const users = response.data;
+  if (!Array.isArray(users) || !users.every((user) =>
+    user && typeof user.id === "string" && user.id.trim() &&
+    typeof user.userName === "string" &&
+    (user.mobileNumber == null || typeof user.mobileNumber === "string"),
+  )) {
+    throw new Error("The server returned an unexpected user search response.");
+  }
+  return users;
+}
+
+/**
+ * Reuses an existing conversation or creates one through the existing endpoint.
+ */
+export async function getOrCreateConversation(receiverId, signal) {
+  const response = await api.post("/conversations", { receiverId }, { signal });
+  const conversation = response.data;
+  if (!conversation || !Number.isInteger(conversation.conversationId) ||
+      conversation.conversationId <= 0 ||
+      typeof conversation.otherUserId !== "string" ||
+      !conversation.otherUserId.trim() ||
+      typeof conversation.otherUserName !== "string" ||
+      !(conversation.otherUserMobileNumber == null ||
+        typeof conversation.otherUserMobileNumber === "string")) {
+    throw new Error("The server returned an unexpected conversation response.");
+  }
+  return conversation;
+}
+
+export function getNewChatErrorMessage(error) {
+  const status = error?.response?.status;
+  if (status === 401) return "Your session could not be authorized. Please log out and sign in again.";
+  if (status === 403) return "You do not have permission to start this conversation.";
+  if (status === 429) return "Too many requests. Please wait before trying again.";
+  if (status >= 500) return "The server could not complete this request. Please try again later.";
+  if (error?.code === "ECONNABORTED") return "The request timed out. Please try again.";
+  if (status === 400 || status === 404) {
+    // These endpoints return either a message object or a plain client-error string.
+    const data = error.response.data;
+    const message = typeof data === "string" ? data : data?.message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  if (error?.isAxiosError && !error.response) return "Unable to connect to the server. Please try again.";
+  if (error?.isAxiosError) return "The request could not be completed. Please try again.";
+  return error?.message || "The request could not be completed. Please try again.";
+}

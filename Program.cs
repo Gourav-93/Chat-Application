@@ -11,6 +11,8 @@ using Chat.Application.Interfaces;
 using Chat.Infrastructure.Services;
 using Chat.Infrastructure.Presence;
 using System.Threading.RateLimiting;
+using Chat.Api.Filters;
+using Microsoft.AspNetCore.SignalR;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -41,11 +43,28 @@ builder.Services.AddSwaggerGen(options =>
 // SignalR
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
-builder.Services.AddScoped<ISmsSender, DevelopmentSmsSender>();
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddScoped<ISmsSender, DevelopmentSmsSender>();
+}
+else
+{
+    builder.Services.AddScoped<ISmsSender, UnconfiguredSmsSender>();
+}
+
 builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddDataProtection();
 
+builder.Services.AddScoped<SingleSessionService>();
 
-builder.Services.AddSignalR();
+builder.Services.AddSingleton<ActiveSessionValidator>();
+builder.Services.AddSingleton<SessionConnectionManager>();
+builder.Services.AddSingleton<ActiveSessionHubFilter>();
+
+builder.Services.AddSignalR(options =>
+{
+    options.AddFilter<ActiveSessionHubFilter>();
+});
 builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
 builder.Services.AddSingleton<IPresenceService, PresenceService>();
 
@@ -86,6 +105,7 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -123,11 +143,39 @@ builder.Services
                 }
 
                 return Task.CompletedTask;
-            }
+            },
+            OnTokenValidated = async context =>
+{
+    var validator = context.HttpContext.RequestServices
+        .GetRequiredService<ActiveSessionValidator>();
+
+    var active = await validator.IsActiveAsync(
+        context.Principal,
+        context.HttpContext.RequestAborted
+    );
+
+    if (!active)
+    {
+        context.Fail("Session expired or replaced.");
+    }
+}
         };
     });
 
 builder.Services.AddAuthorization();
+
+var otpIpSendPermitLimit =
+    builder.Configuration.GetValue<int>("Otp:IpSendPermitLimit", 3);
+
+var otpIpSendWindowMinutes =
+    builder.Configuration.GetValue<int>("Otp:IpSendWindowMinutes", 15);
+
+if (otpIpSendPermitLimit <= 0 ||
+    otpIpSendWindowMinutes <= 0)
+{
+    throw new InvalidOperationException(
+        "OTP IP rate limit settings must be greater than zero.");
+}
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -138,8 +186,8 @@ builder.Services.AddRateLimiter(options =>
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 3,
-                Window = TimeSpan.FromMinutes(15),
+                PermitLimit = otpIpSendPermitLimit,
+                Window = TimeSpan.FromMinutes(otpIpSendWindowMinutes),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
@@ -154,6 +202,17 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+});
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("ReactClient", policy =>
+    {
+        policy.WithOrigins("http://localhost:5173")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
 });
 
 var app = builder.Build();
@@ -176,12 +235,16 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseRouting();
+app.UseCors("ReactClient");
 app.UseRateLimiter();
-
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHub<ChatHub>("/hubs/chat");
+// app.MapHub<ChatHub>("/hubs/chat");
+app.MapHub<ChatHub>("/hubs/chat", options =>
+{
+    options.CloseOnAuthenticationExpiration = true;
+});
 
 app.Run();
