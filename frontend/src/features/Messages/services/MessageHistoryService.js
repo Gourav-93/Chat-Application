@@ -1,7 +1,7 @@
 /**
  * Purpose: Owns the dashboard session's shared authenticated messaging connection.
- * Responsibilities: Serialize history requests, isolate session transport from
- * request cancellation, await complete transport stop, and offer best-effort typing.
+ * Responsibilities: Validate connection attempts, report recoverable failures to
+ * the session owner, and serialize history while safely retiring transports.
  */
 import api from "../../../shared/lib/api";
 import { signalRHubUrl } from "../../../shared/lib/config.js";
@@ -15,6 +15,48 @@ import {
 let transportBarrier = Promise.resolve();
 let cleanupBlocked = false;
 const REQUEST_TIMEOUT = 20000;
+
+function describeConnectionFailure(kind, cause, retryable = true) {
+  return {
+    kind,
+    status: cause?.response?.status ?? cause?.statusCode ?? null,
+    code: cause?.code ?? null,
+    retryable,
+  };
+}
+
+function describeSessionCheckFailure(cause) {
+  const status = cause?.response?.status;
+  if (status === 401 || status === 403) {
+    return describeConnectionFailure("auth", cause, false);
+  }
+  if (Number.isInteger(status)) {
+    // A gateway response such as 502 is retryable without proving an outage.
+    return describeConnectionFailure("http", cause, status === 408 || status === 429 || status >= 500);
+  }
+  if (cause?.code === "ERR_CANCELED") {
+    return describeConnectionFailure("cancelled", cause, false);
+  }
+  if (cause?.isAxiosError && !cause.response) {
+    const kind = navigator.onLine === false ? "offline" : "network";
+    return describeConnectionFailure(kind, cause);
+  }
+  return describeConnectionFailure("session-check", cause, false);
+}
+
+async function withConnectionDeadline(task, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      task,
+      new Promise((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(message)), REQUEST_TIMEOUT);
+      }),
+    ]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 async function awaitLatestCleanup() {
   // A different owner may append cleanup while this owner is already waiting.
@@ -66,12 +108,13 @@ export function createMessageHistoryService(
   let generation = 0;
   let current = null;
   let starting = null;
+  let sessionCheck = null;
   let activeOperation = null;
   let queue = Promise.resolve();
   let foregroundWork = 0;
 
-  const publishState = (status, error = "") => {
-    if (!disposed) onState?.({ status, error });
+  const publishState = (status, error = "", failure = null) => {
+    if (!disposed) onState?.({ status, error, failure });
   };
   const invalidateConversations = (record) => {
     if (!disposed && current === record && !record.retired &&
@@ -142,63 +185,80 @@ export function createMessageHistoryService(
     return record.stopTask;
   }
 
-  function invalidateConnection(reason) {
+  function invalidateConnection(reason, failure = describeConnectionFailure(current ? "signalr" : "connection", reason)) {
     // Also invalidates startup that has not created a transport yet.
     generation++;
-    publishState("disconnected", reason.message);
+    sessionCheck?.abort();
     const record = current;
     current = null;
-    return stopRecord(record, reason);
+    const stopTask = stopRecord(record, reason);
+    publishState("disconnected", reason.message, failure);
+    return stopTask;
+  }
+
+  function checkStartup(startGeneration) {
+    checkSession();
+    if (startGeneration !== generation) {
+      throw new Error("Connection startup was superseded.");
+    }
+    if (cleanupBlocked) {
+      throw new Error("Connection cleanup failed.");
+    }
+  }
+
+  async function waitForSafeCleanup(barrier) {
+    try {
+      await withConnectionDeadline(barrier, "Connection cleanup timed out.");
+    } catch (error) {
+      cleanupBlocked = true;
+      throw error;
+    }
   }
 
   function connect() {
     checkSession();
 
-    if (
-      current &&
-      !current.retired &&
-      current.connection.state === HubConnectionState.Connected
-    ) {
+    if (starting?.generation === generation) return starting.promise;
+    if (current && !current.retired && current.connection.state === HubConnectionState.Connected) {
       return Promise.resolve(current);
     }
-    if (starting?.generation === generation) return starting.promise;
+    if (current) {
+      void invalidateConnection(new Error("Previous chat connection is no longer usable."));
+    }
 
     publishState("connecting");
     const startGeneration = generation;
+    let stage = "cleanup";
+    let startupWarning = "";
     const task = (async () => {
-      await awaitLatestCleanup();
-      checkSession();
+      let checkedBarrier = transportBarrier;
+      await waitForSafeCleanup(checkedBarrier);
+      checkStartup(startGeneration);
 
-      if (startGeneration !== generation) {
-        throw new Error("History connection startup was superseded.");
-      }
-      if (cleanupBlocked) {
-        throw new Error(
-          "Connection cleanup failed. Please reload before retrying.",
-        );
-      }
-
+      stage = "session-check";
+      const controller = new AbortController();
+      sessionCheck = controller;
       try {
         await api.get("/auth/session", {
           headers: {
             Authorization: `Bearer ${token}`,
           },
+          signal: controller.signal,
         });
-      } catch {
-        publishState(
-          "disconnected",
-          "Unable to validate your session. Please try again.",
-        );
-
-        throw new Error("Unable to validate your session. Please try again.");
+      } finally {
+        if (sessionCheck === controller) sessionCheck = null;
       }
 
-      checkSession();
-
-      if (startGeneration !== generation) {
-        throw new Error("Connection startup was superseded.");
+      stage = "cleanup";
+      // Validation can overlap retirement by another owner. Confirm the newest
+      // barrier, then build and start the hub without another asynchronous gap.
+      while (checkedBarrier !== transportBarrier) {
+        checkedBarrier = transportBarrier;
+        await waitForSafeCleanup(checkedBarrier);
       }
+      checkStartup(startGeneration);
 
+      stage = "signalr-setup";
       let record;
       const connection = new HubConnectionBuilder()
         .withUrl(signalRHubUrl, {
@@ -286,10 +346,10 @@ export function createMessageHistoryService(
         )
           return;
         if (!Array.isArray(messages) || !messages.every(validMessage)) {
-          publishState(
-            "connected",
-            "An unexpected message update was ignored. Reload history to check messages.",
-          );
+          const warning = "An unexpected message update was ignored. Reload history to check messages.";
+          // Pending messages can arrive before the connection has finished starting.
+          if (stage === "connected") publishState("connected", warning);
+          else startupWarning = warning;
           return;
         }
         onMessages?.(messages);
@@ -359,7 +419,8 @@ export function createMessageHistoryService(
       record.replacedHandler = (data) => {
         if (!liveRecord()) return;
 
-        void invalidateConnection(new Error("Your session was replaced."));
+        const error = new Error("Your session was replaced.");
+        void invalidateConnection(error, describeConnectionFailure("auth", error, false));
 
         onSessionReplaced?.(
           typeof data?.message === "string"
@@ -376,29 +437,25 @@ export function createMessageHistoryService(
       connection.on("ReceiveMessage", record.receiveHandler);
       connection.on("PendingMessages", record.pendingHandler);
       connection.on("MessageHistory", record.handler);
-      connection.onclose(() => {
+      connection.onclose((cause) => {
         // SignalR has no public offclose API; retired callbacks remain inert.
         if (record.retired || current !== record) return;
-        void api
-          .get("/auth/session", {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          })
-          .catch(() => undefined);
-        const error = new Error("Chat connection closed. Please try again.");
-        if (activeOperation) activeOperation.cancel(error);
-        else void invalidateConnection(error);
+        const error = new Error("Chat connection closed. Please try again.", { cause });
+        // The owner's next connection attempt will validate the session.
+        void invalidateConnection(error, describeConnectionFailure("signalr", cause));
+        activeOperation?.cancel(error);
       });
 
       current = record;
 
+      stage = "signalr-start";
+      let rawStart;
       try {
-        const rawStart = connection.start();
+        rawStart = connection.start();
 
-        // Observe startup rejection independently of stop/cleanup.
+        // Keep cleanup tied to the original start, even after our deadline.
         Promise.resolve(rawStart).then(settleStart, settleStart);
-        await rawStart;
+        await withConnectionDeadline(rawStart, "Chat connection startup timed out.");
 
         checkSession();
         if (
@@ -408,36 +465,37 @@ export function createMessageHistoryService(
         ) {
           throw new Error("History connection startup was superseded.");
         }
-        publishState("connected");
+        stage = "connected";
+        publishState("connected", startupWarning);
         // Events missed during a disconnect are recovered from the list API.
         invalidateConversations(record);
         return record;
-      } catch {
-        void api
-          .get("/auth/session", {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          })
-          .catch(() => undefined);
-        // Covers a synchronous start() throw as well as asynchronous failure.
-        settleStart();
-
-        // Never await retirement here: stop() already awaits pending startup.
-        if (current === record) {
-          void invalidateConnection(new Error("Unable to connect to chat."));
-        } else {
-          void stopRecord(record, new Error("History transport was retired."));
-        }
-        publishState(
-          "disconnected",
-          "Unable to connect to chat. Check your connection or sign in again.",
-        );
-        throw new Error(
-          "Unable to connect to chat. Check your connection or sign in again.",
-        );
+      } finally {
+        if (!rawStart) settleStart();
       }
-    })();
+    })().catch((cause) => {
+      // An old start can settle after retirement or disposal. Its replacement owns state.
+      if (disposed || startGeneration !== generation || Date.now() >= expiresAt) throw cause;
+
+      const failure = stage === "session-check"
+        ? describeSessionCheckFailure(cause)
+        : describeConnectionFailure(stage, cause, stage === "signalr-start" && cause?.statusCode !== 403);
+      let message = "Unable to start the chat connection.";
+      if (stage === "cleanup") {
+        message = "Connection cleanup failed. Please reload before retrying.";
+      } else if (failure.kind === "auth") {
+        message = "Unable to authorize your chat session.";
+      } else if (stage === "session-check") {
+        message = "Unable to complete the chat connection check.";
+      }
+      const error = new Error(message, { cause });
+      if (current?.generation === startGeneration) {
+        void invalidateConnection(error, failure);
+      } else {
+        publishState("disconnected", error.message, failure);
+      }
+      throw error;
+    });
 
     const entry = { generation: startGeneration, promise: task };
     starting = entry;
@@ -457,13 +515,16 @@ export function createMessageHistoryService(
       rejectCancellation = reject;
     });
 
+    let record;
+    let invoked = false;
     const operation = {
       cancelled: false,
       cancel(error) {
         if (operation.cancelled) return;
         operation.cancelled = true;
         rejectCancellation(error);
-        if (activeOperation === operation) {
+        if (invoked && activeOperation === operation && current === record &&
+            record.generation === generation) {
           void invalidateConnection(error);
         }
       },
@@ -479,7 +540,7 @@ export function createMessageHistoryService(
     );
 
     const work = (async () => {
-      const record = await connect();
+      record = await connect();
       checkSession();
       if (operation.cancelled) throw new Error("History request cancelled.");
 
@@ -504,9 +565,10 @@ export function createMessageHistoryService(
         // Attach both observers before invocation runs, including sync failures.
         const invocation = Promise.resolve().then(() => {
           checkSession();
-          if (operation.cancelled || record.retired || current !== record) {
+          if (!isCurrent() || operation.cancelled || record.retired || current !== record) {
             throw new Error("History request cancelled.");
           }
+          invoked = true;
           return record.connection.invoke(
             "GetMessages",
             conversationId,
@@ -522,7 +584,7 @@ export function createMessageHistoryService(
         if (operation.cancelled || record.retired || current !== record) {
           throw new Error("History request cancelled.");
         }
-        return messages;
+        return isCurrent() ? messages : [];
       } finally {
         if (record.pending === pending) record.pending = null;
       }
@@ -531,8 +593,9 @@ export function createMessageHistoryService(
     try {
       return await Promise.race([work, cancellation]);
     } catch (error) {
-      // A failure after invocation can leave an unlabelled event behind.
-      operation.cancel(error);
+      // A startup failure has already published its state. Retire only a hub
+      // with a history invocation that could still emit an unlabelled event.
+      if (invoked && current === record) operation.cancel(error);
 
       if (error.message.includes("Unable to access this conversation")) {
         throw new Error("Unable to access this conversation.", {
@@ -730,8 +793,18 @@ export function createMessageHistoryService(
         throw new Error("The server returned an unexpected presence response.");
       }
     },
-    // Manual start/retry only; no automatic reconnect or uncertain-send retry.
+    // The session owner schedules connection retries through the shared start.
     start: connect,
+
+    restartAfterOffline() {
+      checkSession();
+      if (current) {
+        const error = new Error("Chat connection was interrupted while offline.");
+        void invalidateConnection(error, describeConnectionFailure("offline", error));
+        activeOperation?.cancel(error);
+      }
+      return connect();
+    },
 
     async send(conversationId, value) {
       checkSession();
@@ -801,8 +874,8 @@ export function createMessageHistoryService(
       disposed = true;
       const error = new Error("History session was closed.");
 
-      if (activeOperation) activeOperation.cancel(error);
-      else void invalidateConnection(error);
+      void invalidateConnection(error);
+      activeOperation?.cancel(error);
 
       // Capture cleanup after cancellation, and follow subsequently added barriers.
       return awaitLatestCleanup();
