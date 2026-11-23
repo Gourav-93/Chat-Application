@@ -1,8 +1,8 @@
 /**
  * File: NewChatDialog.jsx
  * Purpose: Finds verified users by mobile, opens chats, and previews invitations.
- * Responsibilities: Provide an accessible themed dialog, validate international
- * numbers, cancel stale requests, and return the selected conversation to the page.
+ * Responsibilities: Provide an accessible themed dialog, validate 10-digit numbers
+ * with fixed +91, cancel stale requests, and return the selected conversation to the page.
  */
 
 import { useContext, useEffect, useId, useRef, useState } from "react";
@@ -40,7 +40,9 @@ export default function NewChatDialog({ onClose, onStarted }) {
   const [creating, setCreating] = useState(null);
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState("");
-  const canInvite = invitationPreviewEnabled && /^[+]91[0-9]{10}$/.test(mobileNumber.trim());
+  const isMobileNumberValid = /^[0-9]{10}$/.test(mobileNumber);
+  const fullMobileNumber = `+91${mobileNumber}`;
+  const canInvite = invitationPreviewEnabled && isMobileNumberValid;
   const muted = isDark ? "text-slate-400" : "text-slate-500";
 
   useEffect(() => {
@@ -86,7 +88,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
     if (creatingRef.current) return;
     requestRef.current.id++;
     requestRef.current.controller?.abort();
-    setMobileNumber(event.target.value);
+    setMobileNumber(event.target.value.replace(/\D/g, "").slice(0, 10));
     setUsers(null);
     setSearching(false);
     setValidationError("");
@@ -97,12 +99,11 @@ export default function NewChatDialog({ onClose, onStarted }) {
   const handleSearch = async (event) => {
     event.preventDefault();
     if (creatingRef.current) return;
-    const number = mobileNumber.trim();
     setApiError("");
     setInviteSuccess("");
     setUsers(null);
-    if (!/^[+][1-9][0-9]{7,14}$/.test(number)) {
-      setValidationError("Enter a full international mobile number, for example +919876543210.");
+    if (!isMobileNumberValid) {
+      setValidationError("Enter exactly 10 digits.");
       inputRef.current?.focus();
       return;
     }
@@ -110,7 +111,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
     const request = beginRequest();
     setSearching(true);
     try {
-      const results = await searchUsersByMobileNumber(number, request.controller.signal);
+      const results = await searchUsersByMobileNumber(fullMobileNumber, request.controller.signal);
       if (isCurrent(request)) setUsers(results);
     } catch (error) {
       if (isCurrent(request)) setApiError(getNewChatErrorMessage(error));
@@ -147,7 +148,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
     setInviteSuccess("");
     const request = beginRequest();
     try {
-      const result = await previewInvitation(mobileNumber.trim(), request.controller.signal);
+      const result = await previewInvitation(fullMobileNumber, request.controller.signal);
       if (isCurrent(request)) setInviteSuccess(result.message);
     } catch (error) {
       if (isCurrent(request)) setApiError(getNewChatErrorMessage(error));
@@ -181,28 +182,36 @@ export default function NewChatDialog({ onClose, onStarted }) {
           </button>
         </header>
         <p id={id + "-description"} className={"mt-2 text-sm leading-6 " + muted}>
-          Find a registered user by their full international mobile number.
+          Find a registered user using a 10-digit mobile number.
         </p>
         <form onSubmit={handleSearch} className="mt-5" noValidate>
           <label htmlFor={id + "-mobile"} className="mb-2 block text-sm font-medium">Mobile number</label>
-          <input
-            ref={inputRef}
-            id={id + "-mobile"}
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            maxLength={16}
-            value={mobileNumber}
-            onChange={handleChange}
-            disabled={creating !== null || inviting}
-            placeholder="+919876543210"
-            aria-invalid={Boolean(validationError)}
-            aria-describedby={id + "-help" + (validationError ? " " + id + "-validation" : "")}
-            className={"min-h-11 w-full rounded-xl border px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 " +
-              (isDark ? "border-[#293854] bg-[#080e1c] text-white placeholder:text-slate-500" : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400")}
-          />
+          <div className={"flex min-h-11 w-full min-w-0 items-stretch overflow-hidden rounded-xl border focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 " +
+            (isDark ? "border-[#293854] bg-[#080e1c]" : "border-slate-200 bg-slate-50")}>
+            <span aria-hidden="true" className={"flex shrink-0 items-center border-r px-3 text-sm font-semibold sm:px-4 " +
+              (isDark ? "border-[#293854] text-white" : "border-slate-200 text-slate-900")}>
+              +91
+            </span>
+            <input
+              ref={inputRef}
+              id={id + "-mobile"}
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel-national"
+              maxLength={10}
+              value={mobileNumber}
+              onChange={handleChange}
+              disabled={creating !== null || inviting}
+              placeholder="9876543210"
+              aria-label="10-digit mobile number"
+              aria-invalid={Boolean(validationError)}
+              aria-describedby={id + "-help" + (validationError ? " " + id + "-validation" : "")}
+              className={"min-h-11 min-w-0 w-full flex-1 bg-transparent px-3 py-3 text-base outline-none disabled:opacity-60 sm:px-4 sm:text-sm " +
+                (isDark ? "text-white placeholder:text-slate-500" : "text-slate-900 placeholder:text-slate-400")}
+            />
+          </div>
           <p id={id + "-help"} className={"mt-2 text-xs leading-5 " + muted}>
-            Include the + country code. Search uses an exact mobile-number match.
+            Enter exactly 10 digits. Country code +91 is added automatically.
           </p>
           {validationError && <p id={id + "-validation"} role="alert"
             className={"mt-2 text-sm " + (isDark ? "text-red-300" : "text-red-600")}>{validationError}</p>}
