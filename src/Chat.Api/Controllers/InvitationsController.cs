@@ -44,14 +44,16 @@ public sealed class InvitationsController : ControllerBase
 
         var number = request.MobileNumber?.Trim();
 
+
         if (string.IsNullOrWhiteSpace(number) ||
-            !Regex.IsMatch(number, @"^\+[1-9]\d{7,14}$"))
+            !Regex.IsMatch(number, @"^\+91[0-9]{10}$"))
         {
             return BadRequest(new
             {
-                message = "Enter a valid international mobile number."
+                message = "Mobile number must contain exactly 10 digits after +91."
             });
         }
+
 
         // Check ALL registered users, including unverified users.
         // Do not invite a number already in our database.
@@ -79,6 +81,8 @@ public sealed class InvitationsController : ControllerBase
             "Connect with friends and start chatting.\n" +
             $"Join Sandesh: {signupUrl}";
 
+
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine();
         Console.WriteLine("========== DEVELOPMENT INVITATION ==========");
         Console.WriteLine($"Mobile Number : {number}");
@@ -90,6 +94,7 @@ public sealed class InvitationsController : ControllerBase
         Console.WriteLine("Status       : PRINTED ONLY - NOT SENT");
         Console.WriteLine("============================================");
         Console.WriteLine();
+        Console.ResetColor();
 
         return Ok(new
         {
