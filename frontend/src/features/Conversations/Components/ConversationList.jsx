@@ -4,7 +4,7 @@
  * Responsibilities:
  * 1. Render selectable rows with generic avatars, username-first titles, and last-message details.
  * 2. Filter loaded conversations locally by username or mobile number.
- * 3. Distinguish loading, retryable errors, empty lists, and no search matches.
+ * 3. Keep cached rows and unread counts visible across outages and show access errors quietly.
  * 4. Keep list scrolling independent of the dashboard header and search input.
  * 5. Notify the parent of successful unfiltered list changes and restore focus.
  */
@@ -38,6 +38,7 @@ export default function ConversationList({
   selectedConversationId,
   onConversationsLoaded,
   focusRequest,
+  backendUnavailable = false,
   refreshKey = 0,
 } = {}) {
   const theme = useContext(ThemeContext);
@@ -45,8 +46,7 @@ export default function ConversationList({
   const userId = auth?.isAuthenticated ? auth.user?.userId : null;
   const isDark = theme?.isDark ?? true;
   const {
-    conversations, isLoading, isRefreshing, snapshotReady, unreadCountsAvailable,
-    error, refreshError, retry,
+    conversations, isLoading, isRefreshing, snapshotReady, hasSnapshot, accessError,
   } = useConversations(refreshKey);
   const [query, setQuery] = useState("");
   const searchId = useId();
@@ -56,8 +56,7 @@ export default function ConversationList({
   const lastNotifiedRef = useRef(null);
 
   useEffect(() => {
-    // The hook reports loading until an authenticated response has settled.
-    // Errors and local search results must never be reported as list snapshots.
+    // Notify only after a successful server response, even when cached rows are visible.
     if (!userId || !snapshotReady ||
         typeof onConversationsLoaded !== "function") return;
 
@@ -89,30 +88,17 @@ export default function ConversationList({
     (conversation.otherUserMobileNumber ?? "").toLocaleLowerCase().includes(searchQuery),
   );
 
-  let content;
-  if (isLoading) {
+  let content = null;
+  if (accessError) {
+    content = <p role="status" className={"px-6 py-8 text-center text-sm " + muted}>{accessError}</p>;
+  } else if (isLoading && !backendUnavailable) {
     content = (
       <div role="status" className={"flex min-h-48 items-center justify-center gap-3 px-6 text-sm " + muted}>
         <LoaderCircle size={20} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
         Loading conversations...
       </div>
     );
-  } else if (error) {
-    content = (
-      <div className="flex min-h-48 flex-col items-center justify-center px-6 py-8 text-center">
-        <p role="alert" className={"text-sm " + (isDark ? "text-red-300" : "text-red-600")}>
-          {error}
-        </p>
-        <button
-          type="button"
-          onClick={retry}
-          className="mt-4 min-h-11 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-        >
-          Try again
-        </button>
-      </div>
-    );
-  } else if (conversations.length === 0) {
+  } else if (conversations.length === 0 && hasSnapshot) {
     content = (
       <div role="status" className="flex min-h-48 flex-col items-center justify-center px-6 py-8 text-center">
         <MessageCircleMore size={42} className={"mb-4 " + muted} aria-hidden="true" />
@@ -122,7 +108,7 @@ export default function ConversationList({
         </p>
       </div>
     );
-  } else if (filtered.length === 0) {
+  } else if (conversations.length > 0 && filtered.length === 0) {
     content = (
       <div role="status" className="flex min-h-48 flex-col items-center justify-center px-6 py-8 text-center">
         <h2 className="font-semibold">No matching conversations</h2>
@@ -131,13 +117,13 @@ export default function ConversationList({
         </p>
       </div>
     );
-  } else {
+  } else if (filtered.length > 0) {
     content = (
       <ul aria-label="Conversations" className="px-2 pb-3">
         {filtered.map((conversation) => {
           const displayName = getDisplayName(conversation.otherUserName, conversation.otherUserMobileNumber);
           const timestamp = formatTimestamp(conversation.lastMessageAt);
-          const unreadCount = unreadCountsAvailable ? conversation.unreadCount : null;
+          const unreadCount = conversation.unreadCount;
           const showUnread = unreadCount > 0;
           const unreadLabel = showUnread
             ? `, ${unreadCount} unread ${unreadCount === 1 ? "message" : "messages"}`
@@ -152,6 +138,7 @@ export default function ConversationList({
                 data-conversation-id={conversation.conversationId}
                 aria-label={"Open conversation with " + displayName + unreadLabel}
                 aria-pressed={selectedConversationId === conversation.conversationId}
+                aria-disabled={backendUnavailable || undefined}
                 disabled={typeof onSelect !== "function"}
                 onClick={() => onSelect?.(conversation)}
                 className={"flex w-full min-w-0 gap-3 rounded-xl px-3 py-4 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 disabled:cursor-default " +
@@ -232,15 +219,6 @@ export default function ConversationList({
         </div>
       </div>
       {isRefreshing && <p role="status" className="sr-only">Updating conversations...</p>}
-      {refreshError && (
-        <div className="shrink-0 px-4 pb-3 text-xs">
-          <p role="alert" className={isDark ? "text-red-300" : "text-red-600"}>{refreshError}</p>
-          <button type="button" onClick={retry}
-            className="mt-2 min-h-11 rounded px-3 text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">
-            Retry refresh
-          </button>
-        </div>
-      )}
       <div
         id={listId}
         role="region"

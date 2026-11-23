@@ -3,7 +3,7 @@
  * Purpose: Presents conversation history, live messages, and the controlled composer.
  * Responsibilities:
  * 1. Render recipient activity, confirmed outgoing receipts, and date-grouped messages.
- * 2. Show loading, empty, session guidance, retryable error, and older-page loading states.
+ * 2. Show history load states and actionable session or activity errors.
  * 3. Support both themes, mobile Back navigation, and accessible focus.
  * 4. Preserve scroll position and keyboard focus during older-message pagination.
  */
@@ -357,25 +357,14 @@ export default function ChatPanel({
             {recipientActivity}
           </p>
         </div>
-        {session.status !== "connected" && (
-          <div className="flex shrink-0 flex-col items-end gap-1 md:flex-row md:items-center md:gap-2">
-            <span role="status" aria-label={"Chat connection: " + session.status}
-              className={"rounded-full border px-2.5 py-1 text-[11px] font-medium " +
-                (isDark ? "border-slate-600 bg-slate-800 text-slate-300" : "border-slate-200 bg-slate-100 text-slate-600")}>
-              {session.status === "connecting" ? "Connecting..." : "Disconnected"}
-            </span>
-            {session.status === "disconnected" && !session.requiresSignIn && (
-              <button type="button" onClick={session.start}
-                className="min-h-11 rounded px-2 text-xs text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500">Connect</button>
-            )}
-          </div>
-        )}
         {typeof onBack === "function" && (
           <ChatHeaderActions key={selectionKey} isDark={isDark} onClose={onBack} />
         )}
       </header>
-      {session.error && <p role="alert" className={"px-4 pb-2 text-xs " + muted}>{session.error}</p>}
-      {activityError && (
+      {session.error && !session.failure?.retryable && !history.requiresSignIn && (
+        <p role="alert" className={"px-4 pb-2 text-xs " + muted}>{session.error}</p>
+      )}
+      {activityError && activityAvailable && (
         <div className={"flex shrink-0 flex-wrap items-center gap-2 px-4 py-2 text-xs " + muted}>
           <p role="alert">{activityError}</p>
           <button type="button" disabled={!activityAvailable}
@@ -448,7 +437,7 @@ export default function ChatPanel({
           </p>
         )}
 
-        {!history.isLoading && history.error && (
+        {!history.isLoading && history.error && (session.status === "connected" || history.requiresSignIn) && (
           <div className="mb-5 rounded-2xl px-4 py-5 text-center">
             <p
               role="alert"
