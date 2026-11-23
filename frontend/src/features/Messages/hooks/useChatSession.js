@@ -1,14 +1,16 @@
 /**
  * File: useChatSession.js
  * Purpose: Owns the authenticated dashboard's single messaging service.
- * Responsibilities: Buffer confirmed messages and receipts, acknowledge delivery,
- * cache presence, forward scoped transient typing, and clean up when the session ends.
+ * Responsibilities: Schedule automatic recovery, guard session cleanup, buffer
+ * messages and receipts, acknowledge delivery, and forward presence and typing.
  */
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { AuthContext } from "../../../app/AuthContext";
 import { createMessageHistoryService, mergeMessageReceipts } from "../services/MessageHistoryService";
 
 const EMPTY_MESSAGES = new Map();
+const INITIAL_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 30_000;
 
 export default function useChatSession() {
   const auth = useContext(AuthContext);
@@ -26,6 +28,13 @@ export default function useChatSession() {
     if (!validSession) return undefined;
     let active = true;
     let expiryTimer;
+    let retryTimer;
+    let startInFlight = false;
+    let recoveryStopped = false;
+    let networkRecoveryPending = navigator.onLine === false;
+    let reconnectDelay = INITIAL_RECONNECT_DELAY;
+    let lastFailure = null;
+    let backgroundRecovery = false;
     const owner = { token, userId, expiresAt, service: null };
     let connectionStatus = "connecting";
     let typingEpoch = 0;
@@ -38,7 +47,79 @@ export default function useChatSession() {
       if (active) setState((previous) =>
         previous?.owner === owner ? change(previous) : previous);
     };
-    const typingReady = () => active && connectionStatus === "connected" && Date.now() < expiresAt;
+    const sessionCurrent = () => active && Date.now() < expiresAt;
+    const canStart = () => sessionCurrent() && !recoveryStopped && navigator.onLine !== false;
+
+    function clearRetryTimer() {
+      window.clearTimeout(retryTimer);
+      retryTimer = undefined;
+    }
+
+    function scheduleReconnect() {
+      if (!canStart() || startInFlight || retryTimer !== undefined ||
+          connectionStatus !== "disconnected" || !lastFailure?.retryable) return;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        if (!canStart() || connectionStatus !== "disconnected" || !lastFailure?.retryable) return;
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+        startConnection(true);
+      }, reconnectDelay);
+    }
+
+    function startConnection(background = false, afterOffline = false) {
+      if (!canStart() || startInFlight || (!afterOffline && connectionStatus === "connected")) return;
+      clearRetryTimer();
+      backgroundRecovery = background;
+      // Publish the task before calling start(), which can emit state synchronously.
+      startInFlight = true;
+      void Promise.resolve()
+        .then(() => {
+          if (!canStart()) {
+            if (afterOffline && sessionCurrent() && navigator.onLine === false) {
+              networkRecoveryPending = true;
+            }
+            return;
+          }
+          if (afterOffline) {
+            // Any additional offline events before this attempt belong to the same recovery.
+            networkRecoveryPending = false;
+            return owner.service.restartAfterOffline();
+          }
+          return owner.service.start();
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          startInFlight = false;
+          backgroundRecovery = false;
+          continueRecovery();
+        });
+    }
+
+    function continueRecovery() {
+      if (networkRecoveryPending && canStart() && !startInFlight) {
+        networkRecoveryPending = false;
+        if (lastFailure?.retryable !== false) {
+          startConnection(true, true);
+          return;
+        }
+      }
+      scheduleReconnect();
+    }
+
+    function pauseRecovery() {
+      networkRecoveryPending = true;
+      clearRetryTimer();
+    }
+    function stopRecovery() {
+      recoveryStopped = true;
+      networkRecoveryPending = false;
+      clearRetryTimer();
+      window.removeEventListener("online", continueRecovery);
+      window.removeEventListener("offline", pauseRecovery);
+    }
+    owner.start = startConnection;
+
+    const typingReady = () => sessionCurrent() && connectionStatus === "connected";
     const guardCurrent = (guard) => {
       try { return typeof guard === "function" && Boolean(guard()); }
       catch { return false; }
@@ -123,20 +204,35 @@ export default function useChatSession() {
         ...previous, revision: previous.revision + 1,
       })),
       onSessionReplaced: (message) => {
-  if (active) {
-    endSession?.(message, token);
-  }
-},
-      onState: ({ status, error }) => {
+        if (!active) return;
+        stopRecovery();
+        endSession?.(message, token);
+      },
+      onState: ({ status, error, failure }) => {
+        if (!sessionCurrent()) return;
         connectionStatus = status;
         if (status !== "connected") clearTypingSubscriptions();
+        if (status === "connecting") {
+          clearRetryTimer();
+          // Keep the displayed state stable while tracking the real startup above.
+          if (backgroundRecovery) return;
+        } else {
+          lastFailure = failure;
+        }
+        const keepPreviousError = backgroundRecovery && status === "disconnected" && failure?.retryable;
         update((previous) => ({
-          ...previous, status, error,
+          ...previous, status, failure: status === "connecting" ? previous.failure : failure,
+          error: keepPreviousError ? (previous.error || error) : error,
           presence: status === "connected" ? previous.presence : new Map(),
         }));
         if (status === "connected") {
+          clearRetryTimer();
+          reconnectDelay = INITIAL_RECONNECT_DELAY;
           for (const entry of deliveries.values()) entry.failed = false;
           void flushDelivery();
+        } else if (status === "disconnected") {
+          if (failure?.retryable) continueRecovery();
+          else clearRetryTimer();
         }
       },
       onTyping: (event) => {
@@ -199,27 +295,32 @@ export default function useChatSession() {
       if (!active) return;
       const remaining = expiresAt - Date.now();
       if (remaining <= 0) {
+        stopRecovery();
         connectionStatus = "disconnected";
         clearTypingSubscriptions();
         update((previous) => ({ ...previous, expired: true, status: "disconnected",
-          error: "Your session has expired. Please sign in again." }));
+          failure: null, error: "Your session has expired. Please sign in again." }));
         void owner.service.dispose();
       } else {
         expiryTimer = window.setTimeout(checkExpiry, Math.min(remaining, 2147483647));
       }
     };
 
+    window.addEventListener("online", continueRecovery);
+    window.addEventListener("offline", pauseRecovery);
+
     // Publish the owner before starting; event callbacks then queue behind it.
     // StrictMode's discarded owner cannot publish or start a transport.
     Promise.resolve().then(() => {
       if (!active) return;
       setState({ owner, messages: new Map(), receipts: new Map(), presence: new Map(),
-        receiptError: "", revision: 0, status: "connecting", error: "", expired: false });
+        receiptError: "", revision: 0, status: "connecting", error: "", failure: null, expired: false });
       checkExpiry();
-      if (Date.now() < expiresAt) void owner.service.start().catch(() => undefined);
+      startConnection();
     });
     return () => {
       active = false;
+      stopRecovery();
       clearTypingSubscriptions();
       window.clearTimeout(expiryTimer);
       if (sendRef.current?.owner === owner) sendRef.current = null;
@@ -255,7 +356,7 @@ export default function useChatSession() {
   }, [owner, requiresSignIn]);
 
   const start = useCallback(() => {
-    if (owner && !requiresSignIn) void owner.service.start().catch(() => undefined);
+    if (owner && !requiresSignIn) owner.start();
   }, [owner, requiresSignIn]);
 
   const retryReceipts = useCallback(() => {
@@ -280,6 +381,7 @@ export default function useChatSession() {
     receiptError: current ? state.receiptError : "",
     status: current ? state.status : "connecting",
     error: current ? state.error : "",
+    failure: current ? state.failure : null,
     revision: current ? state.revision : 0,
     messages: current && !requiresSignIn ? state.messages : EMPTY_MESSAGES,
     sending: sending?.owner === owner ? sending : null,
