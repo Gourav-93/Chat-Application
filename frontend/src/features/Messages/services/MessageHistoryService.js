@@ -4,6 +4,7 @@
  * request cancellation, await complete transport stop, and offer best-effort typing.
  */
 import api from "../../../shared/lib/api";
+import { signalRHubUrl } from "../../../shared/lib/config.js";
 import {
   HubConnectionBuilder,
   HubConnectionState,
@@ -200,7 +201,7 @@ export function createMessageHistoryService(
 
       let record;
       const connection = new HubConnectionBuilder()
-        .withUrl("/hubs/chat", {
+        .withUrl(signalRHubUrl, {
           // Token access belongs to the session/transport, not its first request.
           accessTokenFactory: () => {
             checkSession();
@@ -210,7 +211,7 @@ export function createMessageHistoryService(
             return token;
           },
         })
-        .configureLogging(LogLevel.Warning)
+        .configureLogging(import.meta.env.DEV ? LogLevel.Warning : LogLevel.None)
         .build();
 
       let settleStart;
