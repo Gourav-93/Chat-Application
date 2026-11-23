@@ -2,7 +2,7 @@
 
 ## Current flow and ownership
 
-The single .NET 10 backend serves an HTML test client under `wwwroot`. The React client in `frontend` implements the session-confirmation and replacement flow.
+The single .NET 10 backend serves the API and SignalR endpoints. The React client in `frontend` implements the session-confirmation and replacement flow. Follow the [root local setup](../README.md#local-setup), the [database guide](database-setup.md), and the [configuration reference](deployment.md#configuration-reference) before testing this contract.
 
 1. Collect only mobile, send OTP, then submit mobile + OTP.
 2. An existing mobile signs in with a valid OTP. When another session is active, the user must confirm before replacing it.
@@ -11,9 +11,12 @@ The single .NET 10 backend serves an HTML test client under `wwwroot`. The React
 
 ## API contract
 
+`POST /api/auth/browser` initializes the HttpOnly browser-identity cookie. The React auth service performs this initialization before OTP operations using browser Web Locks. API clients must preserve that cookie across subsequent requests. The server also enforces the existing active-account-per-browser guard.
+
+
 POST /api/auth/send-otp
 
-    { "mobileNumber": "+919876543210" }
+    { "mobileNumber": "<verified-test-mobile>" }
 
 HTTP 200 returns a message. Development delivery prints the OTP to the local backend terminal. Invalid input returns 400. Cooldown or an exhausted send quota returns 429. If delivery fails after the database commit, the API returns 503 and the saved OTP still counts toward cooldown and quota. The console sender runs only in Development. Other environments require an SMS provider for delivery to succeed.
 
@@ -21,7 +24,7 @@ HTTP 200 returns a message. Development delivery prints the OTP to the local bac
 
 POST /api/auth/verify-otp
 
-    { "mobileNumber": "+919876543210", "otp": "123456" }
+    { "mobileNumber": "<verified-test-mobile>", "otp": "123456" }
 
 Illustrative inputs only. Existing-account response (200):
 
@@ -30,8 +33,8 @@ Illustrative inputs only. Existing-account response (200):
       "login": {
         "token": "<JWT>",
         "userId": "<GUID>",
-        "userName": "Asha",
-        "mobileNumber": "+919876543210",
+        "userName": "Test User",
+        "mobileNumber": "<verified-test-mobile>",
         "expiresAt": "<UTC ISO-8601 timestamp>"
       }
     }
@@ -50,7 +53,7 @@ An existing account with an active session receives HTTP 409 with `requiresConfi
 
 POST /api/auth/complete-profile
 
-    { "registrationToken": "<opaque registration credential>", "userName": "Asha" }
+    { "registrationToken": "<opaque registration credential>", "userName": "Test User" }
 
 HTTP 200 returns LoginResponseDto directly: token, userId, userName, mobileNumber, expiresAt. Name must contain 1–100 UTF-16 characters after trimming. Names need not be unique. The server resolves mobile from the credential's stored record, never a client mobile, userId or isNewUser flag. Existing account names are never overwritten.
 
@@ -70,49 +73,25 @@ Send OTP, verification and profile completion use the same transaction-owned mob
 
 A valid credential resumes after refresh/backend restart. If lost/expired, send/verify a fresh OTP: same pending row, no duplicate account. Browser storage alone is not authorization. If registration committed but its response was lost, a fresh OTP finds the existing account and may require confirmation to replace its active session. Consumed-token replay returns 409 without changing the name.
 
-Verification checks the latest OTP including its used state, preventing fallback to an older unused challenge. OTP expiry (5 minutes), send cooldown/request limits, failed-attempt budget and IP policies remain.
+Verification checks the latest OTP including its used state, preventing fallback to an older unused challenge. Configured OTP expiry, send cooldown/request limits, the failed-attempt budget, and IP policies apply.
 
 ## Client behavior and one active session
 
-Both clients show a separate name form for `profileRequired`. The HTML test client stores the pending registration credential and expiry in `sessionStorage` so it can restore the form after a refresh. Its logout button clears that client's local session. Use React for the session-takeover flow.
+React shows a separate name form for `profileRequired`. A pending registration credential authorizes profile completion until expiry or consumption. Successful chat login is persisted through the current `AuthProvider` localStorage/session lifecycle, and logout calls the backend before clearing the shared browser login. The deployed UI is the React application.
 
 React prompts before replacing an active session. Cancel keeps the original session active. Confirm creates the replacement session and invalidates the old JWT. On the same backend instance, the server removes the old SignalR connections from the chat group, sends `SessionReplaced`, and closes them. React clears the replaced session and returns to sign-in. An ordinary reconnect with the active JWT reuses the session. React logout calls the API to revoke the session.
 
-## Migrations and local DB
+## Database and local setup
 
-`20261117090120_AddPendingRegistrations` adds the pending table and its unique mobile index. `20261118134342_AddSingleActiveSession` has empty `Up()` and `Down()` methods. `20261119081350_EnsureSingleSessionColumns` adds `ActiveSessionId` and `SessionExpiresAt` individually if missing.
+The current migration baseline and existing-database precautions are in the [database guide](database-setup.md). The [root README](../README.md#local-setup) owns User Secrets, dependency installation, migration application, and both startup commands. The [configuration reference](deployment.md#configuration-reference) owns setting names and default limits.
 
-The repair migration uses an empty `Down()`. Because `Up()` can skip pre-existing columns, a blanket `DROP` would risk deleting columns and session data that existed before the repair. That rationale is inferred from the SQL. In the isolated rollback test, EF removed both session migration history entries and retained the columns and their data. Reapplying restored the history entries and preserved the data. Treat rollback to the pre-session migration as a migration-history rollback with the session schema and data retained.
+For optional local OTP preview, follow the root backend-start instructions and enable the documented Development flag before starting the backend. React can display the returned code temporarily; the console sender also prints local test OTPs. Startup rejects OTP exposure outside Development.
 
-For migration testing, point `ConnectionStrings:DefaultConnection` at a confirmed disposable SQL Server database. Run from the web project root.
+## Historical verification
 
-    dotnet ef database update --project Two-Way-Com.csproj --context ChatDbContext
+The records below preserve earlier task reports and user observations. Their original harnesses and fixtures were not rerun for this documentation audit. Some tests predate the migration squash and current startup validation. In particular, earlier Staging/Production exposure tests describe behavior before startup began rejecting that flag. Current setup and release expectations are defined by the guides linked above.
 
-## Local setup and verification
-
-Use .NET 10 and existing EF 10.0.14 tooling/packages. Configure local secrets/environment variables: ConnectionStrings:DefaultConnection, Otp:HashingKey (at least 32 characters), Jwt:Key (at least 32 UTF-8 bytes), Jwt:Issuer, Jwt:Audience and optional Jwt:ExpiryInDays. Never commit/share values.
-
-    dotnet build Two-Way-Com.csproj
-    dotnet ef migrations has-pending-model-changes --project Two-Way-Com.csproj --context ChatDbContext
-
-See `frontend/README.md` for React setup. Trial results below used temporary test helpers and an isolated SQL Server LocalDB database.
-
-To run the test UI with local configuration, from project root:
-
-    dotnet run --project Two-Way-Com.csproj --launch-profile http
-
-Open http://localhost:5261/index.html and hard-refresh. Sign out/use a fresh browser profile if an existing login hides the initial form.
-
-### Run the optional React OTP preview locally
-
-Use the existing local authentication settings and a confirmed isolated SQL Server test database. From the backend project root, set the opt-in flag in the PowerShell terminal that runs the backend.
-
-    $env:Otp__ExposeForLocalTesting = 'true'
-    dotnet run --project Two-Way-Com.csproj --launch-profile http
-
-The `http` profile starts the backend in Development on port 5261. From `frontend`, run `npm ci` and `npm run dev`, then open http://localhost:5173. If a backend is already running, stop it in its terminal before starting it with the new flag. To disable the preview, set `$env:Otp__ExposeForLocalTesting = 'false'` and restart using the same profile. Development OTPs remain available in the backend terminal.
-
-## Manual OTP sign-in and profile completion results
+### Manual OTP sign-in and profile completion results
 
 These are user-reported local API results on `stabilization/v1`.
 
@@ -128,7 +107,7 @@ These are user-reported local API results on `stabilization/v1`.
 
 These results cover the reported HTTP responses and the OTP-row check for the wrong attempt. JWT use against protected endpoints, registration-token expiry, concurrent completion, and frontend handling were outside these manual checks. The automated harness was not run for these results.
 
-## Manual Chrome and Edge session takeover results
+### Manual Chrome and Edge session takeover results
 
 The user reported these observations from the two-browser demo on integrated `stabilization/v1`.
 
@@ -137,7 +116,7 @@ The user reported these observations from the two-browser demo on integrated `st
 | Cancel the takeover prompt in Browser B | Browser A remains signed in | Browser A stayed signed in | Passed |
 | Confirm takeover in Browser B | Browser B signs in and Browser A returns to login | Browser B signed in and Browser A returned to the login screen | Passed |
 
-## Local session integration trial results
+### Local session integration trial results
 
 Automated checks used one backend instance, real SQL Server LocalDB, and temporary test accounts. The React smoke used two isolated Chromium browser contexts. The simulated sender changed only the test harness.
 
@@ -158,7 +137,7 @@ Automated checks used one backend instance, real SQL Server LocalDB, and tempora
 
 Real SMS, physical devices, natural OTP expiry, and multiple backend instances were outside this trial.
 
-## Local OTP popup verification
+### Local OTP popup verification
 
 Automated HTTP checks used a separate disposable SQL Server LocalDB database. Development with the flag enabled returned the same six-digit OTP used by the console sender. That code verified against the saved hash, and the response used `Cache-Control: no-store`. Development with the flag off, missing or invalid omitted `developmentOtp`. Production and Staging omitted it with the flag enabled. The default unconfigured sender returned 503 in those environments and emitted no terminal OTP. A simulated successful provider omitted the field in all three environments. A simulated delivery failure returned 503 and retained the committed hashed row.
 
@@ -175,11 +154,3 @@ The user separately confirmed the following manual results on `stabilization/v1`
 | Restart with the flag disabled | The response omits `developmentOtp`, the popup stays closed, and the terminal OTP can verify | The field and popup were absent and the normal terminal-based OTP flow worked | Passed |
 
 These checks cover the local OTP preview. Real SMS delivery, physical devices, and multiple backend instances remain unverified. The natural OTP-expiry response message was observed, and its exact HTTP status is pending confirmation.
-
-## Historical OTP-only PR draft (not submitted)
-
-Separate mobile OTP verification from new-user profile completion. Existing users sign in directly; new verified mobiles receive a hashed, short-lived, mobile-bound registration credential with no chat access. Complete registration atomically under the same mobile lock, preserving account identity/name and preventing duplicate registration on retries/concurrent requests. Persist pending state for restart/resume; retain multi-device JWT behaviour.
-
-Add PendingRegistrations and unique mobile index through migration 20261117090120_AddPendingRegistrations. Preserve history and existing user/chat data. Update test UI, DTO/service/controller, React contract and SQL/HTTP/SignalR checks. Program.cs, dependencies and messaging/presence logic are unchanged.
-
-Validation: build, reviewed migration/model/generated SQL and local runtime acceptance checks. Browser/React, real SMS, physical devices and teammate DB application remain pending. No commit, push or PR performed.

@@ -1,4 +1,6 @@
-# Send OTP — Manual Test Results
+# Historical Send OTP manual results
+
+These recorded results describe the earlier OTP implementation and its local fixtures. Current setup is in the [root README](../README.md#local-setup), and supported settings are in the [configuration reference](deployment.md#configuration-reference). Re-run the applicable checks against a dedicated database for a current release.
 
 Date: 2026-11-18
 Branch: stabilization/v1
@@ -19,7 +21,7 @@ Environment: Local Development
 | Original sender restored | HTTP 200, OTP printed normally | Passed |
 | Simulated error after SaveChangesAsync, before commit | HTTP 500; record count remained 0. After removing the error, a successful request increased count to 1. | Passed |
 
-## Current behavior
+## Behavior observed during these checks
 
 - OTP hashes are saved before delivery is attempted.
 - Same-mobile send requests use a SQL application lock.
@@ -31,8 +33,8 @@ Environment: Local Development
 
 - Mobile request-count limit and window expiry.
 - IP request-count limit exhaustion.
-- Database failure before commit.
+- Database-provider failure before commit, beyond the recorded injected exception.
 - Concurrent requests for different mobile numbers.
-- Controlled error response for SMS delivery failures.
+- Provider-backed SMS failure handling during deployment verification.
 
 These results describe manual local checks, not full V1 acceptance.

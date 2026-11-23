@@ -11,6 +11,8 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.RateLimiting;
+using Chat.Application.Configuration;
+using Microsoft.Extensions.Options;
 
 
 namespace Chat.Api.Controllers;
@@ -20,7 +22,7 @@ namespace Chat.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly ChatDbContext _context;
-    private readonly IConfiguration _configuration;
+    private readonly JwtOptions _jwt;
     private readonly IOtpService _otpService;
     private readonly SingleSessionService _singleSession;
     private readonly SessionConnectionManager _sessionConnections;
@@ -28,14 +30,14 @@ public class AuthController : ControllerBase
 
     public AuthController(
         ChatDbContext context,
-        IConfiguration configuration,
+        IOptions<JwtOptions> jwt,
         IOtpService otpService,
         SingleSessionService singleSession,
         SessionConnectionManager sessionConnections,
         BrowserSessionService browserSessions)
     {
         _context = context;
-        _configuration = configuration;
+        _jwt = jwt.Value;
         _otpService = otpService;
         _singleSession = singleSession;
         _sessionConnections = sessionConnections;
@@ -179,12 +181,6 @@ public IActionResult InitializeBrowser()
 
     private LoginResponseDto GenerateLoginResponse(User user)
     {
-        var jwtKey = _configuration["Jwt:Key"]
-            ?? throw new InvalidOperationException("JWT Key is missing.");
-
-        var issuer = _configuration["Jwt:Issuer"];
-        var audience = _configuration["Jwt:Audience"];
-
         var session = _singleSession.RequireCurrent();
 
         var expiresAt = session.ExpiresAt;
@@ -206,7 +202,7 @@ public IActionResult InitializeBrowser()
         };
 
         var key = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(jwtKey)
+            Encoding.UTF8.GetBytes(_jwt.Key)
         );
 
         var credentials = new SigningCredentials(
@@ -215,8 +211,8 @@ public IActionResult InitializeBrowser()
         );
 
         var token = new JwtSecurityToken(
-            issuer: issuer,
-            audience: audience,
+            issuer: _jwt.Issuer,
+            audience: _jwt.Audience,
             claims: claims,
             expires: expiresAt,
             signingCredentials: credentials

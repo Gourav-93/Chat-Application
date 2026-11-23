@@ -4,6 +4,7 @@ using Chat.Api.Filters;
 using Chat.Api.Hubs;
 using Chat.Application.Interfaces;
 using Chat.Application.Services;
+using Chat.Application.Configuration;
 using Chat.Infrastructure.Data;
 using Chat.Infrastructure.Presence;
 using Chat.Infrastructure.Services;
@@ -13,33 +14,11 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Fail safely if production secrets have not been configured.
-// These environment variables override appsettings.json without changing local development.
-if (builder.Environment.IsProduction())
-{
-    foreach (var name in new[]
-    {
-        "ConnectionStrings__DefaultConnection",
-        "Jwt__Key",
-        "Otp__HashingKey"
-    })
-    {
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name)))
-        {
-            throw new InvalidOperationException(
-                $"Required production environment variable '{name}' is missing.");
-        }
-    }
-
-    if (builder.Configuration.GetValue<bool>("Otp:ExposeForLocalTesting"))
-    {
-        throw new InvalidOperationException(
-            "Otp:ExposeForLocalTesting must be false in production.");
-    }
-}
+builder.Services.AddSandeshConfiguration(builder.Configuration, builder.Environment);
 
 // 2. MVC, Swagger and health checking.
 builder.Services.AddControllers();
@@ -103,37 +82,18 @@ builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
 builder.Services.AddSingleton<IPresenceService, PresenceService>();
 
 // 4. Database. Never default to a development connection string in production.
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-if (string.IsNullOrWhiteSpace(connectionString))
-{
-    throw new InvalidOperationException("Database connection string is missing.");
-}
-
-builder.Services.AddDbContext<ChatDbContext>(options =>
-    options.UseSqlServer(connectionString));
+builder.Services.AddDbContext<ChatDbContext>((services, options) =>
+    options.UseSqlServer(services.GetRequiredService<IOptions<DatabaseOptions>>().Value.DefaultConnection));
 
 // 5. JWT configuration, preserving session validation and SignalR token support.
-var jwtKey = builder.Configuration["Jwt:Key"];
-var jwtIssuer = builder.Configuration["Jwt:Issuer"];
-var jwtAudience = builder.Configuration["Jwt:Audience"];
-
-if (string.IsNullOrWhiteSpace(jwtKey))
-    throw new InvalidOperationException("JWT Key is missing.");
-
-var jwtKeyBytes = Encoding.UTF8.GetBytes(jwtKey);
-if (jwtKeyBytes.Length < 32)
-    throw new InvalidOperationException("JWT signing key must contain at least 32 bytes for HS256.");
-
-if (string.IsNullOrWhiteSpace(jwtIssuer))
-    throw new InvalidOperationException("JWT Issuer is missing.");
-
-if (string.IsNullOrWhiteSpace(jwtAudience))
-    throw new InvalidOperationException("JWT Audience is missing.");
-
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    .AddJwtBearer();
+
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IOptions<JwtOptions>>((options, settings) =>
     {
+        var jwt = settings.Value;
         options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -142,9 +102,9 @@ builder.Services
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             RequireExpirationTime = true,
-            ValidIssuer = jwtIssuer,
-            ValidAudience = jwtAudience,
-            IssuerSigningKey = new SymmetricSecurityKey(jwtKeyBytes),
+            ValidIssuer = jwt.Issuer,
+            ValidAudience = jwt.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
             ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 },
             ClockSkew = TimeSpan.FromSeconds(30)
         };
@@ -182,19 +142,10 @@ builder.Services
 builder.Services.AddAuthorization();
 
 // 6. Preserve existing OTP IP rate-limiter policies.
-var otpIpSendPermitLimit =
-    builder.Configuration.GetValue<int>("Otp:IpSendPermitLimit", 3);
-var otpIpSendWindowMinutes =
-    builder.Configuration.GetValue<int>("Otp:IpSendWindowMinutes", 15);
-
-if (otpIpSendPermitLimit <= 0 || otpIpSendWindowMinutes <= 0)
+builder.Services.AddRateLimiter(_ => { });
+builder.Services.AddOptions<RateLimiterOptions>().Configure<IOptions<OtpOptions>>((options, settings) =>
 {
-    throw new InvalidOperationException(
-        "OTP IP rate limit settings must be greater than zero.");
-}
-
-builder.Services.AddRateLimiter(options =>
-{
+    var otp = settings.Value;
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
     options.AddPolicy("otp-send", context =>
@@ -202,8 +153,8 @@ builder.Services.AddRateLimiter(options =>
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = otpIpSendPermitLimit,
-                Window = TimeSpan.FromMinutes(otpIpSendWindowMinutes),
+                PermitLimit = otp.IpSendPermitLimit,
+                Window = TimeSpan.FromMinutes(otp.IpSendWindowMinutes),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
@@ -213,21 +164,19 @@ builder.Services.AddRateLimiter(options =>
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 5,
-                Window = TimeSpan.FromMinutes(5),
+                PermitLimit = otp.IpVerifyPermitLimit,
+                Window = TimeSpan.FromMinutes(otp.IpVerifyWindowMinutes),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
 });
 
 // 7. Keep local Vite working; only explicit origins are allowed for cross-origin production traffic.
-var allowedOrigins = builder.Environment.IsDevelopment()
-    ? new[] { "http://localhost:5173" }
-    : builder.Configuration.GetSection("Cors:AllowedOrigins")
-        .Get<string[]>() ?? Array.Empty<string>();
-
-builder.Services.AddCors(options =>
+builder.Services.AddCors();
+builder.Services.AddOptions<Microsoft.AspNetCore.Cors.Infrastructure.CorsOptions>()
+    .Configure<IOptions<FrontendCorsOptions>>((options, settings) =>
 {
+    var allowedOrigins = settings.Value.AllowedOrigins;
     options.AddPolicy("ReactClient", policy =>
     {
         if (allowedOrigins.Length > 0)
@@ -244,12 +193,12 @@ var app = builder.Build();
 
 // 8. API-only backend: React is hosted separately; no wwwroot required.
 
-if (app.Environment.IsDevelopment())
+if (app.Services.GetRequiredService<IOptions<SwaggerOptions>>().Value.Enabled)
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-else
+if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
 }
