@@ -11,5 +11,6 @@ obj/
 *.log
 
 appsettings.json
+appsettings.Production.json
 
 node_modules/
