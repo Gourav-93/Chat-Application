@@ -28,12 +28,9 @@ public class ConversationService : IConversationService
 
         var mobileNumber = query.Trim();
 
-
-        if (!Regex.IsMatch(mobileNumber, @"^\+91[0-9]{10}$"))
-        {
+        if (!Regex.IsMatch(mobileNumber, @"^\+[1-9]\d{7,14}$"))
             throw new ArgumentException(
-                "Mobile number must contain exactly 10 digits after +91.");
-        }
+                "Enter a valid mobile number in international format.");
 
 
         return await _context.Users

@@ -9,7 +9,8 @@ using Chat.Infrastructure.Data;
 using Chat.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
-using Microsoft.Extensions.Configuration;
+using Chat.Application.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace Chat.Application.Services;
 
@@ -20,59 +21,25 @@ public class OtpService : IOtpService
     private readonly byte[] _hashingKey;
     private readonly bool _exposeDevelopmentOtp;
 
-    private readonly int OtpExpiryMinutes;
-    private readonly int ResendCooldownSeconds;
-    private readonly int MaxSendRequests;
-    private readonly int SendWindowMinutes;
+    private readonly OtpOptions _options;
     private readonly SingleSessionService _singleSession;
-
-    private const int MaxAttempts = 5;
 
     public OtpService(
         ChatDbContext context,
         ISmsSender smsSender,
-        IConfiguration configuration,
+        IOptions<OtpOptions> options,
         IHostEnvironment environment,
         SingleSessionService singleSession)
     {
         _context = context;
         _smsSender = smsSender;
         _singleSession = singleSession;
+        _options = options.Value;
         _exposeDevelopmentOtp = environment.IsDevelopment()
             && smsSender is DevelopmentSmsSender
-            && bool.TryParse(configuration["Otp:ExposeForLocalTesting"], out var exposeOtp)
-            && exposeOtp;
+            && _options.ExposeForLocalTesting;
 
-        OtpExpiryMinutes =
-            configuration.GetValue<int>("Otp:ExpiryMinutes", 5);
-
-        ResendCooldownSeconds =
-            configuration.GetValue<int>("Otp:ResendCooldownSeconds", 60);
-
-        MaxSendRequests =
-            configuration.GetValue<int>("Otp:MaxSendRequests", 3);
-
-        SendWindowMinutes =
-            configuration.GetValue<int>("Otp:SendWindowMinutes", 15);
-
-        if (OtpExpiryMinutes <= 0 ||
-            ResendCooldownSeconds <= 0 ||
-            MaxSendRequests <= 0 ||
-            SendWindowMinutes <= 0)
-        {
-            throw new InvalidOperationException(
-                "OTP configuration values must be greater than zero.");
-        }
-
-        var secret = configuration["Otp:HashingKey"];
-
-        if (string.IsNullOrWhiteSpace(secret) || secret.Length < 32)
-        {
-            throw new InvalidOperationException(
-                "A secure OTP hashing key of at least 32 characters is required.");
-        }
-
-        _hashingKey = Encoding.UTF8.GetBytes(secret);
+        _hashingKey = Encoding.UTF8.GetBytes(_options.HashingKey);
     }
 
     // ==========================================
@@ -91,14 +58,14 @@ public class OtpService : IOtpService
 
             // Same mobile ki doosri request yahan wait karegi.
             var now = DateTime.UtcNow;
-            var windowStart = now.AddMinutes(-SendWindowMinutes);
+            var windowStart = now.AddMinutes(-_options.SendWindowMinutes);
 
             var recentOtpCount = await _context.OtpVerifications
                 .CountAsync(o =>
                     o.MobileNumber == mobileNumber &&
                     o.CreatedAt >= windowStart);
 
-            if (recentOtpCount >= MaxSendRequests)
+            if (recentOtpCount >= _options.MaxSendRequests)
             {
                 throw new AuthFlowException(
                     "Too many OTP requests. Try again later.", 429);
@@ -111,7 +78,7 @@ public class OtpService : IOtpService
                 .FirstOrDefaultAsync();
 
             if (latestOtp != null &&
-                now < latestOtp.CreatedAt.AddSeconds(ResendCooldownSeconds))
+                now < latestOtp.CreatedAt.AddSeconds(_options.ResendCooldownSeconds))
             {
                 throw new AuthFlowException(
                     "Please wait before requesting another OTP.", 429);
@@ -124,7 +91,7 @@ public class OtpService : IOtpService
             {
                 MobileNumber = mobileNumber,
                 OtpHash = HashOtp(mobileNumber, otp),
-                ExpiresAt = now.AddMinutes(OtpExpiryMinutes),
+                ExpiresAt = now.AddMinutes(_options.ExpiryMinutes),
                 IsUsed = false,
                 Attempts = 0,
                 CreatedAt = now
@@ -163,7 +130,7 @@ public class OtpService : IOtpService
 
         await _singleSession.EnsureBrowserAvailableAsync();
 
-        var windowStart = DateTime.UtcNow.AddMinutes(-15);
+        var windowStart = DateTime.UtcNow.AddMinutes(-_options.VerificationWindowMinutes);
 
         var recentFailedAttempts = await _context.OtpVerifications
             .Where(o =>
@@ -171,7 +138,7 @@ public class OtpService : IOtpService
                 o.CreatedAt >= windowStart)
             .SumAsync(o => o.Attempts);
 
-        if (recentFailedAttempts >= MaxAttempts)
+        if (recentFailedAttempts >= _options.MaxAttempts)
         {
             throw new AuthFlowException(
                 "Too many incorrect OTP attempts. Try again later.", 429);
@@ -200,7 +167,7 @@ public class OtpService : IOtpService
             throw new AuthFlowException("OTP has expired.");
         }
 
-        if (otpRecord.Attempts >= MaxAttempts)
+        if (otpRecord.Attempts >= _options.MaxAttempts)
         {
             throw new AuthFlowException(
                 "Maximum OTP attempts exceeded.", 429);
@@ -214,7 +181,7 @@ public class OtpService : IOtpService
         {
             otpRecord.Attempts++;
 
-            if (otpRecord.Attempts >= MaxAttempts)
+            if (otpRecord.Attempts >= _options.MaxAttempts)
             {
                 otpRecord.IsUsed = true;
             }
@@ -354,11 +321,11 @@ public class OtpService : IOtpService
         {
             var resource = $"chat-otp-verify:{mobileNumber}";
             await _context.Database.ExecuteSqlInterpolatedAsync($@"
-            DECLARE @result int;
-            EXEC @result = sys.sp_getapplock
-            @Resource = {resource}, @LockMode = 'Exclusive',
-            @LockOwner = 'Transaction', @LockTimeout = 10000;
-            IF @result < 0 THROW 51000, 'Unable to acquire authentication lock.', 1;");
+DECLARE @result int;
+EXEC @result = sys.sp_getapplock
+    @Resource = {resource}, @LockMode = 'Exclusive',
+    @LockOwner = 'Transaction', @LockTimeout = 10000;
+IF @result < 0 THROW 51000, 'Unable to acquire authentication lock.', 1;");
             return transaction;
         }
         catch
@@ -377,13 +344,11 @@ public class OtpService : IOtpService
 
         var normalized = mobileNumber.Trim();
 
-
-        if (!Regex.IsMatch(normalized, @"^\+91[0-9]{10}$"))
+        if (!Regex.IsMatch(normalized, @"^\+[1-9][0-9]{7,14}$"))
         {
             throw new ArgumentException(
-                "Mobile number must be +91 followed by exactly 10 digits.");
+                "Use international format, for example +919876543210.");
         }
-
 
         return normalized;
     }

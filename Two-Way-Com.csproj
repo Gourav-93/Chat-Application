@@ -13,6 +13,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- React is published separately. Local env files must stay off the server. -->
+    <Content Remove="frontend\**;.env*;appsettings.*.local.json" />
+    <None Remove="frontend\**;.env*;appsettings.*.local.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
 
