@@ -354,11 +354,11 @@ public class OtpService : IOtpService
         {
             var resource = $"chat-otp-verify:{mobileNumber}";
             await _context.Database.ExecuteSqlInterpolatedAsync($@"
-DECLARE @result int;
-EXEC @result = sys.sp_getapplock
-    @Resource = {resource}, @LockMode = 'Exclusive',
-    @LockOwner = 'Transaction', @LockTimeout = 10000;
-IF @result < 0 THROW 51000, 'Unable to acquire authentication lock.', 1;");
+            DECLARE @result int;
+            EXEC @result = sys.sp_getapplock
+            @Resource = {resource}, @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction', @LockTimeout = 10000;
+            IF @result < 0 THROW 51000, 'Unable to acquire authentication lock.', 1;");
             return transaction;
         }
         catch
@@ -377,11 +377,13 @@ IF @result < 0 THROW 51000, 'Unable to acquire authentication lock.', 1;");
 
         var normalized = mobileNumber.Trim();
 
-        if (!Regex.IsMatch(normalized, @"^\+[1-9][0-9]{7,14}$"))
+
+        if (!Regex.IsMatch(normalized, @"^\+91[0-9]{10}$"))
         {
             throw new ArgumentException(
-                "Use international format, for example +919876543210.");
+                "Mobile number must be +91 followed by exactly 10 digits.");
         }
+
 
         return normalized;
     }

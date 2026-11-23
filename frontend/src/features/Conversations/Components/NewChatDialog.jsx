@@ -1,8 +1,8 @@
 /**
  * File: NewChatDialog.jsx
  * Purpose: Finds verified users by mobile, opens chats, or previews invitations in the backend terminal.
- * Responsibilities: Provide an accessible themed dialog, validate international
- * numbers, cancel stale requests, and return the selected conversation to the page.
+ * Responsibilities: Provide an accessible responsive dialog, validate exactly 10 digits
+ * with fixed +91, cancel stale requests, and open chats or preview invites.
  */
 
 import { useContext, useEffect, useId, useRef, useState } from "react";
@@ -40,6 +40,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState("");
   const muted = isDark ? "text-slate-400" : "text-slate-500";
+  const isValidMobile = (value) => /^[0-9]{10}$/.test(value);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -84,7 +85,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
     if (creatingRef.current) return;
     requestRef.current.id++;
     requestRef.current.controller?.abort();
-    setMobileNumber(event.target.value);
+    setMobileNumber(event.target.value.replace(/\D/g, "").slice(0, 10));
     setUsers(null);
     setSearching(false);
     setValidationError("");
@@ -95,12 +96,12 @@ export default function NewChatDialog({ onClose, onStarted }) {
   const handleSearch = async (event) => {
     event.preventDefault();
     if (creatingRef.current) return;
-    const number = mobileNumber.trim();
+    const number = `+91${mobileNumber}`;
     setApiError("");
     setUsers(null);
     setInviteSuccess("");
-    if (!/^[+][1-9][0-9]{7,14}$/.test(number)) {
-      setValidationError("Enter a full international mobile number, for example +919876543210.");
+    if (!isValidMobile(mobileNumber)) {
+      setValidationError("Enter exactly 10 digits.");
       inputRef.current?.focus();
       return;
     }
@@ -140,8 +141,12 @@ export default function NewChatDialog({ onClose, onStarted }) {
   const handleInvite = async () => {
     // Only offer a preview after a successful zero-result search.
     if (creatingRef.current || searching || inviting || users?.length !== 0) return;
-    const number = mobileNumber.trim();
-    if (!/^[+][1-9][0-9]{7,14}$/.test(number)) return;
+    if (!isValidMobile(mobileNumber)) {
+      setValidationError("Enter exactly 10 digits.");
+      inputRef.current?.focus();
+      return;
+    }
+    const number = `+91${mobileNumber}`;
 
     creatingRef.current = true;
     setInviting(true);
@@ -171,10 +176,10 @@ export default function NewChatDialog({ onClose, onStarted }) {
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
-      className={"fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-3xl border p-0 shadow-2xl backdrop:bg-slate-950/70 " +
+      className={"fixed inset-0 m-auto box-border max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] max-w-md overflow-y-auto overscroll-contain rounded-2xl border p-0 shadow-2xl backdrop:bg-slate-950/70 sm:max-h-[calc(100dvh-2rem)] sm:w-[calc(100%-2rem)] sm:rounded-3xl " +
         (isDark ? "border-[#293854] bg-[#111d31] text-white" : "border-slate-200 bg-white text-slate-900")}
     >
-      <div className="p-5 sm:p-6">
+      <div className="p-4 sm:p-6">
         <header className="flex items-center justify-between gap-3">
           <h2 id={id + "-title"} className="text-xl font-semibold">New chat</h2>
           <button type="button" onClick={onClose} aria-label="Close new chat"
@@ -184,28 +189,36 @@ export default function NewChatDialog({ onClose, onStarted }) {
           </button>
         </header>
         <p id={id + "-description"} className={"mt-2 text-sm leading-6 " + muted}>
-          Find a registered user by their full international mobile number.
+          Find a registered user or invite someone using a 10-digit mobile number.
         </p>
         <form onSubmit={handleSearch} className="mt-5" noValidate>
           <label htmlFor={id + "-mobile"} className="mb-2 block text-sm font-medium">Mobile number</label>
-          <input
-            ref={inputRef}
-            id={id + "-mobile"}
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            maxLength={16}
-            value={mobileNumber}
-            onChange={handleChange}
-            disabled={creating !== null || inviting}
-            placeholder="+919876543210"
-            aria-invalid={Boolean(validationError)}
-            aria-describedby={id + "-help" + (validationError ? " " + id + "-validation" : "")}
-            className={"min-h-11 w-full rounded-xl border px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 " +
-              (isDark ? "border-[#293854] bg-[#080e1c] text-white placeholder:text-slate-500" : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400")}
-          />
+          <div className={"flex min-h-11 w-full min-w-0 items-stretch overflow-hidden rounded-xl border focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 " +
+            (isDark ? "border-[#293854] bg-[#080e1c]" : "border-slate-200 bg-slate-50")}>
+            <span aria-hidden="true" className={"flex shrink-0 items-center border-r px-3 text-sm font-semibold sm:px-4 " +
+              (isDark ? "border-[#293854] text-white" : "border-slate-200 text-slate-900")}>
+              +91
+            </span>
+            <input
+              ref={inputRef}
+              id={id + "-mobile"}
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel-national"
+              maxLength={10}
+              value={mobileNumber}
+              onChange={handleChange}
+              disabled={creating !== null || inviting}
+              placeholder="9876543210"
+              aria-label="10-digit mobile number"
+              aria-invalid={Boolean(validationError)}
+              aria-describedby={id + "-help" + (validationError ? " " + id + "-validation" : "")}
+              className={"min-h-11 min-w-0 w-full flex-1 bg-transparent px-3 py-3 text-base outline-none disabled:opacity-60 sm:px-4 sm:text-sm " +
+                (isDark ? "text-white placeholder:text-slate-500" : "text-slate-900 placeholder:text-slate-400")}
+            />
+          </div>
           <p id={id + "-help"} className={"mt-2 text-xs leading-5 " + muted}>
-            Include the + country code. Search uses an exact mobile-number match.
+            Enter exactly 10 digits. Country code +91 is added automatically.
           </p>
           {validationError && <p id={id + "-validation"} role="alert"
             className={"mt-2 text-sm " + (isDark ? "text-red-300" : "text-red-600")}>{validationError}</p>}
@@ -229,7 +242,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
               type="button"
               onClick={handleInvite}
               disabled={inviting || searching || creating !== null || Boolean(inviteSuccess)}
-              className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
             >
               {inviting
                 ? <LoaderCircle size={18} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
@@ -239,7 +252,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
             {inviteSuccess && (
               <p role="status" className={"mt-3 text-sm " +
                 (isDark ? "text-green-300" : "text-green-700")}>
-                {inviteSuccess} No SMS was sent.
+                {inviteSuccess}{/no sms (?:was )?sent/i.test(inviteSuccess) ? "" : " No SMS was sent."}
               </p>
             )}
           </div>
