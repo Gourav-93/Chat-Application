@@ -22,6 +22,10 @@ JWTs carry the account identifier and `sid`. HTTP authentication checks the stor
 
 Conversations are one-to-one. The participant-pair index makes creation reuse an existing chat. Conversation REST summaries include previews, latest-message metadata, and unread counts. The hub provides paged history and live messages. Message status timestamps persist delivery and read acknowledgements. Typing is transient; presence uses connection counts and a disconnect grace period. The UI includes mobile navigation, a profile menu, and dark/light themes.
 
+Development invitation previews accept `+91` followed by exactly ten digits after an empty user search. The backend checks all registered accounts, including unverified accounts, before printing the invitation in its terminal. Existing accounts return HTTP 409. Successful previews return `status: "previewed"` and a confirmation message. The action returns HTTP 404 outside Development. OTP sign-in and conversation search continue to accept international numbers.
+
+Authentication runs before rate limiting and authorization. Invitation allowances use the validated `ClaimTypes.NameIdentifier` account claim, so tabs and sessions for one account share the same process-local limit. The [configuration reference](deployment.md#configuration-reference) owns the signup destination and limit settings.
+
 ## REST endpoints
 
 All paths below use the backend API origin. Authenticated routes require a bearer token for the active session.
@@ -37,6 +41,7 @@ All paths below use the backend API origin. Authenticated routes require a beare
 | `GET /api/conversations` | Load the caller's conversation summaries. |
 | `GET /api/conversations/search?mobileNumber=...` | Search another verified account by exact mobile. |
 | `POST /api/conversations` | Create/reuse a conversation using `receiverId`. |
+| `POST /api/invitations/preview` | Authenticated Development-only terminal invitation preview for an unregistered `+91` number. |
 | `GET /api/users/search?q=...` | Existing user-search route using the conversation service. |
 | `GET /health` | Public process-liveness check. |
 
@@ -60,7 +65,7 @@ Conversation and message identifiers are integers in these source contracts. Acc
 
 ## Operational limits and verification
 
-Presence, session connection management, and IP rate-limit state are process-local. Use a single backend worker/instance with the current implementation. Native deployment settings and Data Protection persistence require host-specific verification.
+Presence, session connection management, and rate-limit state are process-local. Use a single backend worker/instance with the current implementation. Native deployment settings and Data Protection persistence require host-specific verification.
 
 Development uses a console SMS sender. Staging/Production use `UnconfiguredSmsSender` until an approved provider is integrated. The current frontend transport offers manual reconnection/start. Missed offline receipt reconciliation and a previously reported typing/presence subscription concern need further browser testing.
 

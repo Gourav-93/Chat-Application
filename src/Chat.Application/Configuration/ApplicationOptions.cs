@@ -55,6 +55,19 @@ public sealed class OtpOptions
     [Range(1, int.MaxValue)] public int IpVerifyWindowMinutes { get; set; } = 5;
 }
 
+public sealed class InvitationOptions
+{
+    public string SignupUrl { get; set; } = string.Empty;
+    [Range(1, int.MaxValue)] public int PreviewPermitLimit { get; set; } = 5;
+    [Range(1, int.MaxValue)] public int PreviewWindowMinutes { get; set; } = 60;
+
+    public static bool HasValidSignupUrl(InvitationOptions options, bool development) =>
+        !development && string.IsNullOrEmpty(options.SignupUrl)
+        || Uri.TryCreate(options.SignupUrl, UriKind.Absolute, out var uri)
+        && (uri.Scheme == "https" || development && uri.Scheme == "http")
+        && string.IsNullOrEmpty(uri.UserInfo);
+}
+
 public sealed class FrontendCorsOptions
 {
     public string[] AllowedOrigins { get; set; } = [];

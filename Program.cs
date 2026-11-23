@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using Chat.Api.Filters;
 using Chat.Api.Hubs;
@@ -141,11 +142,13 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
 
 builder.Services.AddAuthorization();
 
-// 6. Preserve existing OTP IP rate-limiter policies.
+// 6. Preserve OTP IP policies and limit invitation previews by authenticated user.
 builder.Services.AddRateLimiter(_ => { });
-builder.Services.AddOptions<RateLimiterOptions>().Configure<IOptions<OtpOptions>>((options, settings) =>
+builder.Services.AddOptions<RateLimiterOptions>()
+    .Configure<IOptions<OtpOptions>, IOptions<InvitationOptions>>((options, settings, invitationSettings) =>
 {
     var otp = settings.Value;
+    var invitation = invitationSettings.Value;
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
     options.AddPolicy("otp-send", context =>
@@ -169,6 +172,23 @@ builder.Services.AddOptions<RateLimiterOptions>().Configure<IOptions<OtpOptions>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+
+    options.AddPolicy("invite-preview", context =>
+    {
+        var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (context.User.Identity?.IsAuthenticated != true || string.IsNullOrWhiteSpace(userId))
+            return RateLimitPartition.GetNoLimiter(string.Empty);
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            userId,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = invitation.PreviewPermitLimit,
+                Window = TimeSpan.FromMinutes(invitation.PreviewWindowMinutes),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
 });
 
 // 7. Keep local Vite working; only explicit origins are allowed for cross-origin production traffic.
@@ -206,8 +226,8 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseRouting();
 app.UseCors("ReactClient");
-app.UseRateLimiter();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 // 9. Preserve API and SignalR endpoints.

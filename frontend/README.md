@@ -24,13 +24,15 @@ Preview uses the compiled deployment URLs. Configure actual backend routing and 
 The supported variables and defaults are in the [configuration reference](../docs/deployment.md#configuration-reference). Use the [local setup instructions](../README.md#4-configure-and-install-the-frontend) to create your ignored development file from [.env.development.example](.env.development.example).
 
 - [config/endpoints.js](config/endpoints.js) resolves and validates API and SignalR URLs for the browser and Vite.
-- [src/shared/lib/config.js](src/shared/lib/config.js) exports the browser's resolved URLs.
+- [src/shared/lib/config.js](src/shared/lib/config.js) exports the browser's resolved URLs and invitation-preview availability.
 - [src/shared/lib/api.js](src/shared/lib/api.js) owns Axios, credentials, the in-memory access token, and unauthorized-session handling.
 - [vite.config.js](vite.config.js) configures the development server and proxy from the same resolver.
 
 Use `VITE_API_BASE_URL` for the backend origin, with `/api` appended by the resolver. The hub defaults to `/hubs/chat` on that origin. Restart Vite after environment-file changes and rebuild deployed assets after public URL changes. All `VITE_*` values are public build inputs. Backend secrets belong in server-side configuration.
 
 The browser identity cookie uses SameSite=Strict. Prefer one origin for deployed frontend and API, or use same-site HTTPS hosts with the exact backend CORS allowlist. Use localhost consistently during development. The frontend initializes the browser cookie through `/api/auth/browser` before OTP operations and requires Web Locks support.
+
+The local development template enables `VITE_ENABLE_INVITATION_PREVIEW`. Existing local setups can add `VITE_ENABLE_INVITATION_PREVIEW=true` to `frontend/.env.development` and restart Vite. Invitation previews require Vite's Development server in `development` mode and a Development backend. Deployment builds hide the action. See the [configuration reference](../docs/deployment.md#configuration-reference) for flag defaults and parsing.
 
 ## Important modules
 

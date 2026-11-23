@@ -43,6 +43,15 @@ public static class ConfigurationRegistration
                 "Otp:ExposeForLocalTesting must be false outside Development.")
             .ValidateOnStart();
 
+        services.AddOptions<InvitationOptions>()
+            .Bind(configuration.GetSection("Invitation"))
+            .ValidateDataAnnotations()
+            .Validate(options => TimeSpan.FromMinutes(options.PreviewWindowMinutes).TotalMilliseconds <= uint.MaxValue - 1L,
+                "Invitation:PreviewWindowMinutes must fit the automatic replenishment timer (at most 71582 minutes).")
+            .Validate(options => InvitationOptions.HasValidSignupUrl(options, environment.IsDevelopment()),
+                "Invitation:SignupUrl must be an absolute HTTP(S) URL without credentials in Development, or HTTPS when configured outside Development.")
+            .ValidateOnStart();
+
         services.AddOptions<FrontendCorsOptions>()
             .Bind(configuration.GetSection("Cors"))
             .Validate(options => FrontendCorsOptions.IsValid(options, environment.IsDevelopment()),

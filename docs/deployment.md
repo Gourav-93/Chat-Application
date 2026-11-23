@@ -29,6 +29,8 @@ This table is the documentation source of truth for setting names and defaults. 
 | `Otp__IpSendPermitLimit`, `Otp__IpSendWindowMinutes` | 3 requests in 15 minutes. Development overrides the request count to 100. |
 | `Otp__IpVerifyPermitLimit`, `Otp__IpVerifyWindowMinutes` | 5 OTP-verification requests in 5 minutes. |
 | `Otp__ExposeForLocalTesting` | false. Only Development can enable the response preview. Startup rejects true in other environments. The console sender continues to print local test OTPs. |
+| `Invitation__SignupUrl` | Required absolute HTTP(S) signup destination in Development, where the local JSON selects the frontend URL. Embedded credentials are rejected. Optional outside Development and HTTPS when supplied. Invitation previews are available only in Development. |
+| `Invitation__PreviewPermitLimit`, `Invitation__PreviewWindowMinutes` | 5 preview requests per authenticated user per fixed 60-minute window. Positive integers. The window supports up to 71582 minutes, matching the native replenishment timer range. Tabs and sessions for the same user share the allowance within one application process. Rejections return HTTP 429, with zero queue and automatic replenishment. |
 | `Cors__AllowedOrigins__0`, `Cors__AllowedOrigins__1`, ... | Empty by default. List exact HTTPS frontend origins without paths or trailing slashes for cross-origin deployment. Development defaults to the local frontend origin in the root README and allows HTTP. |
 | `Swagger__Enabled` | false, overridden to true in Development. Host restrictions are needed if Swagger is enabled for a private deployment. |
 | `SignalR__KeepAliveInterval` | `00:00:15`, using native `HubOptions` time-span binding. |
@@ -44,6 +46,7 @@ This table is the documentation source of truth for setting names and defaults. 
 | `Kestrel__Endpoints__Https__Certificate__Password` | Certificate password from the host's protected configuration, when required. |
 | `VITE_API_BASE_URL` | Public backend origin without `/api`. Empty selects same-origin routes. The local template selects the HTTP development profile. |
 | `VITE_SIGNALR_HUB_URL` | Optional public complete hub URL. Empty derives `/hubs/chat` from the API origin. |
+| `VITE_ENABLE_INVITATION_PREVIEW` | Defaults to false when missing. Only the exact string `true` enables previews, together with Vite's `DEV` flag and `development` mode. The local development template enables it. Staging and Production builds hide the action even when the variable is true. The button additionally requires an eligible `+91` number after an empty search. Backend Development-only enforcement remains authoritative. |
 
 Numeric OTP values must be positive. Startup validates required credentials, SQL connection syntax, origins, and SignalR limits while reporting configuration names. It leaves actual SQL connectivity and SMS delivery to workflow checks. Native settings also support the standard ASP.NET Core configuration hierarchy.
 
@@ -93,7 +96,7 @@ Serve `frontend/dist` from an HTTPS static server. Route `/api/*`, `/hubs/chat` 
 6. For another reverse proxy, configure explicit trusted forwarded headers before TLS offload and verify original request scheme/client address. This implementation relies on host-appropriate configuration for those scenarios. [Microsoft proxy guidance](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0)
 7. Preserve and protect the host's Data Protection key ring across service restarts and deployments. Browser identity and session-confirmation credentials depend on it. Verify persistence, permissions, and encryption at rest for the real service identity. Containers with ephemeral storage need persistent key storage before release.
 8. Configure WebSocket upgrades and infrastructure idle timeouts above the heartbeat budget. Exclude `/hubs/chat` query strings from access logs because SignalR may send `access_token` there. Keep authentication bodies, private configuration, and EF sensitive-data logging out of logs.
-9. Keep one backend instance/worker. Presence, session connection management, and IP rate limits are process-local. Scaling requires coordinated state and messaging work beyond these settings.
+9. Keep one backend instance/worker. Presence, session connection management, and rate limits are process-local. Scaling requires coordinated state and messaging work beyond these settings.
 
 For local deployment-mode checks, use `dotnet run --project Two-Way-Com.csproj --no-launch-profile` after setting the environment and deployed settings in that terminal. The normal launch profiles select Development.
 

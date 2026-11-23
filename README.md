@@ -8,6 +8,7 @@ Sandesh is a real-time, one-to-one chat application with mobile OTP sign-in, per
 - Persistent JWT login, one active session per account, session takeover confirmation, and logout.
 - Multiple browser tabs under the same active session.
 - Search by verified international mobile number and create or reuse a conversation.
+- Development invitation previews for unregistered `+91` numbers, printed in the backend terminal.
 - Live messages, paginated history, unread counts, delivery/read receipts, typing, presence, and last seen.
 - Responsive chat navigation, dark/light themes, and a profile menu.
 

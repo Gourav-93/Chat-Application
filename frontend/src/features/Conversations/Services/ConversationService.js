@@ -1,6 +1,6 @@
 /**
  * File: ConversationService.js
- * Purpose: Retrieves conversation lists and supports verified-user search and chat creation.
+ * Purpose: Retrieves conversations and supports user search, chat creation, and invitation previews.
  * Responsibilities:
  * 1. Request the existing conversation list without changing its API contract.
  * 2. Validate response data before it reaches the UI.
@@ -99,7 +99,7 @@ export function getNewChatErrorMessage(error) {
   if (status === 429) return "Too many requests. Please wait before trying again.";
   if (status >= 500) return "The server could not complete this request. Please try again later.";
   if (error?.code === "ECONNABORTED") return "The request timed out. Please try again.";
-  if (status === 400 || status === 404) {
+  if (status === 400 || status === 404 || status === 409) {
     // These endpoints return either a message object or a plain client-error string.
     const data = error.response.data;
     const message = typeof data === "string" ? data : data?.message;
@@ -108,4 +108,21 @@ export function getNewChatErrorMessage(error) {
   if (error?.isAxiosError && !error.response) return "Unable to connect to the server. Please try again.";
   if (error?.isAxiosError) return "The request could not be completed. Please try again.";
   return error?.message || "The request could not be completed. Please try again.";
+}
+
+export async function previewInvitation(mobileNumber, signal) {
+  const response = await api.post(
+    "/invitations/preview",
+    { mobileNumber: mobileNumber.trim() },
+    { signal },
+  );
+
+  if (
+    response.data?.status !== "previewed" ||
+    typeof response.data?.message !== "string"
+  ) {
+    throw new Error("Unexpected invitation preview response.");
+  }
+
+  return response.data;
 }
