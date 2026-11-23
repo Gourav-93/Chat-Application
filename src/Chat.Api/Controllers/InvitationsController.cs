@@ -1,10 +1,11 @@
-
 using System.Text.RegularExpressions;
+using Chat.Application.Configuration;
 using Chat.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Chat.Api.Controllers;
 
@@ -15,16 +16,16 @@ public sealed class InvitationsController : ControllerBase
 {
     private readonly ChatDbContext _db;
     private readonly IHostEnvironment _environment;
-    private readonly IConfiguration _configuration;
+    private readonly InvitationOptions _options;
 
     public InvitationsController(
         ChatDbContext db,
         IHostEnvironment environment,
-        IConfiguration configuration)
+        IOptions<InvitationOptions> options)
     {
         _db = db;
         _environment = environment;
-        _configuration = configuration;
+        _options = options.Value;
     }
 
     public sealed class InvitationRequest
@@ -38,13 +39,11 @@ public sealed class InvitationsController : ControllerBase
         [FromBody] InvitationRequest request,
         CancellationToken cancellationToken)
     {
-        // Never allow this terminal-only endpoint in production.
+        // Terminal-only previews are available in Development.
         if (!_environment.IsDevelopment())
             return NotFound();
 
         var number = request.MobileNumber?.Trim();
-
-
         if (string.IsNullOrWhiteSpace(number) ||
             !Regex.IsMatch(number, @"^\+91[0-9]{10}$"))
         {
@@ -54,9 +53,7 @@ public sealed class InvitationsController : ControllerBase
             });
         }
 
-
-        // Check ALL registered users, including unverified users.
-        // Do not invite a number already in our database.
+        // Include unverified accounts when checking whether a number is registered.
         var exists = await _db.Users
             .AsNoTracking()
             .AnyAsync(u => u.MobileNumber == number, cancellationToken);
@@ -69,18 +66,10 @@ public sealed class InvitationsController : ControllerBase
             });
         }
 
-        var signupUrl = _configuration["Invitation:SignupUrl"];
-
-        if (string.IsNullOrWhiteSpace(signupUrl))
-        {
-            signupUrl = "http://localhost:5173";
-        }
-
         var message =
             "Hey! You're invited to join Sandesh Chat.\n" +
             "Connect with friends and start chatting.\n" +
-            $"Join Sandesh: {signupUrl}";
-
+            $"Join Sandesh: {_options.SignupUrl}";
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine();

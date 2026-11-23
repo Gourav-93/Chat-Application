@@ -1,8 +1,8 @@
 /**
  * File: NewChatDialog.jsx
- * Purpose: Finds verified users by mobile, opens chats, or previews invitations in the backend terminal.
- * Responsibilities: Provide an accessible responsive dialog, validate exactly 10 digits
- * with fixed +91, cancel stale requests, and open chats or preview invites.
+ * Purpose: Finds verified users by mobile, opens chats, and previews invitations.
+ * Responsibilities: Provide an accessible themed dialog, validate international
+ * numbers, cancel stale requests, and return the selected conversation to the page.
  */
 
 import { useContext, useEffect, useId, useRef, useState } from "react";
@@ -10,6 +10,7 @@ import { LoaderCircle, Search, UserRound, UserPlus, X } from "lucide-react";
 import { AuthContext } from "../../../app/AuthContext";
 import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
+import { invitationPreviewEnabled } from "../../../shared/lib/config.js";
 import {
   getNewChatErrorMessage,
   getOrCreateConversation,
@@ -39,8 +40,8 @@ export default function NewChatDialog({ onClose, onStarted }) {
   const [creating, setCreating] = useState(null);
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState("");
+  const canInvite = invitationPreviewEnabled && /^[+]91[0-9]{10}$/.test(mobileNumber.trim());
   const muted = isDark ? "text-slate-400" : "text-slate-500";
-  const isValidMobile = (value) => /^[0-9]{10}$/.test(value);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -85,7 +86,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
     if (creatingRef.current) return;
     requestRef.current.id++;
     requestRef.current.controller?.abort();
-    setMobileNumber(event.target.value.replace(/\D/g, "").slice(0, 10));
+    setMobileNumber(event.target.value);
     setUsers(null);
     setSearching(false);
     setValidationError("");
@@ -96,12 +97,12 @@ export default function NewChatDialog({ onClose, onStarted }) {
   const handleSearch = async (event) => {
     event.preventDefault();
     if (creatingRef.current) return;
-    const number = `+91${mobileNumber}`;
+    const number = mobileNumber.trim();
     setApiError("");
-    setUsers(null);
     setInviteSuccess("");
-    if (!isValidMobile(mobileNumber)) {
-      setValidationError("Enter exactly 10 digits.");
+    setUsers(null);
+    if (!/^[+][1-9][0-9]{7,14}$/.test(number)) {
+      setValidationError("Enter a full international mobile number, for example +919876543210.");
       inputRef.current?.focus();
       return;
     }
@@ -139,31 +140,22 @@ export default function NewChatDialog({ onClose, onStarted }) {
   };
 
   const handleInvite = async () => {
-    // Only offer a preview after a successful zero-result search.
-    if (creatingRef.current || searching || inviting || users?.length !== 0) return;
-    if (!isValidMobile(mobileNumber)) {
-      setValidationError("Enter exactly 10 digits.");
-      inputRef.current?.focus();
-      return;
-    }
-    const number = `+91${mobileNumber}`;
-
+    if (creatingRef.current || searching || inviting || users?.length !== 0 || !canInvite) return;
     creatingRef.current = true;
     setInviting(true);
     setApiError("");
     setInviteSuccess("");
     const request = beginRequest();
-
     try {
-      const result = await previewInvitation(number, request.controller.signal);
-      if (isCurrent(request)) {
-        setInviteSuccess(result.message || "Invitation printed in backend terminal. No SMS sent.");
-      }
+      const result = await previewInvitation(mobileNumber.trim(), request.controller.signal);
+      if (isCurrent(request)) setInviteSuccess(result.message);
     } catch (error) {
       if (isCurrent(request)) setApiError(getNewChatErrorMessage(error));
     } finally {
-      creatingRef.current = false;
-      if (isCurrent(request)) setInviting(false);
+      if (isCurrent(request)) {
+        creatingRef.current = false;
+        setInviting(false);
+      }
     }
   };
 
@@ -189,36 +181,28 @@ export default function NewChatDialog({ onClose, onStarted }) {
           </button>
         </header>
         <p id={id + "-description"} className={"mt-2 text-sm leading-6 " + muted}>
-          Find a registered user or invite someone using a 10-digit mobile number.
+          Find a registered user by their full international mobile number.
         </p>
         <form onSubmit={handleSearch} className="mt-5" noValidate>
           <label htmlFor={id + "-mobile"} className="mb-2 block text-sm font-medium">Mobile number</label>
-          <div className={"flex min-h-11 w-full min-w-0 items-stretch overflow-hidden rounded-xl border focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 " +
-            (isDark ? "border-[#293854] bg-[#080e1c]" : "border-slate-200 bg-slate-50")}>
-            <span aria-hidden="true" className={"flex shrink-0 items-center border-r px-3 text-sm font-semibold sm:px-4 " +
-              (isDark ? "border-[#293854] text-white" : "border-slate-200 text-slate-900")}>
-              +91
-            </span>
-            <input
-              ref={inputRef}
-              id={id + "-mobile"}
-              type="tel"
-              inputMode="numeric"
-              autoComplete="tel-national"
-              maxLength={10}
-              value={mobileNumber}
-              onChange={handleChange}
-              disabled={creating !== null || inviting}
-              placeholder="9876543210"
-              aria-label="10-digit mobile number"
-              aria-invalid={Boolean(validationError)}
-              aria-describedby={id + "-help" + (validationError ? " " + id + "-validation" : "")}
-              className={"min-h-11 min-w-0 w-full flex-1 bg-transparent px-3 py-3 text-base outline-none disabled:opacity-60 sm:px-4 sm:text-sm " +
-                (isDark ? "text-white placeholder:text-slate-500" : "text-slate-900 placeholder:text-slate-400")}
-            />
-          </div>
+          <input
+            ref={inputRef}
+            id={id + "-mobile"}
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            maxLength={16}
+            value={mobileNumber}
+            onChange={handleChange}
+            disabled={creating !== null || inviting}
+            placeholder="+919876543210"
+            aria-invalid={Boolean(validationError)}
+            aria-describedby={id + "-help" + (validationError ? " " + id + "-validation" : "")}
+            className={"min-h-11 w-full rounded-xl border px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 " +
+              (isDark ? "border-[#293854] bg-[#080e1c] text-white placeholder:text-slate-500" : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400")}
+          />
           <p id={id + "-help"} className={"mt-2 text-xs leading-5 " + muted}>
-            Enter exactly 10 digits. Country code +91 is added automatically.
+            Include the + country code. Search uses an exact mobile-number match.
           </p>
           {validationError && <p id={id + "-validation"} role="alert"
             className={"mt-2 text-sm " + (isDark ? "text-red-300" : "text-red-600")}>{validationError}</p>}
@@ -238,23 +222,20 @@ export default function NewChatDialog({ onClose, onStarted }) {
             <p role="status" className={"text-sm leading-6 " + muted}>
               No other verified user found for this mobile number.
             </p>
-            <button
-              type="button"
-              onClick={handleInvite}
-              disabled={inviting || searching || creating !== null || Boolean(inviteSuccess)}
-              className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-            >
-              {inviting
-                ? <LoaderCircle size={18} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
-                : <UserPlus size={18} aria-hidden="true" />}
-              {inviting ? "Preparing invitation..." : "Invite User"}
-            </button>
-            {inviteSuccess && (
-              <p role="status" className={"mt-3 text-sm " +
-                (isDark ? "text-green-300" : "text-green-700")}>
-                {inviteSuccess}{/no sms (?:was )?sent/i.test(inviteSuccess) ? "" : " No SMS was sent."}
-              </p>
+            {canInvite && (
+              <button type="button" onClick={handleInvite}
+                disabled={inviting || searching || creating !== null || Boolean(inviteSuccess)}
+                className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto">
+                {inviting
+                  ? <LoaderCircle size={18} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+                  : <UserPlus size={18} aria-hidden="true" />}
+                {inviting ? "Preparing invitation..." : "Invite User"}
+              </button>
             )}
+            {inviteSuccess && <p role="status" className={"mt-3 text-sm " +
+              (isDark ? "text-green-300" : "text-green-700")}>
+              {inviteSuccess} No SMS was sent.
+            </p>}
           </div>
         )}
         {users && users.length > 0 && <ul aria-label="Matching users" className="mt-5 space-y-3">

@@ -4,6 +4,8 @@ using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Chat.Application.Configuration;
+using Microsoft.Extensions.Options;
 
 
 namespace Chat.Application.Services;
@@ -11,7 +13,7 @@ namespace Chat.Application.Services;
 public sealed class SingleSessionService
 {
     private readonly ChatDbContext _db;
-    private readonly IConfiguration _configuration;
+    private readonly JwtOptions _jwt;
     private readonly IDataProtector _protector;
     private readonly BrowserSessionService _browserSessions;
 
@@ -19,12 +21,12 @@ public sealed class SingleSessionService
 
     public SingleSessionService(
         ChatDbContext db,
-        IConfiguration configuration,
+        IOptions<JwtOptions> jwt,
         IDataProtectionProvider protection,
         BrowserSessionService browserSessions)
     {
         _db = db;
-        _configuration = configuration;
+        _jwt = jwt.Value;
         _browserSessions = browserSessions;
 
         _protector = protection.CreateProtector(
@@ -109,19 +111,8 @@ public sealed class SingleSessionService
             throw RequireConfirmation(snapshot, proof);
         }
 
-        var expiryDays = int.Parse(
-            _configuration["Jwt:ExpiryInDays"] ?? "45"
-        );
-
-        if (expiryDays <= 0)
-        {
-            throw new InvalidOperationException(
-                "Jwt:ExpiryInDays must be greater than zero."
-            );
-        }
-
         var sessionId = Guid.NewGuid();
-        var expiresAt = now.AddDays(expiryDays);
+        var expiresAt = now.AddDays(_jwt.ExpiryInDays);
 
         var candidates = _db.Users
             .Where(u => u.Id == user.Id);

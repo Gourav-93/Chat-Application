@@ -1,16 +1,101 @@
-# Visual Studio temporary files
+# .NET build, publish, test and coverage output
+[Bb]in/
+[Oo]bj/
+[Pp]ublish/
+/artifacts/
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+lcov.info
+
+# Visual Studio user state and caches
 .vs/
-*.user
 *.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+*.ncb
+*.sdf
+*.opensdf
 
-# Build outputs
-bin/
-obj/
+# Editor state. Keep reviewed, shared VS Code project configuration eligible.
+/.vscode/*
+!/.vscode/settings.json
+!/.vscode/extensions.json
+!/.vscode/launch.json
+!/.vscode/tasks.json
+*.code-workspace
+.history/
+.idea/
+*.swp
+*.swo
+*~
 
-# Other temporary files
-*.log
-
-appsettings.json
-appsettings.Production.json
-
+# Node.js and Vite output
 node_modules/
+/frontend/dist/
+/frontend/dist-ssr/
+/frontend/.vite/
+/frontend/.vite-temp/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Local environment and credential files. Shared appsettings stay eligible.
+.env
+.env.*
+!.env.example
+!.env.*.example
+appsettings.*.local.json
+secrets.json
+secrets.*.json
+credentials.json
+credentials.*.json
+!secrets.example.json
+!secrets.*.example.json
+!credentials.example.json
+!credentials.*.example.json
+.git-credentials
+.aws/credentials
+.aws/config
+.npmrc.local
+*.pfx
+*.p12
+*.pem
+*.key
+!*.example.pem
+!*.example.key
+id_rsa
+id_ed25519
+
+# SQL Server local databases and backup output
+*.mdf
+*.ndf
+*.ldf
+*.bak
+*.trn
+*.bacpac
+
+# Logs and temporary output
+logs/
+*.log
+*.tmp
+*.temp
+/tmp/
+/temp/
+
+# Operating-system metadata
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*
+.Spotlight-V100/
+.Trashes/
+.nfs*

@@ -12,6 +12,7 @@
  */
 
 import axios from "axios";
+import { apiBaseUrl } from "./config.js";
 
 // In-memory token: cleared automatically when the page reloads.
 let accessToken = null;
@@ -31,7 +32,8 @@ export const setAccessToken = (token) => {
 };
 
 const api = axios.create({
-  baseURL: "/api",
+  baseURL: apiBaseUrl,
+  withCredentials: true,
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",
