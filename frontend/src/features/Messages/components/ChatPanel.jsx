@@ -2,7 +2,7 @@
  * File: ChatPanel.jsx
  * Purpose: Presents conversation history, live messages, and the controlled composer.
  * Responsibilities:
- * 1. Render recipient activity, confirmed outgoing receipts, and date-grouped messages.
+ * 1. Render recipient presence, typing feedback, receipts, and date-grouped messages.
  * 2. Show history load states and actionable session or activity errors.
  * 3. Support both themes, mobile Back navigation, and accessible focus.
  * 4. Preserve scroll position and keyboard focus during older-message pagination.
@@ -151,7 +151,12 @@ export default function ChatPanel({
   const busy = history.isLoading || history.isLoadingOlder;
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const activityAvailable = session.status === "connected" && !session.requiresSignIn;
-  const recipientActivity = activityAvailable ? activity.label : "Activity unavailable";
+  const showTyping = activityAvailable && isTyping;
+  let recipientActivity = activityAvailable ? activity.label : "Activity unavailable";
+  if (recipientActivity === "typing...") {
+    const presence = session.presence.get(conversation?.otherUserId?.toLowerCase());
+    recipientActivity = presence?.isOnline === true ? "Online" : null;
+  }
   const activityError = activity.error || session.receiptError;
   const canLoadOlder = Boolean(selectionKey && history.hasMore && !busy &&
     !history.error && !history.requiresSignIn);
@@ -348,9 +353,8 @@ export default function ChatPanel({
               </span>
             )}
           </h2>
-          <p role="status" title={recipientActivity}
-            className={"mt-0.5 text-xs [overflow-wrap:anywhere] md:truncate " +
-              (activityAvailable && isTyping ? "italic " : "") +
+          <p role="status" title={recipientActivity ?? undefined}
+            className={"mt-0.5 min-h-4 text-xs [overflow-wrap:anywhere] md:truncate " +
               (recipientActivity === "Online"
                 ? isDark ? "text-blue-300" : "text-blue-600"
                 : muted)}>
@@ -534,6 +538,21 @@ export default function ChatPanel({
             );
           })}
         </ol>
+      </div>
+      {/* Reserve room so the typing bubble cannot move the history or composer. */}
+      <div role="status" className="flex h-7 shrink-0 items-center px-4 sm:px-6">
+        {showTyping && (
+          <>
+            <span className="sr-only">{displayName} is typing</span>
+            <span aria-hidden="true"
+              className={"inline-flex items-center gap-1.5 rounded-full rounded-bl-md px-2.5 py-2 " +
+                (isDark ? "bg-[#1b2b45] text-slate-400" : "border border-slate-200 bg-white text-slate-500")}>
+              <span className="size-1.5 animate-bounce rounded-full bg-current motion-reduce:animate-none" />
+              <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:120ms] motion-reduce:animate-none" />
+              <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:240ms] motion-reduce:animate-none" />
+            </span>
+          </>
+        )}
       </div>
       <MessageComposer value={draft} onChange={onDraftChange} onSend={onSend}
         onTypingInput={onTypingInput} stopTyping={stopTyping}
