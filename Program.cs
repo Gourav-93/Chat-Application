@@ -1,3 +1,4 @@
+
 using System.Text;
 using System.Threading.RateLimiting;
 using Chat.Api.Filters;
@@ -16,8 +17,7 @@ using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Fail safely if production secrets have not been configured.
-// These environment variables override appsettings.json without changing local development.
+// 1. Production secrets validation.
 if (builder.Environment.IsProduction())
 {
     foreach (var name in new[]
@@ -41,7 +41,7 @@ if (builder.Environment.IsProduction())
     }
 }
 
-// 2. MVC, Swagger and health checking.
+// 2. Controllers, Swagger, Health Checks.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHealthChecks();
@@ -65,7 +65,7 @@ builder.Services.AddSwaggerGen(options =>
         });
 });
 
-// 3. Existing chat and OTP services: keep the current business behavior.
+// 3. Existing Chat and OTP Services.
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
 
@@ -75,14 +75,11 @@ if (builder.Environment.IsDevelopment())
 }
 else
 {
-    // Fail-closed until an approved production SMS provider is integrated.
     builder.Services.AddScoped<ISmsSender, UnconfiguredSmsSender>();
 }
 
 builder.Services.AddScoped<IOtpService, OtpService>();
 
-// IIS/hosting key persistence and key-at-rest protection must be verified on the real server.
-// Do not change key storage blindly: BrowserSessionService uses Data Protection.
 builder.Services.AddDataProtection();
 
 builder.Services.AddScoped<SingleSessionService>();
@@ -98,21 +95,23 @@ builder.Services.AddSignalR(options =>
     options.AddFilter<ActiveSessionHubFilter>();
 });
 
-// Existing in-memory presence: run a single application instance for now.
 builder.Services.AddSingleton<IPresenceTracker, InMemoryPresenceTracker>();
 builder.Services.AddSingleton<IPresenceService, PresenceService>();
 
-// 4. Database. Never default to a development connection string in production.
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+// 4. Database.
+var connectionString =
+    builder.Configuration.GetConnectionString("DefaultConnection");
+
 if (string.IsNullOrWhiteSpace(connectionString))
 {
-    throw new InvalidOperationException("Database connection string is missing.");
+    throw new InvalidOperationException(
+        "Database connection string is missing.");
 }
 
 builder.Services.AddDbContext<ChatDbContext>(options =>
     options.UseSqlServer(connectionString));
 
-// 5. JWT configuration, preserving session validation and SignalR token support.
+// 5. JWT authentication.
 var jwtKey = builder.Configuration["Jwt:Key"];
 var jwtIssuer = builder.Configuration["Jwt:Issuer"];
 var jwtAudience = builder.Configuration["Jwt:Audience"];
@@ -121,8 +120,12 @@ if (string.IsNullOrWhiteSpace(jwtKey))
     throw new InvalidOperationException("JWT Key is missing.");
 
 var jwtKeyBytes = Encoding.UTF8.GetBytes(jwtKey);
+
 if (jwtKeyBytes.Length < 32)
-    throw new InvalidOperationException("JWT signing key must contain at least 32 bytes for HS256.");
+{
+    throw new InvalidOperationException(
+        "JWT signing key must contain at least 32 bytes for HS256.");
+}
 
 if (string.IsNullOrWhiteSpace(jwtIssuer))
     throw new InvalidOperationException("JWT Issuer is missing.");
@@ -135,6 +138,7 @@ builder.Services
     .AddJwtBearer(options =>
     {
         options.MapInboundClaims = false;
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -142,10 +146,17 @@ builder.Services
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             RequireExpirationTime = true,
+
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtAudience,
+
             IssuerSigningKey = new SymmetricSecurityKey(jwtKeyBytes),
-            ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 },
+
+            ValidAlgorithms = new[]
+            {
+                SecurityAlgorithms.HmacSha256
+            },
+
             ClockSkew = TimeSpan.FromSeconds(30)
         };
 
@@ -153,7 +164,9 @@ builder.Services
         {
             OnMessageReceived = context =>
             {
-                var accessToken = context.Request.Query["access_token"];
+                var accessToken =
+                    context.Request.Query["access_token"];
+
                 var path = context.HttpContext.Request.Path;
 
                 if (!string.IsNullOrEmpty(accessToken) &&
@@ -164,6 +177,7 @@ builder.Services
 
                 return Task.CompletedTask;
             },
+
             OnTokenValidated = async context =>
             {
                 var validator = context.HttpContext.RequestServices
@@ -174,20 +188,26 @@ builder.Services
                     context.HttpContext.RequestAborted);
 
                 if (!active)
+                {
                     context.Fail("Session expired or replaced.");
+                }
             }
         };
     });
 
 builder.Services.AddAuthorization();
 
-// 6. Preserve existing OTP IP rate-limiter policies.
+// 6. Rate Limiting.
 var otpIpSendPermitLimit =
-    builder.Configuration.GetValue<int>("Otp:IpSendPermitLimit", 3);
-var otpIpSendWindowMinutes =
-    builder.Configuration.GetValue<int>("Otp:IpSendWindowMinutes", 15);
+    builder.Configuration.GetValue<int>(
+        "Otp:IpSendPermitLimit", 3);
 
-if (otpIpSendPermitLimit <= 0 || otpIpSendWindowMinutes <= 0)
+var otpIpSendWindowMinutes =
+    builder.Configuration.GetValue<int>(
+        "Otp:IpSendWindowMinutes", 15);
+
+if (otpIpSendPermitLimit <= 0 ||
+    otpIpSendWindowMinutes <= 0)
 {
     throw new InvalidOperationException(
         "OTP IP rate limit settings must be greater than zero.");
@@ -195,22 +215,28 @@ if (otpIpSendPermitLimit <= 0 || otpIpSendWindowMinutes <= 0)
 
 builder.Services.AddRateLimiter(options =>
 {
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.RejectionStatusCode =
+        StatusCodes.Status429TooManyRequests;
 
+    // Existing OTP Send policy.
     options.AddPolicy("otp-send", context =>
         RateLimitPartition.GetFixedWindowLimiter(
-            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            context.Connection.RemoteIpAddress?.ToString()
+                ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = otpIpSendPermitLimit,
-                Window = TimeSpan.FromMinutes(otpIpSendWindowMinutes),
+                Window = TimeSpan.FromMinutes(
+                    otpIpSendWindowMinutes),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
 
+    // Existing OTP Verify policy.
     options.AddPolicy("otp-verify", context =>
         RateLimitPartition.GetFixedWindowLimiter(
-            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            context.Connection.RemoteIpAddress?.ToString()
+                ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 5,
@@ -218,9 +244,25 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));
+
+    // NEW: Invitation preview rate limiting.
+    // Maximum 5 invitation previews per user per hour.
+    // These are terminal-only previews, not real SMS.
+    options.AddPolicy("invite-preview", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.User.FindFirst("sub")?.Value
+                ?? context.Connection.RemoteIpAddress?.ToString()
+                ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromHours(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
 });
 
-// 7. Keep local Vite working; only explicit origins are allowed for cross-origin production traffic.
+// 7. CORS.
 var allowedOrigins = builder.Environment.IsDevelopment()
     ? new[] { "http://localhost:5173" }
     : builder.Configuration.GetSection("Cors:AllowedOrigins")
@@ -242,8 +284,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// 8. API-only backend: React is hosted separately; no wwwroot required.
-
+// 8. API-only backend.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -257,18 +298,22 @@ else
 app.UseHttpsRedirection();
 app.UseRouting();
 app.UseCors("ReactClient");
-app.UseRateLimiter();
+
+// Required for new invitation rate-limiter policy.
+// Authentication runs first so invite-preview
+// can identify the authenticated user by JWT.
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
-// 9. Preserve API and SignalR endpoints.
+// 9. Existing API and SignalR endpoints.
 app.MapControllers();
+
 app.MapHub<ChatHub>("/hubs/chat", options =>
 {
     options.CloseOnAuthenticationExpiration = true;
 });
 
-// Liveness only (not a SQL/SignalR readiness test).
 app.MapHealthChecks("/health").AllowAnonymous();
 
 app.Run();

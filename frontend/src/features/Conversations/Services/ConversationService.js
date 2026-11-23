@@ -109,3 +109,20 @@ export function getNewChatErrorMessage(error) {
   if (error?.isAxiosError) return "The request could not be completed. Please try again.";
   return error?.message || "The request could not be completed. Please try again.";
 }
+
+export async function previewInvitation(mobileNumber, signal) {
+  const response = await api.post(
+    "/invitations/preview",
+    { mobileNumber: mobileNumber.trim() },
+    { signal }
+  );
+
+  if (
+    response.data?.status !== "previewed" ||
+    typeof response.data?.message !== "string"
+  ) {
+    throw new Error("Unexpected invitation preview response.");
+  }
+
+  return response.data;
+}

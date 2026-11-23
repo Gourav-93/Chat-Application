@@ -1,12 +1,12 @@
 /**
  * File: NewChatDialog.jsx
- * Purpose: Finds verified users by mobile, displays their names, and creates or reuses chats.
+ * Purpose: Finds verified users by mobile, opens chats, or previews invitations in the backend terminal.
  * Responsibilities: Provide an accessible themed dialog, validate international
  * numbers, cancel stale requests, and return the selected conversation to the page.
  */
 
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import { LoaderCircle, Search, UserRound, X } from "lucide-react";
+import { LoaderCircle, Search, UserRound, UserPlus, X } from "lucide-react";
 import { AuthContext } from "../../../app/AuthContext";
 import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
@@ -14,6 +14,7 @@ import {
   getNewChatErrorMessage,
   getOrCreateConversation,
   searchUsersByMobileNumber,
+  previewInvitation,
 } from "../Services/ConversationService";
 
 export default function NewChatDialog({ onClose, onStarted }) {
@@ -36,6 +37,8 @@ export default function NewChatDialog({ onClose, onStarted }) {
   const [apiError, setApiError] = useState("");
   const [searching, setSearching] = useState(false);
   const [creating, setCreating] = useState(null);
+  const [inviting, setInviting] = useState(false);
+  const [inviteSuccess, setInviteSuccess] = useState("");
   const muted = isDark ? "text-slate-400" : "text-slate-500";
 
   useEffect(() => {
@@ -86,6 +89,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
     setSearching(false);
     setValidationError("");
     setApiError("");
+    setInviteSuccess("");
   };
 
   const handleSearch = async (event) => {
@@ -94,6 +98,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
     const number = mobileNumber.trim();
     setApiError("");
     setUsers(null);
+    setInviteSuccess("");
     if (!/^[+][1-9][0-9]{7,14}$/.test(number)) {
       setValidationError("Enter a full international mobile number, for example +919876543210.");
       inputRef.current?.focus();
@@ -114,7 +119,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
 
   const handleStart = async (user) => {
     // Ref guard prevents duplicate POSTs before the disabled state renders.
-    if (creatingRef.current || searching) return;
+    if (creatingRef.current || searching || inviting) return;
     creatingRef.current = true;
     setCreating(user.id);
     setApiError("");
@@ -129,6 +134,31 @@ export default function NewChatDialog({ onClose, onStarted }) {
         creatingRef.current = false;
         setCreating(null);
       }
+    }
+  };
+
+  const handleInvite = async () => {
+    // Only offer a preview after a successful zero-result search.
+    if (creatingRef.current || searching || inviting || users?.length !== 0) return;
+    const number = mobileNumber.trim();
+    if (!/^[+][1-9][0-9]{7,14}$/.test(number)) return;
+
+    creatingRef.current = true;
+    setInviting(true);
+    setApiError("");
+    setInviteSuccess("");
+    const request = beginRequest();
+
+    try {
+      const result = await previewInvitation(number, request.controller.signal);
+      if (isCurrent(request)) {
+        setInviteSuccess(result.message || "Invitation printed in backend terminal. No SMS sent.");
+      }
+    } catch (error) {
+      if (isCurrent(request)) setApiError(getNewChatErrorMessage(error));
+    } finally {
+      creatingRef.current = false;
+      if (isCurrent(request)) setInviting(false);
     }
   };
 
@@ -167,7 +197,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
             maxLength={16}
             value={mobileNumber}
             onChange={handleChange}
-            disabled={creating !== null}
+            disabled={creating !== null || inviting}
             placeholder="+919876543210"
             aria-invalid={Boolean(validationError)}
             aria-describedby={id + "-help" + (validationError ? " " + id + "-validation" : "")}
@@ -179,7 +209,7 @@ export default function NewChatDialog({ onClose, onStarted }) {
           </p>
           {validationError && <p id={id + "-validation"} role="alert"
             className={"mt-2 text-sm " + (isDark ? "text-red-300" : "text-red-600")}>{validationError}</p>}
-          <button type="submit" disabled={searching || creating !== null}
+          <button type="submit" disabled={searching || creating !== null || inviting}
             className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-wait disabled:opacity-60">
             {searching
               ? <LoaderCircle size={18} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
@@ -190,9 +220,30 @@ export default function NewChatDialog({ onClose, onStarted }) {
         {searching && <p role="status" className="sr-only">Searching registered users</p>}
         {apiError && <p role="alert" className={"mt-4 rounded-xl border px-3 py-3 text-sm leading-6 " +
           (isDark ? "border-red-500/20 bg-red-500/10 text-red-300" : "border-red-200 bg-red-50 text-red-700")}>{apiError}</p>}
-        {users?.length === 0 && <p role="status" className={"mt-5 text-center text-sm leading-6 " + muted}>
-          No other verified user found for this mobile number.
-        </p>}
+        {users?.length === 0 && (
+          <div className="mt-5 text-center">
+            <p role="status" className={"text-sm leading-6 " + muted}>
+              No other verified user found for this mobile number.
+            </p>
+            <button
+              type="button"
+              onClick={handleInvite}
+              disabled={inviting || searching || creating !== null || Boolean(inviteSuccess)}
+              className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {inviting
+                ? <LoaderCircle size={18} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+                : <UserPlus size={18} aria-hidden="true" />}
+              {inviting ? "Preparing invitation..." : "Invite User"}
+            </button>
+            {inviteSuccess && (
+              <p role="status" className={"mt-3 text-sm " +
+                (isDark ? "text-green-300" : "text-green-700")}>
+                {inviteSuccess} No SMS was sent.
+              </p>
+            )}
+          </div>
+        )}
         {users && users.length > 0 && <ul aria-label="Matching users" className="mt-5 space-y-3">
           {users.map((user) => (
             <li key={user.id} className={"rounded-2xl border p-3 " + (isDark ? "border-[#293854]" : "border-slate-200")}>
