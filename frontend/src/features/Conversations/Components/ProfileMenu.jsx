@@ -8,20 +8,19 @@
  */
 
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import {LockKeyhole, LogOut, UserRound } from "lucide-react";
+import { LoaderCircle, LockKeyhole, LogOut, UserRound } from "lucide-react";
 import { AuthContext } from "../../../app/AuthContext";
 import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
  
 
-export default function ProfileMenu({ pinConfigured, onManagePrivacyPin }) {
+export default function ProfileMenu({ pinConfigured, onManagePrivacyPin, actionBusy = false }) {
   const auth = useContext(AuthContext);
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
   const triggerRef = useRef(null);
-  const logoutRef = useRef(null);
   const pinRef = useRef(null);
   const panelId = useId();
   const nameId = useId();
@@ -36,7 +35,7 @@ export default function ProfileMenu({ pinConfigured, onManagePrivacyPin }) {
     if (!isOpen) return undefined;
 
     // Focus the action while keeping normal Tab navigation available.
-    logoutRef.current?.focus();
+    pinRef.current?.focus();
 
     const handlePointerDown = (event) => {
       if (!containerRef.current?.contains(event.target)) {
@@ -49,7 +48,7 @@ export default function ProfileMenu({ pinConfigured, onManagePrivacyPin }) {
     };
 
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !event.defaultPrevented) {
         event.preventDefault();
         setIsOpen(false);
         triggerRef.current?.focus();
@@ -95,7 +94,7 @@ export default function ProfileMenu({ pinConfigured, onManagePrivacyPin }) {
           id={panelId}
           aria-labelledby={nameId}
           className={
-            "absolute right-0 top-full z-30 mt-3 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border shadow-xl " +
+            "absolute right-0 top-full z-30 mt-3 max-h-[calc(100dvh-7rem)] w-64 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border shadow-xl " +
             (isDark
               ? "border-[#293854] bg-[#111d31] text-white shadow-black/30"
               : "border-slate-200 bg-white text-slate-900 shadow-slate-900/10")
@@ -122,31 +121,29 @@ export default function ProfileMenu({ pinConfigured, onManagePrivacyPin }) {
               </p>
             )}
           </div>
-          <button
-  ref={pinRef}
-  type="button"
-  onClick={() => {
-    setIsOpen(false);
-    onManagePrivacyPin?.();
-  }}
-  className={
-    "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 " +
-    (isDark
-      ? "text-slate-200 hover:bg-white/5"
-      : "text-slate-700 hover:bg-slate-100")
-  }
->
-  <LockKeyhole size={18} aria-hidden="true" />
-  {pinConfigured === true
-    ? "Change privacy PIN"
-    : pinConfigured === false
-      ? "Set privacy PIN"
-      : "Privacy PIN"}
-</button>
-
           <div className="p-2">
             <button
-              ref={logoutRef}
+              ref={pinRef}
+              type="button"
+              aria-disabled={actionBusy}
+              aria-busy={actionBusy}
+              onClick={() => {
+                if (actionBusy) return;
+                triggerRef.current?.focus();
+                setIsOpen(false);
+                onManagePrivacyPin?.();
+              }}
+              className={
+                "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 aria-disabled:opacity-50 " +
+                (isDark ? "text-slate-200 hover:bg-white/5" : "text-slate-700 hover:bg-slate-100")
+              }
+            >
+              {actionBusy ? <LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <LockKeyhole size={18} aria-hidden="true" />}
+              {pinConfigured === true ? "Change privacy PIN" : pinConfigured === false ? "Set privacy PIN" : "Privacy PIN"}
+            </button>
+          </div>
+          <div className={`border-t p-2 ${isDark ? "border-[#293854]" : "border-slate-200"}`}>
+            <button
               type="button"
               disabled={typeof auth?.logout !== "function"}
               onClick={() => {
