@@ -12,6 +12,34 @@ For local setup, follow the pepper-generation command in [backend User Secrets s
 
 `Privacy:CurrentPepperVersion` selects the key for new verifiers. Retain older versions until the affected PINs are changed/recovered. Losing a pepper prevents verification. A compromised pepper requires an explicit rotation/PIN-reset response; replacing its value silently breaks existing PINs.
 
+### Existing installation after updating
+
+Updating the source does not require rotating the pepper. For local Development using the default `v1` version, run this PowerShell block from the repository root if you need to configure the new privacy feature. It checks local User Secrets without displaying their values and preserves an existing key:
+
+```powershell
+$localSecrets = dotnet user-secrets list --project Two-Way-Com.csproj
+if ($LASTEXITCODE -ne 0) { throw "Unable to read local User Secrets." }
+
+if ($localSecrets -match '^Privacy:PepperKeys:v1\s*=') {
+    Write-Host "Privacy pepper already configured; existing key preserved."
+} else {
+    $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $pepperBytes = New-Object byte[] 48
+    $random.GetBytes($pepperBytes)
+    $random.Dispose()
+    dotnet user-secrets set "Privacy:PepperKeys:v1" ([Convert]::ToBase64String($pepperBytes)) --project Two-Way-Com.csproj
+    if ($LASTEXITCODE -ne 0) { throw "Unable to save the privacy pepper." }
+}
+```
+
+Then restart the backend in the terminal:
+
+```powershell
+dotnet run --project Two-Way-Com.csproj --launch-profile http
+```
+
+If existing PINs were created with a pepper that has been lost, restore that original secret; generating a replacement will not recover those PINs. For a custom current version or deployment environment, use the matching version in its existing secret store instead of this local `v1` setup. Database migration setup remains a separate manual step.
+
 Verifiers use a 32-byte random salt, PBKDF2-HMAC-SHA-256 (minimum 600,000 iterations, 32-byte output), followed by HMAC-SHA-256 with the pepper. Comparison uses `CryptographicOperations.FixedTimeEquals`. Algorithm/version, iterations, salt, and pepper key version are stored. Four digits have only 10,000 possibilities: hashing alone cannot resist offline enumeration. A separately stored pepper protects against database-only disclosure, but not a compromised application host.
 
 `PrivacyOptions` configures hashing, failure budget/window, initial/capped lockout, maximum grants and delivery acknowledgements, and IP limits. Interactive privacy access uses a five-minute idle window; `GrantMinutes` continues to control delivery-acknowledgement lifetime. Benchmark hashing on production hardware.
