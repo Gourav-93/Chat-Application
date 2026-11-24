@@ -32,6 +32,8 @@ Earlier development migrations were squashed into this initial migration. Histor
 
 ## Fresh and existing databases
 
+Chat Lock and Archive add `AddChatPrivacyAndArchive` after the baseline. See [privacy setup and manual migration](chat-privacy.md). Do not rewrite InitialCreate or apply migrations automatically.
+
 For a fresh personal development database, configure the target and apply the existing migration through the root setup. EF can create the database if the SQL identity has sufficient permission.
 
 For an existing database, inspect its schema and `__EFMigrationsHistory` with the owner first. A database created before the squash can already have the tables while its history names older migrations. Applying the current initial migration to that database can fail on existing objects. Have the owner review a backup and an explicit baseline/reconciliation plan before changing its schema or history.

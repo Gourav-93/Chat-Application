@@ -15,19 +15,25 @@ public partial class ChatHub : Hub
     private readonly IConversationService _conversationService;
     private readonly ActiveSessionValidator _activeSessions;
     private readonly SessionConnectionManager _sessionConnections;
+    private readonly PrivacyService _privacy;
+    private readonly PrivacyAccessStore _privacyAccess;
+    private readonly PrivacyRealtime _privateEvents;
 
     public ChatHub(
         IChatService chatService,
         IPresenceService presenceService,
         IConversationService conversationService,
         ActiveSessionValidator activeSessions,
-SessionConnectionManager sessionConnections)
+SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAccessStore privacyAccess, PrivacyRealtime privateEvents)
     {
         _chatService = chatService;
         _presenceService = presenceService;
         _conversationService = conversationService;
         _activeSessions = activeSessions;
         _sessionConnections = sessionConnections;
+        _privacy = privacy;
+        _privacyAccess = privacyAccess;
+        _privateEvents = privateEvents;
     }
     public override async Task OnConnectedAsync()
     {
@@ -60,6 +66,7 @@ SessionConnectionManager sessionConnections)
         {
             return;
         }
+        _privacyAccess.Register(Context.ConnectionId, new PrivacyAccessStore.Peer(currentUserId, sessionId, Context.User!));
 
         // Register this SignalR connection.
         bool isFirstConnection = await _presenceService.UserConnectedAsync(
@@ -75,8 +82,7 @@ SessionConnectionManager sessionConnections)
 
             foreach (var participantId in participantIds)
             {
-                await Clients.Group($"user-{participantId}")
-                    .SendAsync("UserOnline", new
+                await SendPresenceAsync(participantId, currentUserId, "UserOnline", new
                     {
                         UserId = currentUserId,
                         IsOnline = true
@@ -85,6 +91,9 @@ SessionConnectionManager sessionConnections)
         }
 
         // Preserve your existing offline-message synchronization.
+        using (await _privacyAccess.EnterAsync(currentUserId, Context.ConnectionAborted))
+        {
+        if (!await _activeSessions.IsActiveAsync(Context.User, Context.ConnectionAborted)) { Context.Abort(); return; }
         var pendingMessages =
             await _chatService.GetUndeliveredMessagesAsync(currentUserId);
 
@@ -93,6 +102,12 @@ SessionConnectionManager sessionConnections)
             await Clients.Caller.SendAsync(
                 "PendingMessages",
                 pendingMessages);
+        }
+        foreach (var id in await _privacy.PendingLockedIdsAsync(currentUserId))
+        {
+            var acknowledgement = _privacyAccess.DeliveryToken(currentUserId, sessionId, Context.ConnectionId, id);
+            if (acknowledgement.Length > 0) await Clients.Caller.SendAsync("PrivateMessageAvailable", new { acknowledgement });
+        }
         }
 
         await base.OnConnectedAsync();
@@ -104,16 +119,14 @@ SessionConnectionManager sessionConnections)
         if (!Guid.TryParse(Context.UserIdentifier, out var senderId))
             throw new HubException("User identity not found.");
 
-        var message = await _chatService.SendMessageAsync(dto, senderId);
-
-        var groups = new[]
+        MessageDto message;
+        using (await _privacyAccess.EnterAsync(senderId, Context.ConnectionAborted))
         {
-        $"user-{message.SenderId}",
-        $"user-{message.ReceiverId}"
-    };
-
-        await Clients.Groups(groups)
-            .SendAsync("ReceiveMessage", message);
+            await RequirePrivacyAsync(dto.ConversationId);
+            message = await _chatService.SendMessageAsync(dto, senderId);
+        }
+        await _privateEvents.SendAsync(message.SenderId, message.ConversationId, "ReceiveMessage", message);
+        await _privateEvents.SendAsync(message.ReceiverId, message.ConversationId, "ReceiveMessage", message);
     }
 
 
@@ -127,6 +140,8 @@ SessionConnectionManager sessionConnections)
 
         try
         {
+            using var lease = await _privacyAccess.EnterAsync(userId, Context.ConnectionAborted);
+            await RequirePrivacyAsync(conversationId);
             var messages = await _chatService.GetMessageAsync(
                 conversationId,
                 userId,
@@ -134,6 +149,7 @@ SessionConnectionManager sessionConnections)
                 pageSize
             );
 
+            await RequirePrivacyAsync(conversationId);
             await Clients.Caller.SendAsync("MessageHistory", messages);
         }
         catch (ArgumentException)
@@ -150,6 +166,7 @@ SessionConnectionManager sessionConnections)
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        _privacyAccess.Remove(Context.ConnectionId);
         if (Guid.TryParse(Context.UserIdentifier, out var userId))
         {
             var sessionIdValue = Context.User?
@@ -178,8 +195,7 @@ SessionConnectionManager sessionConnections)
 
                 foreach (var participantId in participantIds)
                 {
-                    await Clients.Group($"user-{participantId}")
-                        .SendAsync("UserOffline", new
+                    await SendPresenceAsync(participantId, userId, "UserOffline", new
                         {
                             UserId = userId,
                             IsOnline = false,
@@ -209,14 +225,18 @@ SessionConnectionManager sessionConnections)
             throw new HubException("User identity not found.");
 
         // Find the other participant of this conversation
-        var receiverId = await _chatService.GetOtherParticipantIdAsync(
+        Guid receiverId;
+        using (await _privacyAccess.EnterAsync(senderId, Context.ConnectionAborted))
+        {
+        await RequirePrivacyAsync(conversationId);
+        receiverId = await _chatService.GetOtherParticipantIdAsync(
             conversationId,
             senderId
         );
+        }
 
         // Notify the receiver
-        await Clients.Group($"user-{receiverId}")
-            .SendAsync("UserTyping", new
+        await _privateEvents.SendAsync(receiverId, conversationId, "UserTyping", new
             {
                 ConversationId = conversationId,
                 UserId = senderId,
@@ -232,13 +252,18 @@ SessionConnectionManager sessionConnections)
 
         try
         {
-            var status = await _chatService.MarkDeliveredAsync(
+            MessageStatusDto status;
+            using (await _privacyAccess.EnterAsync(recipientId, Context.ConnectionAborted))
+            {
+            var conversationId = await _privacy.MessageConversationAsync(messageId, recipientId);
+            await RequirePrivacyAsync(conversationId);
+            status = await _chatService.MarkDeliveredAsync(
                 messageId,
                 recipientId);
+            }
 
             // Notify the original sender that the message was delivered.
-            await Clients.Group($"user-{status.SenderId}")
-                .SendAsync("MessageStatusUpdated", status);
+            await _privateEvents.SendAsync(status.SenderId, status.ConversationId, "MessageStatusUpdated", status);
         }
         catch (KeyNotFoundException)
         {
@@ -258,22 +283,25 @@ SessionConnectionManager sessionConnections)
 
         try
         {
-            var statuses = await _chatService.MarkReadAsync(
+            IReadOnlyList<MessageStatusDto> statuses;
+            using (await _privacyAccess.EnterAsync(recipientId, Context.ConnectionAborted))
+            {
+            await RequirePrivacyAsync(conversationId);
+            statuses = await _chatService.MarkReadAsync(
                 conversationId,
                 recipientId);
+            }
 
             // Notify each original sender about their messages being read.
             foreach (var status in statuses)
             {
-                await Clients.Group($"user-{status.SenderId}")
-                    .SendAsync("MessageStatusUpdated", status);
+                await _privateEvents.SendAsync(status.SenderId, status.ConversationId, "MessageStatusUpdated", status);
             }
 
             // Notifies the reader's devices to refresh unread counts after a read change.
             if (statuses.Count > 0)
             {
-                await Clients.Group($"user-{Context.UserIdentifier}")
-                    .SendAsync("ConversationUnreadChanged", new { conversationId });
+                await _privateEvents.SendAsync(recipientId, conversationId, "ConversationUnreadChanged", new { conversationId });
             }
         }
         catch (UnauthorizedAccessException)
@@ -298,7 +326,38 @@ SessionConnectionManager sessionConnections)
         if (!participantIds.Contains(targetUserId))
             throw new HubException("Unable to access this user's presence.");
 
+        using var lease = await _privacyAccess.EnterAsync(currentUserId, Context.ConnectionAborted);
+        var conversationId = await _privacy.FindConversationAsync(currentUserId, targetUserId);
+        await RequirePrivacyAsync(conversationId);
         return await _presenceService.GetUserStatusAsync(targetUserId);
+    }
+
+    public async Task AuthorizePrivacy(string token)
+    {
+        var (userId, sessionId) = PrivacyService.Identity(Context.User!);
+        using var lease = await _privacyAccess.EnterAsync(userId, Context.ConnectionAborted);
+        await _privacy.RequireAccessAsync(userId, sessionId, token);
+        _privacyAccess.Attach(Context.ConnectionId, token);
+    }
+
+    public async Task MarkPrivateDelivered(string token)
+    {
+        var (userId, sessionId) = PrivacyService.Identity(Context.User!);
+        var messageId = _privacyAccess.ConsumeDelivery(token, userId, sessionId, Context.ConnectionId);
+        var status = await _chatService.MarkDeliveredAsync(messageId, userId);
+        await _privateEvents.SendAsync(status.SenderId, status.ConversationId, "MessageStatusUpdated", status);
+    }
+
+    private Task RequirePrivacyAsync(int conversationId)
+    {
+        var (userId, sessionId) = PrivacyService.Identity(Context.User!);
+        return _privacy.RequireConversationAsync(userId, sessionId, conversationId, connectionId: Context.ConnectionId);
+    }
+
+    private async Task SendPresenceAsync(Guid recipientId, Guid targetUserId, string eventName, object payload)
+    {
+        var conversationId = await _privacy.FindConversationAsync(recipientId, targetUserId);
+        await _privateEvents.SendAsync(recipientId, conversationId, eventName, payload);
     }
 
 

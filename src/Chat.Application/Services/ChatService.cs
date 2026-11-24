@@ -275,6 +275,7 @@ public class ChatService : IChatService
         var messages = await _context.Messages
             .Where(m =>
                 m.DeliveredAt == null &&
+                !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.IsLocked) &&
                 m.SenderId != recipientId &&
                 (m.Conversation.UserAId == recipientId ||
                  m.Conversation.UserBId == recipientId))

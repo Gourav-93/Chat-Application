@@ -16,6 +16,8 @@ public class ChatDbContext : DbContext
     public DbSet<Message> Messages { get; set; } // DataBase me Message table
     public DbSet<OtpVerification> OtpVerifications { get; set; } // DataBase me OtpVerification table
     public DbSet<PendingRegistration> PendingRegistrations { get; set; }
+    public DbSet<UserPrivacySettings> UserPrivacySettings { get; set; }
+    public DbSet<UserConversationSettings> UserConversationSettings { get; set; }
 
 
     // Configure the relationships and constraints between entities
@@ -24,6 +26,28 @@ public class ChatDbContext : DbContext
 
         // Call the base implementation of OnModelCreating.
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<UserPrivacySettings>(entity =>
+        {
+            entity.HasKey(p => p.UserId);
+            entity.HasOne<User>().WithOne().HasForeignKey<UserPrivacySettings>(p => p.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(p => p.PinHash).HasMaxLength(32);
+            entity.Property(p => p.PinSalt).HasMaxLength(32);
+            entity.Property(p => p.HashAlgorithm).HasMaxLength(64);
+            entity.Property(p => p.PepperKeyVersion).HasMaxLength(64);
+            entity.Property(p => p.RowVersion).IsRowVersion();
+        });
+        modelBuilder.Entity<UserConversationSettings>(entity =>
+        {
+            entity.HasKey(s => new { s.UserId, s.ConversationId });
+            entity.HasOne<User>().WithMany().HasForeignKey(s => s.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Conversation>().WithMany().HasForeignKey(s => s.ConversationId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(s => new { s.UserId, s.IsLocked, s.IsArchived, s.ConversationId });
+            entity.Property(s => s.RowVersion).IsRowVersion();
+        });
 
         // Conversation – UserA Relationship
         modelBuilder.Entity<Conversation>()

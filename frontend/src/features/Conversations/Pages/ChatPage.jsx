@@ -16,12 +16,16 @@
  */
 
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { LoaderCircle, MessageCircleMore, Moon, ServerOff, SquarePen, Sun } from "lucide-react";
+import { ArrowLeft, ShieldCheck, LoaderCircle, MessageCircleMore, Moon, ServerOff, SquarePen, Sun } from "lucide-react";
+import api from "../../../shared/lib/api";
+import { clearPrivacy, getPrivacySnapshot, getPrivacyToken, setPrivacyAccess, subscribePrivacy } from "../../../shared/lib/privacyAccess";
+import PrivacyPinDialog from "../Components/PrivacyPinDialog";
 import { ThemeContext } from "../../../app/ThemeContext";
 import ProfileMenu from "../Components/ProfileMenu";
 import ConversationList from "../Components/ConversationList";
 import NewChatDialog from "../Components/NewChatDialog";
-import { getConversations } from "../Services/ConversationService";
+import { getConversations, getConversationSections } from "../Services/ConversationService";
+import usePrivacyIdleSession from "../Hooks/usePrivacyIdleSession";
 import ChatPanel from "../../Messages/components/ChatPanel";
 import useMessageHistory from "../../Messages/hooks/useMessageHistory";
 import useChatSession from "../../Messages/hooks/useChatSession";
@@ -65,6 +69,20 @@ function ServerUnavailable({ colors, className }) {
 }
 
 export default function ChatPage() {
+  const privacy = useSyncExternalStore(subscribePrivacy, getPrivacySnapshot);
+  // A privacy boundary change destroys every private draft, buffer and pending view.
+  return <ChatDashboard key={privacy.version} privacy={privacy} />;
+}
+
+function ChatDashboard({ privacy }) {
+  const [section, setSection] = useState(getPrivacyToken() ? "locked" : "normal");
+  const dashboardRef = useRef(null);
+  const lockCurrentPrivacy = usePrivacyIdleSession(section === "locked", dashboardRef);
+  const [sections, setSections] = useState(null);
+  const [sectionsError, setSectionsError] = useState("");
+  const [pinDialog, setPinDialog] = useState(null);
+  const [actionMessage, setActionMessage] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
   const themeContext = useContext(ThemeContext);
   const isDark = themeContext?.isDark ?? true;
   const [selection, setSelection] = useState({
@@ -107,9 +125,20 @@ export default function ChatPage() {
   }, [getBlockedOutage]);
   const closeNewChat = useCallback(() => setNewChatOpen(false), []);
   const refreshKey = `${creationVersion}:${session.revision}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void getConversationSections(controller.signal).then((flags) => {
+        if (!controller.signal.aborted) { setSections(flags); setSectionsError(""); }
+      }).catch(() => {
+        if (!controller.signal.aborted) setSectionsError("Unable to update chat folders. Try again.");
+      });
+    }, 150);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [refreshKey]);
   const history = useMessageHistory(selection, session);
   // An open New Chat dialog pauses selected-chat typing and read acknowledgements.
-  const activity = useConversationActivity(selection, session, history, !newChatOpen);
+  const activity = useConversationActivity(selection, session, history, !newChatOpen && !pinDialog);
   const { onTypingInput, stopTyping, isTyping } = activity;
   const [drafts, setDrafts] = useState({});
   const draftsRef = useRef({});
@@ -217,6 +246,7 @@ export default function ChatPage() {
 
     // Advance synchronously before any older response can reconcile selection.
     const version = ++creationVersionRef.current;
+    setSection(conversation.isLocked ? "locked" : conversation.isArchived ? "archived" : "normal");
     handleSelect(conversation);
     pendingCreatedRef.current = conversation.conversationId;
     setCreationVersion(version);
@@ -270,6 +300,70 @@ export default function ChatPage() {
     });
   }, [creationVersion, refreshKey]);
 
+  async function openPinDialog(action, conversation = null) {
+    if (actionBusy) return;
+    setActionBusy(true); setActionMessage("");
+    try {
+      const { data } = await api.get("/privacy");
+      const nextAction = !data.pinConfigured && action === "change" ? "verify" : action;
+      setPinDialog({ mode: data.pinConfigured ? action : "setup", action: nextAction, conversation });
+    } catch (error) { setActionMessage(error.response?.data?.message || "Unable to load privacy settings. Try again."); }
+    finally { setActionBusy(false); }
+  }
+
+  async function submitPin(values, signal) {
+    if (pinDialog.mode === "setup") {
+      await api.put("/privacy/pin", { pin: values.pin, confirmPin: values.confirmPin }, { signal });
+      if (!signal.aborted) setPinDialog((current) => current ? { ...current, mode: current.action } : null);
+    }
+    if (pinDialog.action === "lock") {
+      await api.put(`/conversations/${pinDialog.conversation.conversationId}/lock`, { pin: values.pin }, { signal });
+      if (!signal.aborted) clearPrivacy("Chat locked. Find it in Locked Chats.");
+    } else if (pinDialog.action === "change" && pinDialog.mode !== "setup") {
+      await api.post("/privacy/pin/change", { currentPin: values.currentPin, newPin: values.pin, confirmPin: values.confirmPin }, { signal });
+      if (!signal.aborted) clearPrivacy("Privacy PIN changed. Your private chats are protected.");
+    } else {
+      const { data } = await api.post("/privacy/locked-list-access", { pin: values.pin }, { signal });
+      if (!signal.aborted) setPrivacyAccess(data);
+    }
+  }
+
+  async function conversationAction(action, conversation) {
+    if (actionBusy) return;
+    if (action === "lock") { await openPinDialog("lock", conversation); return; }
+    setActionBusy(true); setActionMessage("");
+    try {
+      const route = `/conversations/${conversation.conversationId}`;
+      if (action === "unlock") {
+        await api.post(`${route}/remove-lock`);
+        clearPrivacy("Chat unlocked. Its archive setting has been preserved.");
+      } else {
+        if (conversation.isArchived) await api.delete(`${route}/archive`);
+        else await api.put(`${route}/archive`);
+        setActionMessage(conversation.isArchived ? "Chat unarchived." : "Chat archived. New messages will stay here.");
+        handleBack();
+        setCreationVersion((value) => value + 1);
+        creationVersionRef.current++;
+      }
+    } catch (error) { setActionMessage(error.response?.data?.message || "Unable to update this chat. Try again."); }
+    finally { setActionBusy(false); }
+  }
+
+  function leaveSection() {
+    if (section === "locked") {
+      void lockCurrentPrivacy().catch(() => {});
+    } else {
+      handleBack();
+      setSection("normal");
+    }
+  }
+
+  function openSection(nextSection) {
+    if (nextSection === "locked") { void openPinDialog("verify"); return; }
+    handleBack();
+    setSection(nextSection);
+  }
+
   const colors = {
     page: isDark ? "bg-[#080e1c] text-white" : "bg-slate-50 text-slate-900",
     sidebar: isDark
@@ -286,7 +380,7 @@ export default function ChatPage() {
   };
 
   return (
-    <main data-chat-dashboard className={`flex h-dvh overflow-hidden ${colors.page}`}>
+    <main ref={dashboardRef} data-chat-dashboard className={`flex h-dvh overflow-hidden ${colors.page}`}>
       {/* Conversation sidebar */}
       <aside
         className={`${selection.conversation ? "hidden md:flex" : "flex"} min-h-0 w-full shrink-0 flex-col border-r md:w-[360px] lg:w-[400px] ${colors.sidebar}`}
@@ -317,9 +411,10 @@ export default function ChatPage() {
             <button
               type="button"
               aria-label="New conversation"
+              title={section === "locked" ? "Return to main chats to start a conversation" : "New conversation"}
               aria-haspopup="dialog"
               aria-expanded={newChatOpen && !backendUnavailable}
-              disabled={backendUnavailable}
+              disabled={backendUnavailable || section === "locked"}
               onClick={openNewChat}
               className={`rounded-xl p-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-50 ${colors.muted} ${colors.hover}`}
             >
@@ -330,6 +425,22 @@ export default function ChatPage() {
           </div>
         </header>
 
+        <nav aria-label="Chat sections" className="shrink-0 border-b border-slate-500/15 px-3 py-2">
+          {section !== "normal" && (
+            <div className="flex min-w-0 items-center gap-2">
+              <button type="button" onClick={leaveSection} aria-label="Back to main chats" className={`flex size-11 shrink-0 items-center justify-center rounded-xl ${colors.hover}`}><ArrowLeft size={21} /></button>
+              <h2 className="min-w-0 truncate font-semibold">{section === "locked" ? "Locked Chats" : "Archived"}</h2>
+            </div>
+          )}
+          <div className={`mt-1 flex items-center justify-between gap-2 text-xs ${colors.muted}`}>
+            <button type="button" disabled={actionBusy} onClick={() => openPinDialog("change")} className="flex min-h-11 items-center gap-2 rounded-lg px-2 hover:bg-slate-500/10"><ShieldCheck size={15} /> Privacy PIN</button>
+            {privacy.token && <button type="button" onClick={leaveSection} className="min-h-11 rounded-lg px-2 hover:bg-slate-500/10">Lock now</button>}
+          </div>
+          {privacy.token && <p className={`px-2 pb-1 text-xs ${colors.muted}`}>Locks after 5 minutes of inactivity.</p>}
+          {sectionsError && <p role="status" className={`px-2 py-2 text-xs ${colors.muted}`}>{sectionsError}</p>}
+          {(actionMessage || privacy.reason) && <p role="status" className={`px-2 py-2 text-xs leading-5 ${colors.muted}`}>{actionMessage || privacy.reason}</p>}
+        </nav>
+
         {backendUnavailable && (
           <ServerUnavailable colors={colors} className={`flex shrink-0 border-b px-4 py-4 md:hidden ${colors.border}`} />
         )}
@@ -337,6 +448,12 @@ export default function ChatPage() {
           <p role="alert" className={`shrink-0 px-4 py-2 text-xs ${colors.muted}`}>{session.error}</p>
         )}
         <ConversationList
+          key={section}
+          section={section}
+          sections={sections}
+          onSectionOpen={openSection}
+          actionBusy={actionBusy}
+          onAction={conversationAction}
           backendUnavailable={backendUnavailable}
           onSelect={handleSelect}
           selectedConversationId={selection.conversation?.conversationId}
@@ -350,6 +467,7 @@ export default function ChatPage() {
         <ServerUnavailable colors={colors} className="hidden min-w-0 flex-1 px-6 md:flex" />
       ) : selection.conversation ? (
         <ChatPanel selection={selection} history={history} onBack={handleBack}
+          onConversationAction={conversationAction}
           session={session} activity={activity} draft={draft} onDraftChange={changeDraft} onSend={sendDraft}
           onTypingInput={onTypingInput} stopTyping={stopTyping} isTyping={isTyping} />
       ) : (
@@ -381,6 +499,7 @@ export default function ChatPage() {
       {newChatOpen && !backendUnavailable && (
         <NewChatDialog onClose={closeNewChat} onStarted={handleConversationStarted} />
       )}
+      {pinDialog && <PrivacyPinDialog mode={pinDialog.mode} onSubmit={submitPin} onClose={() => setPinDialog(null)} />}
       <div role="status" className="pointer-events-none fixed inset-x-3 bottom-3 z-50 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm">
         {showOutageToast && (
           <p className={`rounded-xl border px-4 py-3 text-sm shadow-lg ${colors.border} ${colors.sidebar}`}>

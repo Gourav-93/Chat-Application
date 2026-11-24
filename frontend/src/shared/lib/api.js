@@ -13,6 +13,7 @@
 
 import axios from "axios";
 import { apiBaseUrl } from "./config.js";
+import { clearPrivacy, getPrivacyToken } from "./privacyAccess.js";
 
 // In-memory token: cleared automatically when the page reloads.
 let accessToken = null;
@@ -42,6 +43,8 @@ const api = axios.create({
 
 // Attach the JWT only when an access token is available.
 api.interceptors.request.use((config) => {
+  const privacyToken = getPrivacyToken();
+  if (privacyToken) config.headers.set("X-Privacy-Token", privacyToken);
   if (accessToken && !config.headers.has("Authorization")) {
     config.headers.set("Authorization", `Bearer ${accessToken}`);
   }
@@ -53,6 +56,7 @@ api.interceptors.response.use(
   (response) => response,
 
   (error) => {
+    if (error.response?.data?.code === "privacy_access_required") clearPrivacy("Enter your privacy PIN again.");
     const authorization =
       error.config?.headers?.get?.("Authorization");
 

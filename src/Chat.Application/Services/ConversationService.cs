@@ -18,6 +18,21 @@ public class ConversationService : IConversationService
         _context = context;
     }
 
+    public async Task<(bool HasArchivedChats, bool HasLockedChats)> GetSectionAvailabilityAsync(Guid currentUserId)
+    {
+        // Locked takes precedence even when a conversation is also archived.
+        var flags = await _context.UserConversationSettings.AsNoTracking()
+            .Where(s => s.UserId == currentUserId && _context.Conversations.Any(c =>
+                c.Id == s.ConversationId && (c.UserAId == currentUserId || c.UserBId == currentUserId)))
+            .GroupBy(s => s.UserId)
+            .Select(group => new
+            {
+                HasArchivedChats = group.Any(s => s.IsArchived && !s.IsLocked),
+                HasLockedChats = group.Any(s => s.IsLocked)
+            }).SingleOrDefaultAsync();
+        return (flags?.HasArchivedChats ?? false, flags?.HasLockedChats ?? false);
+    }
+
     // Search users by verified mobile number
     public async Task<IReadOnlyList<UserSearchResultDto>> SearchUsersAsync(
         string query,
@@ -90,9 +105,13 @@ public class ConversationService : IConversationService
             await _context.SaveChangesAsync();
         }
 
+        var settings = await _context.UserConversationSettings.AsNoTracking()
+            .SingleOrDefaultAsync(s => s.UserId == currentUserId && s.ConversationId == conversation.Id);
         return new ConversationDto
         {
             ConversationId = conversation.Id,
+            IsLocked = settings?.IsLocked ?? false,
+            IsArchived = settings?.IsArchived ?? false,
             OtherUserId = receiver.Id,
             OtherUserName = receiver.UserName,
             OtherUserMobileNumber = receiver.MobileNumber,
@@ -103,16 +122,26 @@ public class ConversationService : IConversationService
 
 
     public async Task<IReadOnlyList<ConversationHistoryDto>>
-        GetConversationHistoryAsync(Guid currentUserId)
+        GetConversationHistoryAsync(Guid currentUserId, string section = "normal", int pageNumber = 1, int pageSize = 30)
     {
+        if (section is not ("normal" or "locked" or "archived") || pageNumber < 1 || pageSize is < 1 or > 100 || (long)(pageNumber - 1) * pageSize > int.MaxValue)
+            throw new PrivacyException(400, "conversation_query_invalid", "Invalid section or pagination.");
         var conversations = await _context.Conversations
             .AsNoTracking()
             .Where(c =>
                 c.UserAId == currentUserId ||
                 c.UserBId == currentUserId)
+            .Where(c => section == "locked"
+                ? _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsLocked)
+                : !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsLocked) &&
+                  (section == "archived"
+                    ? _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsArchived)
+                    : !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsArchived)))
             .Select(c => new ConversationHistoryDto
             {
                 ConversationId = c.Id,
+                IsLocked = _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsLocked),
+                IsArchived = _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsArchived),
 
                 OtherUserId = c.UserAId == currentUserId
                     ? c.UserBId
@@ -149,6 +178,7 @@ public class ConversationService : IConversationService
             })
             .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
             .ThenByDescending(c => c.ConversationId)
+            .Skip((pageNumber - 1) * pageSize).Take(pageSize)
             .ToListAsync();
 
         // SQL Server does not preserve DateTime.Kind.

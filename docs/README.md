@@ -7,6 +7,7 @@ Start with the [root README](../README.md) to configure and run Sandesh from a c
 | Document | Purpose |
 | --- | --- |
 | [Database setup](database-setup.md) | SQL Server identity, shared connection source, the current migration baseline, and existing-database safety. |
+| [Chat Privacy and Archive](chat-privacy.md) | Privacy pepper, manual migration, PIN security, APIs, recovery proposal, and verification. |
 | [Configuration and deployment](deployment.md) | Canonical configuration reference, environment differences, publishing, hosting, and release checks. |
 | [System overview](system-overview.md) | Architecture, feature behavior, REST/SignalR contracts, and implementation limits. |
 | [Frontend development](../frontend/README.md) | Scripts, module ownership, public environment variables, and test compatibility. |

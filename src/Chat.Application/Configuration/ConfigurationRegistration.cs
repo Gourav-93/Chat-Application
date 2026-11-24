@@ -27,6 +27,13 @@ public static class ConfigurationRegistration
                 "ConnectionStrings:DefaultConnection must be a valid SQL Server connection string with Server and Database.")
             .ValidateOnStart();
 
+        services.AddOptions<PrivacyOptions>()
+            .Bind(configuration.GetSection("Privacy"))
+            .ValidateDataAnnotations()
+            .Validate(PrivacyOptions.IsValid,
+                "Privacy requires a valid pepper key ring and consistent security thresholds. Configure Privacy:PepperKeys through secrets or environment variables.")
+            .ValidateOnStart();
+
         services.AddOptions<JwtOptions>()
             .Bind(configuration.GetSection("Jwt"))
             .ValidateDataAnnotations()

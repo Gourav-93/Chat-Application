@@ -4,6 +4,8 @@ namespace Chat.Application.DTOs;
 
 public class ConversationHistoryDto
 {
+    public bool IsLocked { get; set; }
+    public bool IsArchived { get; set; }
     public int ConversationId { get; set; }
 
     public Guid OtherUserId { get; set; }
