@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ArrowLeft, ShieldCheck, LoaderCircle, MessageCircleMore, Moon, ServerOff, SquarePen, Sun } from "lucide-react";
+import { ArrowLeft, LoaderCircle, MessageCircleMore, Moon, ServerOff, SquarePen, Sun, X } from "lucide-react";
 import api from "../../../shared/lib/api";
 import { clearPrivacy, getPrivacySnapshot, getPrivacyToken, setPrivacyAccess, subscribePrivacy } from "../../../shared/lib/privacyAccess";
 import PrivacyPinDialog from "../Components/PrivacyPinDialog";
@@ -33,6 +33,19 @@ import useConversationActivity from "../../Messages/hooks/useConversationActivit
 
 const isGatewayFailure = (status) => status === 502 || status === 503 || status === 504;
 const browserIsOnline = () => navigator.onLine !== false;
+
+function privacyNotice(reason) {
+  switch (reason) {
+    case "Privacy PIN changed. Your private chats are protected.": return "PIN changed";
+    case "Chat locked. Find it in Locked Chats.": return "Chat moved to Locked Chats";
+    case "Chat unlocked. Its archive setting has been preserved.": return "Chat lock removed";
+    case "Your privacy session expired. Enter your PIN again.": return "Locked Chats access expired. Enter your PIN again.";
+    case "Privacy access could not be renewed. Enter your PIN again.": return "Locked Chats closed. Enter your PIN again.";
+    case "":
+    case "Locked Chats are protected.": return "";
+    default: return "Locked Chats closed. Enter your PIN again.";
+  }
+}
 
 function isUnavailableApiError(error) {
   if (error?.response) return isGatewayFailure(error.response.status);
@@ -75,14 +88,27 @@ export default function ChatPage() {
 }
 
 function ChatDashboard({ privacy }) {
+  const [pinConfigured, setPinConfigured] = useState(null);
   const [section, setSection] = useState(getPrivacyToken() ? "locked" : "normal");
   const dashboardRef = useRef(null);
+  useLayoutEffect(() => {
+    if (!privacy.version || document.activeElement !== document.body) return;
+    const target = privacy.token ? "[data-section-heading]"
+      : privacy.reason === "Privacy PIN changed. Your private chats are protected." ? '[aria-label="Your profile"]'
+      : '[role="searchbox"]';
+    dashboardRef.current?.querySelector(target)?.focus({ preventScroll: true });
+  }, [privacy.version, privacy.token, privacy.reason]);
   const lockCurrentPrivacy = usePrivacyIdleSession(section === "locked", dashboardRef);
   const [sections, setSections] = useState(null);
   const [sectionsError, setSectionsError] = useState("");
   const [pinDialog, setPinDialog] = useState(null);
-  const [actionMessage, setActionMessage] = useState("");
+  const [actionMessage, setActionMessage] = useState(() => {
+    const text = privacyNotice(privacy.reason);
+    return text ? { text, error: false } : null;
+  });
   const [actionBusy, setActionBusy] = useState(false);
+  const [pendingConversationId, setPendingConversationId] = useState(null);
+  const actionRequestRef = useRef(null);
   const themeContext = useContext(ThemeContext);
   const isDark = themeContext?.isDark ?? true;
   const [selection, setSelection] = useState({
@@ -125,6 +151,13 @@ function ChatDashboard({ privacy }) {
   }, [getBlockedOutage]);
   const closeNewChat = useCallback(() => setNewChatOpen(false), []);
   const refreshKey = `${creationVersion}:${session.revision}`;
+  const refreshConversations = () => setCreationVersion(++creationVersionRef.current);
+  useEffect(() => () => actionRequestRef.current?.abort(), []);
+  useEffect(() => {
+    if (!actionMessage || actionMessage.error) return undefined;
+    const timer = window.setTimeout(() => setActionMessage(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [actionMessage]);
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
@@ -133,6 +166,13 @@ function ChatDashboard({ privacy }) {
       }).catch(() => {
         if (!controller.signal.aborted) setSectionsError("Unable to update chat folders. Try again.");
       });
+      void api.get("/privacy", { signal: controller.signal })
+  .then(({ data }) => {
+    if (!controller.signal.aborted) {
+      setPinConfigured(data?.pinConfigured === true);
+    }
+  })
+  .catch(() => {});
     }, 150);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [refreshKey]);
@@ -141,6 +181,7 @@ function ChatDashboard({ privacy }) {
   const activity = useConversationActivity(selection, session, history, !newChatOpen && !pinDialog);
   const { onTypingInput, stopTyping, isTyping } = activity;
   const [drafts, setDrafts] = useState({});
+
   const draftsRef = useRef({});
   const submittedRef = useRef(null);
   const conversationId = selection.conversation?.conversationId;
@@ -301,27 +342,59 @@ function ChatDashboard({ privacy }) {
       };
     });
   }, [creationVersion, refreshKey]);
+  function restoreActionFocus(previousFocus, conversationId) {
+    window.requestAnimationFrame(() => {
+      if (document.activeElement !== document.body) return;
+      const target = previousFocus?.isConnected && !previousFocus.disabled ? previousFocus
+        : dashboardRef.current?.querySelector(`[data-conversation-id="${conversationId}"]`) || dashboardRef.current?.querySelector('[role="searchbox"]');
+      target?.focus({ preventScroll: true });
+    });
+  }
 
   async function openPinDialog(action, conversation = null) {
-    if (actionBusy) return;
-    setActionBusy(true); setActionMessage("");
+    if (actionRequestRef.current || pinDialog) return;
+    const returnFocus = document.activeElement;
+    const controller = new AbortController();
+    actionRequestRef.current = controller;
+    setActionBusy(true);
+    setPendingConversationId(conversation?.conversationId ?? null);
+    setActionMessage(null);
     try {
-      const { data } = await api.get("/privacy");
-      const nextAction = !data.pinConfigured && action === "change" ? "verify" : action;
-      setPinDialog({ mode: data.pinConfigured ? action : "setup", action: nextAction, conversation });
-    } catch (error) { setActionMessage(error.response?.data?.message || "Unable to load privacy settings. Try again."); }
-    finally { setActionBusy(false); }
+      const { data } = await api.get("/privacy", { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      const configured = data?.pinConfigured === true;
+      setPinConfigured(configured);
+      setPinDialog({
+        mode: !configured ? "setup" : action === "manage" ? "change" : action,
+        conversation,
+        retryAt: data?.retryAt,
+        returnFocus,
+      });
+    } catch {
+      if (!controller.signal.aborted) setActionMessage({ text: "Unable to load privacy settings. Try again.", error: true });
+    } finally {
+      if (actionRequestRef.current === controller) actionRequestRef.current = null;
+      if (!controller.signal.aborted) {
+        setActionBusy(false); setPendingConversationId(null);
+        restoreActionFocus(returnFocus, conversation?.conversationId);
+      }
+    }
   }
 
   async function submitPin(values, signal) {
     if (pinDialog.mode === "setup") {
       await api.put("/privacy/pin", { pin: values.pin, confirmPin: values.confirmPin }, { signal });
-      if (!signal.aborted) setPinDialog((current) => current ? { ...current, mode: current.action } : null);
+      if (!signal.aborted) {
+        setPinConfigured(true);
+        setPinDialog(null);
+        setActionMessage({ text: "Privacy PIN set", error: false });
+      }
+      return;
     }
-    if (pinDialog.action === "lock") {
+    if (pinDialog.mode === "lock") {
       await api.put(`/conversations/${pinDialog.conversation.conversationId}/lock`, { pin: values.pin }, { signal });
       if (!signal.aborted) clearPrivacy("Chat locked. Find it in Locked Chats.");
-    } else if (pinDialog.action === "change" && pinDialog.mode !== "setup") {
+    } else if (pinDialog.mode === "change") {
       await api.post("/privacy/pin/change", { currentPin: values.currentPin, newPin: values.pin, confirmPin: values.confirmPin }, { signal });
       if (!signal.aborted) clearPrivacy("Privacy PIN changed. Your private chats are protected.");
     } else {
@@ -331,24 +404,43 @@ function ChatDashboard({ privacy }) {
   }
 
   async function conversationAction(action, conversation) {
-    if (actionBusy) return;
+    if (actionRequestRef.current || pinDialog) return;
     if (action === "lock") { await openPinDialog("lock", conversation); return; }
-    setActionBusy(true); setActionMessage("");
+    const returnFocus = document.activeElement;
+    const controller = new AbortController();
+    actionRequestRef.current = controller;
+    setActionBusy(true); setPendingConversationId(conversation.conversationId); setActionMessage(null);
     try {
       const route = `/conversations/${conversation.conversationId}`;
       if (action === "unlock") {
-        await api.post(`${route}/remove-lock`);
-        clearPrivacy("Chat unlocked. Its archive setting has been preserved.");
+        await api.post(`${route}/remove-lock`, null, { signal: controller.signal });
+        if (!controller.signal.aborted) clearPrivacy("Chat unlocked. Its archive setting has been preserved.");
       } else {
-        if (conversation.isArchived) await api.delete(`${route}/archive`);
-        else await api.put(`${route}/archive`);
-        setActionMessage(conversation.isArchived ? "Chat unarchived." : "Chat archived. New messages will stay here.");
-        handleBack();
-        setCreationVersion((value) => value + 1);
-        creationVersionRef.current++;
+        const { data } = conversation.isArchived
+          ? await api.delete(`${route}/archive`, { signal: controller.signal })
+          : await api.put(`${route}/archive`, null, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setActionMessage({ text: data.isArchived ? "Chat archived" : "Chat unarchived", error: false });
+        const destination = data.isLocked ? "locked" : data.isArchived ? "archived" : "normal";
+        setSelection((previous) => {
+          if (previous.conversation?.conversationId !== conversation.conversationId) return previous;
+          if (destination === section) return {
+            ...previous, conversation: { ...previous.conversation, isArchived: data.isArchived, isLocked: data.isLocked },
+          };
+          const generation = previous.generation + 1;
+          return { conversation: null, generation, focusRequest: { conversationId: conversation.conversationId, generation } };
+        });
+        refreshConversations();
       }
-    } catch (error) { setActionMessage(error.response?.data?.message || "Unable to update this chat. Try again."); }
-    finally { setActionBusy(false); }
+    } catch {
+      if (!controller.signal.aborted) setActionMessage({ text: "Unable to update this chat. Try again.", error: true });
+    } finally {
+      if (actionRequestRef.current === controller) actionRequestRef.current = null;
+      if (!controller.signal.aborted) {
+        setActionBusy(false); setPendingConversationId(null);
+        restoreActionFocus(returnFocus, conversation.conversationId);
+      }
+    }
   }
 
   function leaveSection() {
@@ -357,6 +449,7 @@ function ChatDashboard({ privacy }) {
     } else {
       handleBack();
       setSection("normal");
+      window.requestAnimationFrame(() => dashboardRef.current?.querySelector('[role="searchbox"]')?.focus());
     }
   }
 
@@ -364,6 +457,7 @@ function ChatDashboard({ privacy }) {
     if (nextSection === "locked") { void openPinDialog("verify"); return; }
     handleBack();
     setSection(nextSection);
+    window.requestAnimationFrame(() => dashboardRef.current?.querySelector("[data-section-heading]")?.focus());
   }
 
   const colors = {
@@ -404,7 +498,7 @@ function ChatDashboard({ privacy }) {
                 isDark ? "Switch to light mode" : "Switch to dark mode"
               }
               title={isDark ? "Light mode" : "Dark mode"}
-              className={`rounded-xl p-2 transition-colors ${colors.muted} ${colors.hover}`}
+              className={`flex size-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 ${colors.muted} ${colors.hover}`}
             >
               {isDark ? <Sun size={21} /> : <Moon size={21} />}
             </button>
@@ -418,29 +512,27 @@ function ChatDashboard({ privacy }) {
               aria-expanded={newChatOpen && !backendUnavailable}
               disabled={backendUnavailable || section === "locked"}
               onClick={openNewChat}
-              className={`rounded-xl p-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-50 ${colors.muted} ${colors.hover}`}
+              className={`flex size-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-50 ${colors.muted} ${colors.hover}`}
             >
               <SquarePen size={21} />
             </button>
 
-            <ProfileMenu />
+            <ProfileMenu
+             pinConfigured={pinConfigured}
+             actionBusy={actionBusy}
+             onManagePrivacyPin={() => openPinDialog("manage")}
+            />
           </div>
         </header>
 
-        <nav aria-label="Chat sections" className="shrink-0 border-b border-slate-500/15 px-3 py-2">
+        <nav aria-label="Chat sections" className="shrink-0 px-3 py-0">
           {section !== "normal" && (
             <div className="flex min-w-0 items-center gap-2">
-              <button type="button" onClick={leaveSection} aria-label="Back to main chats" className={`flex size-11 shrink-0 items-center justify-center rounded-xl ${colors.hover}`}><ArrowLeft size={21} /></button>
-              <h2 className="min-w-0 truncate font-semibold">{section === "locked" ? "Locked Chats" : "Archived"}</h2>
+              <button type="button" onClick={leaveSection} aria-label="Back to main chats" className={`flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-blue-500 ${colors.hover}`}><ArrowLeft size={21} /></button>
+              <h2 data-section-heading tabIndex={-1} className="min-w-0 flex-1 truncate rounded font-semibold focus-visible:outline-2 focus-visible:outline-blue-500">{section === "locked" ? "Locked Chats" : "Archived"}</h2>
+              {privacy.token && <button type="button" onClick={leaveSection} className={`min-h-11 shrink-0 rounded-lg px-3 text-sm focus-visible:outline-2 focus-visible:outline-blue-500 ${colors.icon} ${colors.hover}`}>Lock now</button>}
             </div>
           )}
-          <div className={`mt-1 flex items-center justify-between gap-2 text-xs ${colors.muted}`}>
-            <button type="button" disabled={actionBusy} onClick={() => openPinDialog("change")} className="flex min-h-11 items-center gap-2 rounded-lg px-2 hover:bg-slate-500/10"><ShieldCheck size={15} /> Privacy PIN</button>
-            {privacy.token && <button type="button" onClick={leaveSection} className="min-h-11 rounded-lg px-2 hover:bg-slate-500/10">Lock now</button>}
-          </div>
-          {privacy.token && <p className={`px-2 pb-1 text-xs ${colors.muted}`}>Locks after 5 minutes of inactivity.</p>}
-          {sectionsError && <p role="status" className={`px-2 py-2 text-xs ${colors.muted}`}>{sectionsError}</p>}
-          {(actionMessage || privacy.reason) && <p role="status" className={`px-2 py-2 text-xs leading-5 ${colors.muted}`}>{actionMessage || privacy.reason}</p>}
         </nav>
 
         {backendUnavailable && (
@@ -455,6 +547,9 @@ function ChatDashboard({ privacy }) {
           sections={sections}
           onSectionOpen={openSection}
           actionBusy={actionBusy}
+          pendingConversationId={pendingConversationId}
+          sectionsError={sectionsError}
+          onRetry={refreshConversations}
           onAction={conversationAction}
           backendUnavailable={backendUnavailable}
           onSelect={handleSelect}
@@ -470,6 +565,8 @@ function ChatDashboard({ privacy }) {
       ) : selection.conversation ? (
         <ChatPanel selection={selection} history={history} onBack={handleBack}
           onConversationAction={conversationAction}
+          actionBusy={actionBusy}
+          pendingConversationId={pendingConversationId}
           session={session} activity={activity} draft={draft} onDraftChange={changeDraft} onSend={sendDraft}
           onTypingInput={onTypingInput} stopTyping={stopTyping} isTyping={isTyping} />
       ) : (
@@ -501,12 +598,13 @@ function ChatDashboard({ privacy }) {
       {newChatOpen && !backendUnavailable && (
         <NewChatDialog onClose={closeNewChat} onStarted={handleConversationStarted} />
       )}
-      {pinDialog && <PrivacyPinDialog mode={pinDialog.mode} onSubmit={submitPin} onClose={() => setPinDialog(null)} />}
-      <div role="status" className="pointer-events-none fixed inset-x-3 bottom-3 z-50 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm">
-        {showOutageToast && (
-          <p className={`rounded-xl border px-4 py-3 text-sm shadow-lg ${colors.border} ${colors.sidebar}`}>
-            Server unavailable. Please wait for the connection to return.
-          </p>
+      {pinDialog && <PrivacyPinDialog mode={pinDialog.mode} retryAt={pinDialog.retryAt} returnFocus={pinDialog.returnFocus} onSubmit={submitPin} onClose={() => setPinDialog(null)} />}
+      <div role="status" aria-atomic="true" className="pointer-events-none fixed inset-x-3 bottom-3 z-50 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm">
+        {(showOutageToast || actionMessage) && (
+          <div className={`pointer-events-auto flex items-center gap-2 rounded-xl border py-2 pl-4 pr-1 text-sm shadow-lg ${colors.border} ${colors.sidebar}`}>
+            <p className="min-w-0 flex-1">{showOutageToast ? "Server unavailable. Reconnecting automatically." : actionMessage.text}</p>
+            <button type="button" aria-label="Dismiss notification" onClick={() => { setActionMessage(null); setToastOutage(null); }} className={`flex size-11 shrink-0 items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:outline-blue-500 ${colors.hover}`}><X size={18} aria-hidden="true" /></button>
+          </div>
         )}
       </div>
     </main>
