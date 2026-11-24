@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ArrowLeft, ShieldCheck, LoaderCircle, MessageCircleMore, Moon, ServerOff, SquarePen, Sun } from "lucide-react";
+import { ArrowLeft, LoaderCircle, MessageCircleMore, Moon, ServerOff, SquarePen, Sun } from "lucide-react";
 import api from "../../../shared/lib/api";
 import { clearPrivacy, getPrivacySnapshot, getPrivacyToken, setPrivacyAccess, subscribePrivacy } from "../../../shared/lib/privacyAccess";
 import PrivacyPinDialog from "../Components/PrivacyPinDialog";
@@ -75,6 +75,7 @@ export default function ChatPage() {
 }
 
 function ChatDashboard({ privacy }) {
+  const [pinConfigured, setPinConfigured] = useState(null);
   const [section, setSection] = useState(getPrivacyToken() ? "locked" : "normal");
   const dashboardRef = useRef(null);
   const lockCurrentPrivacy = usePrivacyIdleSession(section === "locked", dashboardRef);
@@ -133,6 +134,13 @@ function ChatDashboard({ privacy }) {
       }).catch(() => {
         if (!controller.signal.aborted) setSectionsError("Unable to update chat folders. Try again.");
       });
+      void api.get("/privacy", { signal: controller.signal })
+  .then(({ data }) => {
+    if (!controller.signal.aborted) {
+      setPinConfigured(data?.pinConfigured === true);
+    }
+  })
+  .catch(() => {});
     }, 150);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [refreshKey]);
@@ -141,6 +149,7 @@ function ChatDashboard({ privacy }) {
   const activity = useConversationActivity(selection, session, history, !newChatOpen && !pinDialog);
   const { onTypingInput, stopTyping, isTyping } = activity;
   const [drafts, setDrafts] = useState({});
+
   const draftsRef = useRef({});
   const submittedRef = useRef(null);
   const conversationId = selection.conversation?.conversationId;
@@ -299,18 +308,44 @@ function ChatDashboard({ privacy }) {
       };
     });
   }, [creationVersion, refreshKey]);
+async function openPinDialog(action, conversation = null) {
+  if (actionBusy) return;
 
-  async function openPinDialog(action, conversation = null) {
-    if (actionBusy) return;
-    setActionBusy(true); setActionMessage("");
-    try {
-      const { data } = await api.get("/privacy");
-      const nextAction = !data.pinConfigured && action === "change" ? "verify" : action;
-      setPinDialog({ mode: data.pinConfigured ? action : "setup", action: nextAction, conversation });
-    } catch (error) { setActionMessage(error.response?.data?.message || "Unable to load privacy settings. Try again."); }
-    finally { setActionBusy(false); }
+  setActionBusy(true);
+  setActionMessage("");
+
+  try {
+    const { data } = await api.get("/privacy");
+    const configured = data?.pinConfigured === true;
+
+    setPinConfigured(configured);
+
+    if (action === "manage") {
+      setPinDialog({
+        mode: configured ? "change" : "setup",
+        action: configured ? "change" : "set",
+        conversation: null,
+      });
+      return;
+    }
+
+    const nextAction =
+      !configured && action === "change" ? "verify" : action;
+
+    setPinDialog({
+      mode: configured ? action : "setup",
+      action: nextAction,
+      conversation,
+    });
+  } catch (error) {
+    setActionMessage(
+      error.response?.data?.message ||
+        "Unable to load privacy settings. Try again.",
+    );
+  } finally {
+    setActionBusy(false);
   }
-
+}
   async function submitPin(values, signal) {
     if (pinDialog.mode === "setup") {
       await api.put("/privacy/pin", { pin: values.pin, confirmPin: values.confirmPin }, { signal });
@@ -421,11 +456,14 @@ function ChatDashboard({ privacy }) {
               <SquarePen size={21} />
             </button>
 
-            <ProfileMenu />
+            <ProfileMenu
+             pinConfigured={pinConfigured}
+             onManagePrivacyPin={() => openPinDialog("manage")}
+            />
           </div>
         </header>
 
-        <nav aria-label="Chat sections" className="shrink-0 border-b border-slate-500/15 px-3 py-2">
+        <nav aria-label="Chat sections" className="shrink-0 px-3 py-0">
           {section !== "normal" && (
             <div className="flex min-w-0 items-center gap-2">
               <button type="button" onClick={leaveSection} aria-label="Back to main chats" className={`flex size-11 shrink-0 items-center justify-center rounded-xl ${colors.hover}`}><ArrowLeft size={21} /></button>
@@ -433,12 +471,12 @@ function ChatDashboard({ privacy }) {
             </div>
           )}
           <div className={`mt-1 flex items-center justify-between gap-2 text-xs ${colors.muted}`}>
-            <button type="button" disabled={actionBusy} onClick={() => openPinDialog("change")} className="flex min-h-11 items-center gap-2 rounded-lg px-2 hover:bg-slate-500/10"><ShieldCheck size={15} /> Privacy PIN</button>
+            {/* <button type="button" disabled={actionBusy} onClick={() => openPinDialog("change")} className="flex min-h-11 items-center gap-2 rounded-lg px-2 hover:bg-slate-500/10"><ShieldCheck size={15} /> Privacy PIN</button> */}
             {privacy.token && <button type="button" onClick={leaveSection} className="min-h-11 rounded-lg px-2 hover:bg-slate-500/10">Lock now</button>}
           </div>
           {privacy.token && <p className={`px-2 pb-1 text-xs ${colors.muted}`}>Locks after 5 minutes of inactivity.</p>}
           {sectionsError && <p role="status" className={`px-2 py-2 text-xs ${colors.muted}`}>{sectionsError}</p>}
-          {(actionMessage || privacy.reason) && <p role="status" className={`px-2 py-2 text-xs leading-5 ${colors.muted}`}>{actionMessage || privacy.reason}</p>}
+          {actionMessage && (<p role="status" className={`px-2 py-2 text-xs leading-5 ${colors.muted}`} > {actionMessage} </p> )}
         </nav>
 
         {backendUnavailable && (

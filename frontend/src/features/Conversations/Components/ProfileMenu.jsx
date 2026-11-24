@@ -8,12 +8,13 @@
  */
 
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import { LogOut, UserRound } from "lucide-react";
+import {LockKeyhole, LogOut, UserRound } from "lucide-react";
 import { AuthContext } from "../../../app/AuthContext";
 import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
+ 
 
-export default function ProfileMenu() {
+export default function ProfileMenu({ pinConfigured, onManagePrivacyPin }) {
   const auth = useContext(AuthContext);
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
@@ -21,6 +22,7 @@ export default function ProfileMenu() {
   const containerRef = useRef(null);
   const triggerRef = useRef(null);
   const logoutRef = useRef(null);
+  const pinRef = useRef(null);
   const panelId = useId();
   const nameId = useId();
 
@@ -120,6 +122,27 @@ export default function ProfileMenu() {
               </p>
             )}
           </div>
+          <button
+  ref={pinRef}
+  type="button"
+  onClick={() => {
+    setIsOpen(false);
+    onManagePrivacyPin?.();
+  }}
+  className={
+    "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 " +
+    (isDark
+      ? "text-slate-200 hover:bg-white/5"
+      : "text-slate-700 hover:bg-slate-100")
+  }
+>
+  <LockKeyhole size={18} aria-hidden="true" />
+  {pinConfigured === true
+    ? "Change privacy PIN"
+    : pinConfigured === false
+      ? "Set privacy PIN"
+      : "Privacy PIN"}
+</button>
 
           <div className="p-2">
             <button

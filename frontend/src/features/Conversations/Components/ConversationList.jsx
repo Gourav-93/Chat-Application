@@ -59,6 +59,8 @@ export default function ConversationList({
   const containerRef = useRef(null);
   const searchRef = useRef(null);
   const lastNotifiedRef = useRef(null);
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const menuRef = useRef(null);
 
   useEffect(() => {
     // Notify only after a successful server response, even when cached rows are visible.
@@ -86,6 +88,34 @@ export default function ConversationList({
     // A filtered-out or removed row falls back to the preserved search input.
     (row || searchRef.current)?.focus();
   }, [focusRequest]);
+
+  useEffect(() => {
+  if (openMenuId === null) return undefined;
+
+  const closeOnOutsideClick = (event) => {
+    if (!menuRef.current?.contains(event.target)) {
+      setOpenMenuId(null);
+    }
+  };
+
+  const closeOnEscape = (event) => {
+    if (event.key !== "Escape") return;
+
+    setOpenMenuId(null);
+    menuRef.current
+      ?.querySelector("[data-menu-trigger]")
+      ?.focus();
+  };
+
+  document.addEventListener("pointerdown", closeOnOutsideClick);
+  document.addEventListener("keydown", closeOnEscape);
+
+  return () => {
+    document.removeEventListener("pointerdown", closeOnOutsideClick);
+    document.removeEventListener("keydown", closeOnEscape);
+  };
+}, [openMenuId]);
+
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const mainHasFolders = section === "normal" && (sections?.hasArchivedChats || sections?.hasLockedChats);
   const searchQuery = query.trim().toLocaleLowerCase();
@@ -137,7 +167,7 @@ export default function ConversationList({
           return (
             <li
               key={conversation.conversationId}
-              className={"relative border-b pr-11 " + (isDark ? "border-[#293854]" : "border-slate-200")}
+              className={"group relative border-b pr-11 " + (isDark ? "border-[#293854]" : "border-slate-200")}
             >
               <button
                 type="button"
@@ -186,17 +216,63 @@ export default function ConversationList({
                 </span>
               </span>
               </button>
-              <details className="absolute top-3 right-0 z-10" onKeyDown={(event) => { if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary").focus(); } }}>
-                <summary aria-label={`Actions for ${displayName}`} className={`ml-auto flex min-h-11 w-11 cursor-pointer list-none items-center justify-center rounded-xl ${muted} hover:bg-slate-500/10 [&::-webkit-details-marker]:hidden`}><EllipsisVertical size={18} /></summary>
-                <div className={`absolute top-full right-0 min-w-40 rounded-xl border p-1 shadow-xl ${isDark ? "border-[#293854] bg-[#111d31]" : "border-slate-200 bg-white"}`}>
-                <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; onAction?.("archive", conversation); }} className={`min-h-11 w-full rounded-lg px-3 text-left text-sm ${muted} hover:bg-slate-500/10`}>
-                  {conversation.isArchived ? "Unarchive" : "Archive"}
-                </button>
-                <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; onAction?.(conversation.isLocked ? "unlock" : "lock", conversation); }} className={`min-h-11 w-full rounded-lg px-3 text-left text-sm ${muted} hover:bg-slate-500/10`}>
-                  {conversation.isLocked ? "Unlock chat" : "Lock chat"}
-                </button>
-                </div>
-              </details>
+             <div
+  ref={openMenuId === conversation.conversationId ? menuRef : null}
+  className="absolute top-3 right-0 z-20"
+>
+  <button
+    type="button"
+    data-menu-trigger
+    aria-label={`Actions for ${displayName}`}
+    aria-expanded={openMenuId === conversation.conversationId}
+    title={`Actions for ${displayName}`}
+    onClick={() =>
+      setOpenMenuId((current) =>
+        current === conversation.conversationId
+          ? null
+          : conversation.conversationId,
+      )
+    }
+    className={`flex size-11 items-center justify-center rounded-xl ${muted} transition-opacity hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100`}
+  >
+    <EllipsisVertical size={18} aria-hidden="true" />
+  </button>
+
+  {openMenuId === conversation.conversationId && (
+    <div
+      className={`absolute top-full right-0 min-w-40 rounded-xl border p-1 shadow-xl ${
+        isDark
+          ? "border-[#293854] bg-[#111d31]"
+          : "border-slate-200 bg-white"
+      }`}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          setOpenMenuId(null);
+          onAction?.("archive", conversation);
+        }}
+        className={`min-h-11 w-full rounded-lg px-3 text-left text-sm ${muted} hover:bg-slate-500/10`}
+      >
+        {conversation.isArchived ? "Unarchive" : "Archive"}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          setOpenMenuId(null);
+          onAction?.(
+            conversation.isLocked ? "unlock" : "lock",
+            conversation,
+          );
+        }}
+        className={`min-h-11 w-full rounded-lg px-3 text-left text-sm ${muted} hover:bg-slate-500/10`}
+      >
+        {conversation.isLocked ? "Unlock chat" : "Lock chat"}
+      </button>
+    </div>
+  )}
+</div>
             </li>
           );
         })}
