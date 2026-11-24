@@ -14,6 +14,8 @@
 
   <ItemGroup>
     <!-- React is published separately. Local env files must stay off the server. -->
+    <Compile Remove="tests\**" />
+    <Content Remove="tests\**" />
     <Content Remove="frontend\**;.env*;appsettings.*.local.json" />
     <None Remove="frontend\**;.env*;appsettings.*.local.json" />
   </ItemGroup>
