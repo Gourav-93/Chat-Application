@@ -10,8 +10,16 @@
 
 import api from "../../../shared/lib/api";
 
-export async function getConversations(signal) {
-  const response = await api.get("/conversations", { signal });
+export async function getConversationSections(signal) {
+  const { data } = await api.get("/conversations/sections", { signal });
+  if (typeof data?.hasArchivedChats !== "boolean" || typeof data?.hasLockedChats !== "boolean") {
+    throw new Error("The server returned unexpected chat sections.");
+  }
+  return data;
+}
+
+export async function getConversations(signal, section = "normal", pageNumber = 1) {
+  const response = await api.get("/conversations", { signal, params: { section, pageNumber, pageSize: 30 } });
   const conversations = response.data;
   const isNullableString = (value) => value == null || typeof value === "string";
 
@@ -44,6 +52,7 @@ export async function getConversations(signal) {
 }
 
 export function getConversationErrorMessage(error) {
+  if (error?.response?.data?.code === "privacy_access_required") return "Enter your privacy PIN to open Locked Chats.";
   const status = error?.response?.status;
   if (status === 401) return "Your session could not be authorized. Please log out and sign in again.";
   if (status === 403) return "You do not have permission to view these conversations.";

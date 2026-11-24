@@ -4,6 +4,7 @@
  * the session owner, and serialize history while safely retiring transports.
  */
 import api from "../../../shared/lib/api";
+import { clearPrivacy, getPrivacyToken } from "../../../shared/lib/privacyAccess";
 import { signalRHubUrl } from "../../../shared/lib/config.js";
 import {
   HubConnectionBuilder,
@@ -153,6 +154,8 @@ export function createMessageHistoryService(
     record.connection.off("ReceiveMessage", record.receiveHandler);
     record.connection.off("ConversationUnreadChanged", record.unreadHandler);
     record.connection.off("PendingMessages", record.pendingHandler);
+    record.connection.off("PrivacyStateChanged", record.privacyHandler);
+    record.connection.off("PrivateMessageAvailable", record.privateMessageHandler);
     record.connection.off("MessageStatusUpdated", record.receiptHandler);
     record.connection.off("UserOnline", record.onlineHandler);
     record.connection.off("UserOffline", record.offlineHandler);
@@ -436,6 +439,18 @@ export function createMessageHistoryService(
       connection.on("UserOffline", record.offlineHandler);
       connection.on("ReceiveMessage", record.receiveHandler);
       connection.on("PendingMessages", record.pendingHandler);
+      record.privacyHandler = (event) => {
+        if (!liveRecord()) return;
+        if (event?.revoked) clearPrivacy(typeof event.message === "string" ? event.message : "Privacy access was locked. Enter your PIN again.");
+        else invalidateConversations(record);
+      };
+      connection.on("PrivacyStateChanged", record.privacyHandler);
+      record.privateMessageHandler = (event) => {
+        if (!liveRecord() || typeof event?.acknowledgement !== "string") return;
+        // This capability acknowledges transport delivery only and reveals no chat identity.
+        void record.connection.invoke("MarkPrivateDelivered", event.acknowledgement).catch(() => undefined);
+      };
+      connection.on("PrivateMessageAvailable", record.privateMessageHandler);
       connection.on("MessageHistory", record.handler);
       connection.onclose((cause) => {
         // SignalR has no public offclose API; retired callbacks remain inert.
@@ -464,6 +479,11 @@ export function createMessageHistoryService(
           startGeneration !== generation
         ) {
           throw new Error("History connection startup was superseded.");
+        }
+        const privacyToken = getPrivacyToken();
+        if (privacyToken) {
+          try { await connection.invoke("AuthorizePrivacy", privacyToken); }
+          catch { clearPrivacy("Your privacy session ended. Enter your PIN again."); }
         }
         stage = "connected";
         publishState("connected", startupWarning);
@@ -806,13 +826,13 @@ export function createMessageHistoryService(
       return connect();
     },
 
-    async send(conversationId, value) {
+    async send(conversationId, value, attachmentIds = [], clientMessageId = null) {
       checkSession();
       const text = value.trim();
       if (
         !Number.isInteger(conversationId) ||
         conversationId < 1 ||
-        !text ||
+        (!text && !attachmentIds.length) ||
         text.length > 5000
       ) {
         throw new Error("Enter a message containing 1 to 5,000 characters.");
@@ -835,6 +855,8 @@ export function createMessageHistoryService(
         return record.connection.invoke("SendMessage", {
           conversationId,
           text,
+          attachmentIds,
+          clientMessageId,
         });
       });
       const timeout = new Promise((_, reject) => {

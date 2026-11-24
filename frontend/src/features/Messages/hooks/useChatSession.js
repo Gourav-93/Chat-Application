@@ -4,7 +4,8 @@
  * Responsibilities: Schedule automatic recovery, guard session cleanup, buffer
  * messages and receipts, acknowledge delivery, and forward presence and typing.
  */
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { getPrivacySnapshot, subscribePrivacy } from "../../../shared/lib/privacyAccess";
 import { AuthContext } from "../../../app/AuthContext";
 import { createMessageHistoryService, mergeMessageReceipts } from "../services/MessageHistoryService";
 
@@ -13,6 +14,7 @@ const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
 
 export default function useChatSession() {
+  const privacy = useSyncExternalStore(subscribePrivacy, getPrivacySnapshot);
   const auth = useContext(AuthContext);
   const endSession = auth?.endSession;
   const token = auth?.isAuthenticated ? auth.user?.token : null;
@@ -35,7 +37,7 @@ export default function useChatSession() {
     let reconnectDelay = INITIAL_RECONNECT_DELAY;
     let lastFailure = null;
     let backgroundRecovery = false;
-    const owner = { token, userId, expiresAt, service: null };
+    const owner = { token, userId, expiresAt, privacyVersion: privacy.version, service: null };
     let connectionStatus = "connecting";
     let typingEpoch = 0;
     const typingListeners = new Set();
@@ -326,19 +328,20 @@ export default function useChatSession() {
       if (sendRef.current?.owner === owner) sendRef.current = null;
       void owner.service.dispose();
     };
-  }, [validSession, token, userId, expiresAt, endSession]);
+  }, [validSession, token, userId, expiresAt, endSession, privacy.version]);
 
   const current = validSession && state?.owner.token === token &&
+    state.owner.privacyVersion === privacy.version &&
     state.owner.userId === userId && state.owner.expiresAt === expiresAt;
   const owner = current ? state.owner : null;
   const requiresSignIn = !validSession || Boolean(current && state.expired);
-  const send = useCallback(async (conversationId, text) => {
+  const send = useCallback(async (conversationId, text, attachmentIds = [], clientMessageId = null) => {
     if (!owner || requiresSignIn || sendRef.current) return false;
     const operation = { owner, conversationId };
     sendRef.current = operation;
     setSending({ ...operation, pending: true, error: "" });
     try {
-      await owner.service.send(conversationId, text);
+      await owner.service.send(conversationId, text, attachmentIds, clientMessageId);
       if (sendRef.current !== operation) return false;
       setSending({ ...operation, pending: false, error: "" });
       setState((previous) => previous?.owner === owner

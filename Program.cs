@@ -46,8 +46,53 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 // 3. Existing chat and OTP services: keep the current business behavior.
+// Attachment configuration and independent maintenance switch.
+var attachmentMaintenanceEnabled =
+    builder.Configuration.GetValue<bool>("Attachments:MaintenanceEnabled");
+
+builder.Services.AddOptions<AttachmentOptions>()
+    .Bind(builder.Configuration.GetSection("Attachments"))
+    .Validate(o =>
+        o.MaxImageBytes > 0 && o.MaxImageBytes <= 10L * 1024 * 1024 &&
+        o.MaxDocumentBytes > 0 && o.MaxDocumentBytes <= 25L * 1024 * 1024 &&
+        o.MaxAttachments is > 0 and <= 10 &&
+        o.MaxTotalBytes > 0 && o.MaxTotalBytes <= 100L * 1024 * 1024 &&
+        o.PendingMinutes is > 0 and <= 1440 &&
+        o.MaxPendingPerUser is > 0 and <= 100,
+        "Invalid attachment limits.")
+    .ValidateOnStart();
+
+builder.Services.AddScoped<AttachmentService>();
+builder.Services.AddSingleton<IFileStorageService, LocalFileStorageService>();
+builder.Services.AddSingleton<IAttachmentScanner>(services =>
+{
+    var attachmentOptions = services
+        .GetRequiredService<IOptions<AttachmentOptions>>().Value;
+
+    if (builder.Environment.IsDevelopment() &&
+        string.Equals(attachmentOptions.Scanner, "DevelopmentBypass",
+            StringComparison.OrdinalIgnoreCase))
+    {
+        return new DevelopmentAttachmentScanner();
+    }
+
+    return new UnconfiguredAttachmentScanner();
+});
+
+if (builder.Configuration.GetValue<bool>("Attachments:Enabled") ||
+    attachmentMaintenanceEnabled)
+{
+    builder.Services.AddHostedService<PendingAttachmentCleanup>();
+}
+
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<PrivacyPinHasher>();
+builder.Services.AddSingleton<PrivacyAccessStore>();
+builder.Services.AddScoped<PrivacyService>();
+builder.Services.AddScoped<PrivacyRealtime>();
+builder.Services.AddScoped<PrivacyRequestFilter>();
 
 if (builder.Environment.IsDevelopment())
 {
@@ -145,11 +190,45 @@ builder.Services.AddAuthorization();
 // 6. Preserve OTP IP policies and limit invitation previews by authenticated user.
 builder.Services.AddRateLimiter(_ => { });
 builder.Services.AddOptions<RateLimiterOptions>()
-    .Configure<IOptions<OtpOptions>, IOptions<InvitationOptions>>((options, settings, invitationSettings) =>
+    .Configure<IOptions<OtpOptions>, IOptions<InvitationOptions>, IOptions<PrivacyOptions>>((options, settings, invitationSettings, privacySettings) =>
 {
     var otp = settings.Value;
     var invitation = invitationSettings.Value;
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("attachment-upload", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ??
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    options.AddPolicy("attachment-download", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ??
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    options.AddPolicy("privacy-pin", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = privacySettings.Value.IpPermitLimit,
+            Window = TimeSpan.FromMinutes(privacySettings.Value.IpWindowMinutes),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
 
     options.AddPolicy("otp-send", context =>
         RateLimitPartition.GetFixedWindowLimiter(
@@ -210,6 +289,13 @@ builder.Services.AddOptions<Microsoft.AspNetCore.Cors.Infrastructure.CorsOptions
 });
 
 var app = builder.Build();
+if (app.Services.GetRequiredService<IOptions<AttachmentOptions>>().Value.Enabled ||
+    attachmentMaintenanceEnabled)
+{
+    // Validate the configured storage at startup when attachments or
+    // maintenance are active. Do not silently use ephemeral storage.
+    _ = app.Services.GetRequiredService<IFileStorageService>();
+}
 
 // 8. API-only backend: React is hosted separately; no wwwroot required.
 

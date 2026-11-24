@@ -77,7 +77,7 @@ public class OtpService : IOtpService
                 .ThenByDescending(o => o.Id)
                 .FirstOrDefaultAsync();
 
-            if (latestOtp != null &&
+            if (latestOtp != null && !latestOtp.IsUsed &&
                 now < latestOtp.CreatedAt.AddSeconds(_options.ResendCooldownSeconds))
             {
                 throw new AuthFlowException(

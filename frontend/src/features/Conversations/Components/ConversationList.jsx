@@ -9,12 +9,86 @@
  * 5. Notify the parent of successful unfiltered list changes and restore focus.
  */
 
-import { useContext, useEffect, useId, useRef, useState } from "react";
-import { LoaderCircle, MessageCircleMore, Search, UserRound, X } from "lucide-react";
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Archive, ChevronRight, EllipsisVertical, LoaderCircle, LockKeyhole, MessageCircleMore, Search, UserRound, X } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
 import { AuthContext } from "../../../app/AuthContext";
 import useConversations from "../Hooks/useConversations";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
+
+// Shared by the list and chat header. Native popovers escape scroll clipping
+// while remaining inside the dashboard's privacy-activity boundary.
+export function ChatActions({ conversation, onAction, onClose, actionBusy = false, pendingConversationId }) {
+  const { isDark = true } = useContext(ThemeContext) || {};
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef(null);
+  const panelRef = useRef(null);
+  const id = useId();
+  const pending = actionBusy && pendingConversationId === conversation.conversationId;
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const panel = panelRef.current;
+    const position = () => {
+      const anchor = triggerRef.current.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const left = viewport?.offsetLeft ?? 0;
+      const top = viewport?.offsetTop ?? 0;
+      const width = viewport?.width ?? window.innerWidth;
+      const height = viewport?.height ?? window.innerHeight;
+      panel.style.maxHeight = `${Math.max(44, height - 16)}px`;
+      panel.style.maxWidth = `${Math.max(44, width - 16)}px`;
+      const bounds = panel.getBoundingClientRect();
+      panel.style.left = `${Math.max(left + 8, Math.min(anchor.right - bounds.width, left + width - bounds.width - 8))}px`;
+      const below = anchor.bottom + 4;
+      panel.style.top = `${Math.max(top + 8, Math.min(below + bounds.height <= top + height - 8 ? below : anchor.top - bounds.height - 4, top + height - bounds.height - 8))}px`;
+    };
+    position();
+    panel.querySelector("button:not(:disabled)")?.focus({ preventScroll: true });
+    window.addEventListener("resize", position);
+    document.addEventListener("scroll", position, true);
+    window.visualViewport?.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("scroll", position);
+    return () => {
+      window.removeEventListener("resize", position);
+      document.removeEventListener("scroll", position, true);
+      window.visualViewport?.removeEventListener("resize", position);
+      window.visualViewport?.removeEventListener("scroll", position);
+    };
+  }, [open]);
+
+  const close = () => {
+    panelRef.current?.hidePopover();
+    triggerRef.current?.focus({ preventScroll: true });
+  };
+  const act = (action) => {
+    if (actionBusy) return;
+    close();
+    onAction?.(action, conversation);
+  };
+  const itemClass = "min-h-11 w-full rounded-lg px-3 text-left text-sm hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50";
+  return (
+    <div className="shrink-0" onBlur={(event) => {
+      if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) panelRef.current?.hidePopover();
+    }}>
+      <button ref={triggerRef} type="button" popoverTarget={id} aria-expanded={open} aria-controls={id}
+        aria-label={pending ? "Updating chat" : `Actions for ${getDisplayName(conversation.otherUserName, conversation.otherUserMobileNumber)}`}
+        aria-busy={pending} disabled={actionBusy}
+        className={`flex size-11 items-center justify-center rounded-xl hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50 ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+        {pending ? <LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <EllipsisVertical size={18} aria-hidden="true" />}
+      </button>
+      <div ref={panelRef} id={id} popover="auto" onToggle={(event) => setOpen(event.newState === "open")}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
+        }}
+        className={`fixed m-0 w-48 overflow-y-auto rounded-xl border p-1 shadow-xl ${isDark ? "border-[#293854] bg-[#111d31] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>
+        <button type="button" disabled={actionBusy} onClick={() => act("archive")} className={itemClass}>{conversation.isArchived ? "Unarchive chat" : "Archive chat"}</button>
+        <button type="button" disabled={actionBusy} onClick={() => act(conversation.isLocked ? "unlock" : "lock")} className={itemClass}>{conversation.isLocked ? "Remove chat lock" : "Lock chat"}</button>
+        {onClose && <button type="button" onClick={() => { close(); onClose(); }} className={itemClass}>Close chat</button>}
+      </div>
+    </div>
+  );
+}
 
 function formatTimestamp(value) {
   if (!value) return null;
@@ -40,14 +114,22 @@ export default function ConversationList({
   focusRequest,
   backendUnavailable = false,
   refreshKey = 0,
+  section = "normal",
+  onAction,
+  sections,
+  onSectionOpen,
+  actionBusy = false,
+  pendingConversationId,
+  sectionsError = "",
+  onRetry,
 } = {}) {
   const theme = useContext(ThemeContext);
   const auth = useContext(AuthContext);
   const userId = auth?.isAuthenticated ? auth.user?.userId : null;
   const isDark = theme?.isDark ?? true;
   const {
-    conversations, isLoading, isRefreshing, snapshotReady, hasSnapshot, accessError,
-  } = useConversations(refreshKey);
+    conversations, isLoading, isRefreshing, snapshotReady, hasSnapshot, accessError, hasMore, loadMore,
+  } = useConversations(refreshKey, section);
   const [query, setQuery] = useState("");
   const searchId = useId();
   const listId = useId();
@@ -81,7 +163,9 @@ export default function ConversationList({
     // A filtered-out or removed row falls back to the preserved search input.
     (row || searchRef.current)?.focus();
   }, [focusRequest]);
+
   const muted = isDark ? "text-slate-400" : "text-slate-500";
+  const mainHasFolders = section === "normal" && (sections?.hasArchivedChats || sections?.hasLockedChats);
   const searchQuery = query.trim().toLocaleLowerCase();
   const filtered = conversations.filter((conversation) =>
     conversation.otherUserName.toLocaleLowerCase().includes(searchQuery) ||
@@ -89,8 +173,8 @@ export default function ConversationList({
   );
 
   let content = null;
-  if (accessError) {
-    content = <p role="status" className={"px-6 py-8 text-center text-sm " + muted}>{accessError}</p>;
+  if (accessError && !hasSnapshot) {
+    content = null;
   } else if (isLoading && !backendUnavailable) {
     content = (
       <div role="status" className={"flex min-h-48 items-center justify-center gap-3 px-6 text-sm " + muted}>
@@ -102,18 +186,18 @@ export default function ConversationList({
     content = (
       <div role="status" className="flex min-h-48 flex-col items-center justify-center px-6 py-8 text-center">
         <MessageCircleMore size={42} className={"mb-4 " + muted} aria-hidden="true" />
-        <h2 className="font-semibold">No conversations yet</h2>
+        <h2 className="font-semibold">{section === "locked" ? "No locked chats" : section === "archived" ? "No archived chats" : mainHasFolders ? "No other chats" : "No conversations yet"}</h2>
         <p className={"mt-2 max-w-xs text-sm leading-6 " + muted}>
-          Your conversations will appear here once you start chatting.
+          {section === "normal" ? mainHasFolders ? "Your chats are in the folders above." : "Start a new chat to begin." : section === "locked" ? "Lock a chat from its action menu." : "Archive a chat from its action menu."}
         </p>
       </div>
     );
   } else if (conversations.length > 0 && filtered.length === 0) {
     content = (
       <div role="status" className="flex min-h-48 flex-col items-center justify-center px-6 py-8 text-center">
-        <h2 className="font-semibold">No matching conversations</h2>
+        <h2 className="font-semibold">{hasMore || accessError ? "No matches in loaded chats" : "No matches in this section"}</h2>
         <p className={"mt-2 text-sm leading-6 " + muted}>
-          Try another username or mobile number.
+          {hasMore ? "Load more chats or try another search." : "Try another name or mobile number."}
         </p>
       </div>
     );
@@ -131,7 +215,7 @@ export default function ConversationList({
           return (
             <li
               key={conversation.conversationId}
-              className={"border-b " + (isDark ? "border-[#293854]" : "border-slate-200")}
+              className={"group relative border-b pr-11 " + (isDark ? "border-[#293854]" : "border-slate-200")}
             >
               <button
                 type="button"
@@ -180,6 +264,9 @@ export default function ConversationList({
                 </span>
               </span>
               </button>
+              <div className="absolute top-3 right-0">
+                <ChatActions conversation={conversation} onAction={onAction} actionBusy={actionBusy || backendUnavailable} pendingConversationId={pendingConversationId} />
+              </div>
             </li>
           );
         })}
@@ -202,7 +289,8 @@ export default function ConversationList({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             aria-controls={listId}
-            placeholder="Search conversations"
+            placeholder={section === "locked" ? "Search locked chats" : section === "archived" ? "Search archived chats" : "Search chats"}
+            aria-describedby={hasMore || query ? searchId + "-scope" : undefined}
             className={"min-w-0 flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-slate-500 " +
               (isDark ? "text-white" : "text-slate-900")}
           />
@@ -217,7 +305,14 @@ export default function ConversationList({
             </button>
           )}
         </div>
+        {(hasMore || query) && <p id={searchId + "-scope"} className={`mt-2 text-xs ${muted}`}>Search covers loaded chats in this section.</p>}
       </div>
+      {(accessError || sectionsError) && !backendUnavailable && (
+        <div className={`mx-4 mb-2 flex shrink-0 items-center gap-2 rounded-xl border px-3 text-xs ${isDark ? "border-[#293854] text-slate-300" : "border-slate-200 text-slate-600"}`}>
+          <p role="status" className="min-w-0 flex-1 py-2">{accessError || sectionsError}</p>
+          <button type="button" onClick={onRetry} disabled={isLoading || isRefreshing} className="min-h-11 shrink-0 rounded-lg px-2 text-blue-500 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50">{isLoading || isRefreshing ? "Retrying…" : "Retry"}</button>
+        </div>
+      )}
       {isRefreshing && <p role="status" className="sr-only">Updating conversations...</p>}
       <div
         id={listId}
@@ -227,7 +322,22 @@ export default function ConversationList({
         tabIndex={0}
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500"
       >
+        {section === "normal" && (
+          <div className="px-2">
+            {[["archived", "Archived", Archive, sections?.hasArchivedChats], ["locked", "Locked Chats", LockKeyhole, sections?.hasLockedChats]]
+              .filter(([, , , visible]) => visible)
+              .map(([value, label, Icon]) => (
+                <button key={value} type="button" onClick={() => onSectionOpen?.(value)} disabled={backendUnavailable || actionBusy}
+                  className={`flex min-h-14 w-full min-w-0 items-center gap-3 rounded-xl px-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50 ${isDark ? "hover:bg-white/5" : "hover:bg-slate-50"}`}>
+                  <span className={`flex size-11 shrink-0 items-center justify-center ${isDark ? "text-blue-300" : "text-blue-600"}`}><Icon size={22} aria-hidden="true" /></span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">{label}</span>
+                  <ChevronRight size={18} className={`shrink-0 ${muted}`} aria-hidden="true" />
+                </button>
+              ))}
+          </div>
+        )}
         {content}
+        {hasMore && <button type="button" disabled={isRefreshing} onClick={loadMore} className="mx-4 mb-4 min-h-11 rounded-xl border px-4 text-sm">Load more chats</button>}
       </div>
     </section>
   );

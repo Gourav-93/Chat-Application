@@ -23,11 +23,11 @@ This table is the documentation source of truth for setting names and defaults. 
 | `Jwt__ExpiryInDays` | 45, positive integer. Sets both newly issued JWT and stored session expiry. |
 | `Otp__HashingKey` | Mandatory independent non-placeholder secret of at least 32 characters. Staging/Production require this environment variable. |
 | `Otp__ExpiryMinutes` | 5, positive integer. |
-| `Otp__ResendCooldownSeconds` | 60, positive integer. Development overrides to 5. |
-| `Otp__MaxSendRequests`, `Otp__SendWindowMinutes` | 3 requests per mobile in 15 minutes. Development overrides the request count to 30. |
+| `Otp__ResendCooldownSeconds` | 60, positive integer. Development overrides to 5. Applies while the latest OTP is unused. A consumed OTP allows a fresh request immediately within the remaining send limits. |
+| `Otp__MaxSendRequests`, `Otp__SendWindowMinutes` | 30 requests per mobile in 15 minutes, including codes consumed by successful logins. |
 | `Otp__MaxAttempts`, `Otp__VerificationWindowMinutes` | 5 failed attempts, with a 15-minute mobile-level verification window and the existing per-OTP attempt check. |
-| `Otp__IpSendPermitLimit`, `Otp__IpSendWindowMinutes` | 3 requests in 15 minutes. Development overrides the request count to 100. |
-| `Otp__IpVerifyPermitLimit`, `Otp__IpVerifyWindowMinutes` | 5 OTP-verification requests in 5 minutes. |
+| `Otp__IpSendPermitLimit`, `Otp__IpSendWindowMinutes` | 100 requests per IP in 15 minutes. |
+| `Otp__IpVerifyPermitLimit`, `Otp__IpVerifyWindowMinutes` | 100 OTP-verification requests per IP in 5 minutes. A successful session takeover normally uses two requests, including confirmation. Both count toward this limit. |
 | `Otp__ExposeForLocalTesting` | false. Only Development can enable the response preview. Startup rejects true in other environments. The console sender continues to print local test OTPs. |
 | `Invitation__SignupUrl` | Required absolute HTTP(S) signup destination in Development, where the local JSON selects the frontend URL. Embedded credentials are rejected. Optional outside Development and HTTPS when supplied. Invitation previews are available only in Development. |
 | `Invitation__PreviewPermitLimit`, `Invitation__PreviewWindowMinutes` | 5 preview requests per authenticated user per fixed 60-minute window. Positive integers. The window supports up to 71582 minutes, matching the native replenishment timer range. Tabs and sessions for the same user share the allowance within one application process. Rejections return HTTP 429, with zero queue and automatic replenishment. |

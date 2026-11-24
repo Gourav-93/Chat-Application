@@ -45,13 +45,13 @@ public sealed class OtpOptions
     public bool ExposeForLocalTesting { get; set; }
     [Range(1, int.MaxValue)] public int ExpiryMinutes { get; set; } = 5;
     [Range(1, int.MaxValue)] public int ResendCooldownSeconds { get; set; } = 60;
-    [Range(1, int.MaxValue)] public int MaxSendRequests { get; set; } = 3;
+    [Range(1, int.MaxValue)] public int MaxSendRequests { get; set; } = 30;
     [Range(1, int.MaxValue)] public int SendWindowMinutes { get; set; } = 15;
     [Range(1, int.MaxValue)] public int MaxAttempts { get; set; } = 5;
     [Range(1, int.MaxValue)] public int VerificationWindowMinutes { get; set; } = 15;
-    [Range(1, int.MaxValue)] public int IpSendPermitLimit { get; set; } = 3;
+    [Range(1, int.MaxValue)] public int IpSendPermitLimit { get; set; } = 100;
     [Range(1, int.MaxValue)] public int IpSendWindowMinutes { get; set; } = 15;
-    [Range(1, int.MaxValue)] public int IpVerifyPermitLimit { get; set; } = 5;
+    [Range(1, int.MaxValue)] public int IpVerifyPermitLimit { get; set; } = 100;
     [Range(1, int.MaxValue)] public int IpVerifyWindowMinutes { get; set; } = 5;
 }
 

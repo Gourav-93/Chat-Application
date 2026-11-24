@@ -1,4 +1,3 @@
-
 using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
@@ -11,68 +10,194 @@ public class ChatService : IChatService
 {
     private readonly ChatDbContext _context;
 
-    public ChatService(ChatDbContext context)
+    private readonly Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> _attachments;
+    public ChatService(ChatDbContext context, Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> attachments)
     {
         _context = context;
+        _attachments = attachments;
     }
 
     public async Task<MessageDto> SendMessageAsync(
         SendMessageDto dto, Guid senderId)
     {
-        var text = dto.Text?.Trim();
+        var text = dto.Text?.Trim() ?? string.Empty;
+        var ids = dto.AttachmentIds ?? [];
+        var limits = _attachments.Value;
 
-        if (string.IsNullOrWhiteSpace(text) || text.Length > 5000)
-            throw new ArgumentException("Invalid message text.");
+        if (text.Length > 5000 ||
+            (text.Length == 0 && ids.Count == 0) ||
+            ids.Distinct().Count() != ids.Count)
+        {
+            throw new ArgumentException("Invalid message or attachment count.");
+        }
+
+        if (ids.Count > 0 &&
+            (!dto.ClientMessageId.HasValue || dto.ClientMessageId == Guid.Empty))
+        {
+            throw new ArgumentException("Message operation ID is missing.");
+        }
 
         var conversation = await _context.Conversations
             .FirstOrDefaultAsync(c => c.Id == dto.ConversationId);
 
         if (conversation == null ||
-            (conversation.UserAId != senderId &&
-             conversation.UserBId != senderId))
-            throw new UnauthorizedAccessException("Invalid conversation.");
-
-        var senderExists = await _context.Users
-    .AnyAsync(u => u.Id == senderId);
-
-        if (!senderExists)
+            (conversation.UserAId != senderId && conversation.UserBId != senderId))
         {
-            throw new UnauthorizedAccessException(
-                "Authenticated user not found.");
+            throw new UnauthorizedAccessException("Invalid conversation.");
         }
 
-        // Get the other user's ID
-        var receiverId = conversation.UserAId == senderId
-            ? conversation.UserBId
-            : conversation.UserAId;
+        // Ordinary text messages without an operation ID need only one insert.
+        // Do not acquire the attachment/idempotency user lock for these messages.
+        if (ids.Count == 0 && !dto.ClientMessageId.HasValue)
+        {
+            var textMessage = new Message
+            {
+                ConversationId = dto.ConversationId,
+                SenderId = senderId,
+                Text = text,
+                Type = MessageType.Text,
+                SentAt = DateTime.UtcNow
+            };
+
+            _context.Messages.Add(textMessage);
+            await _context.SaveChangesAsync();
+
+            return await MapAsync(textMessage, conversation);
+        }
+
+        // Serialize idempotent operations from the same sender, including
+        // attachment claims. Keep this lock compatible with AttachmentService.
+        await using var tx = await _context.Database.BeginTransactionAsync();
+
+        await _context.Users
+            .Where(u => u.Id == senderId)
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.UserName, u => u.UserName));
+
+        if (dto.ClientMessageId.HasValue)
+        {
+            var previous = await _context.Messages
+                .Include(m => m.Attachments)
+                .SingleOrDefaultAsync(m => m.SenderId == senderId &&
+                    m.ClientMessageId == dto.ClientMessageId);
+
+            if (previous != null)
+            {
+                if (previous.ConversationId != dto.ConversationId ||
+                    previous.Text != text ||
+                    !previous.Attachments.Select(a => a.Id).Order()
+                        .SequenceEqual(ids.Order()))
+                {
+                    throw new ArgumentException(
+                        "Message operation ID was already used for different contents.");
+                }
+
+                // A successful operation remains retryable even if new uploads
+                // or new attachment messages have since been disabled.
+                await tx.CommitAsync();
+                return await MapAsync(previous, conversation);
+            }
+        }
+
+        if (ids.Count > 0 && !limits.Enabled)
+        {
+            throw new ArgumentException("Attachments are disabled.");
+        }
+
+        if (ids.Count > limits.MaxAttachments)
+        {
+            throw new ArgumentException("Invalid message or attachment count.");
+        }
+
+        // Avoid querying attachments for idempotent text-only messages.
+        var attachments = ids.Count == 0
+            ? new List<MessageAttachment>()
+            : await _context.MessageAttachments
+                .Where(a => ids.Contains(a.Id))
+                .ToListAsync();
+
+        var now = DateTime.UtcNow;
+
+        if (attachments.Count != ids.Count ||
+            attachments.Any(a => a.UploadedBy != senderId ||
+                a.ConversationId != dto.ConversationId ||
+                a.MessageId != null || a.Deleting ||
+                a.ExpiresAt <= now || a.FileSize <= 0) ||
+            attachments.Sum(a => a.FileSize) > limits.MaxTotalBytes)
+        {
+            throw new ArgumentException(
+                "Attachments are unavailable or exceed the total size limit.");
+        }
+
+        var images = attachments.Count(a => a.ContentType.StartsWith(
+            "image/", StringComparison.OrdinalIgnoreCase));
+
+        // Preserve the existing message-type contract, including captions.
+        var messageType = attachments.Count == 0
+            ? MessageType.Text
+            : text.Length > 0 || (images > 0 && images < attachments.Count)
+                ? MessageType.Mixed
+                : images == attachments.Count
+                    ? MessageType.Image
+                    : MessageType.Document;
 
         var message = new Message
         {
             ConversationId = dto.ConversationId,
             SenderId = senderId,
             Text = text,
-            SentAt = DateTime.UtcNow
+            SentAt = now,
+            ClientMessageId = dto.ClientMessageId,
+            Type = messageType
         };
 
         _context.Messages.Add(message);
-        await _context.SaveChangesAsync();
 
-        var senderName = await _context.Users
-            .Where(u => u.Id == senderId)
-            .Select(u => u.UserName)
-            .FirstOrDefaultAsync();
-
-        return new MessageDto
+        foreach (var attachment in attachments)
         {
-            Id = message.Id,
-            ConversationId = message.ConversationId,
-            SenderId = senderId,
-            SenderName = senderName ?? string.Empty,
-            ReceiverId = receiverId,
-            Text = message.Text,
-            SentAt = message.SentAt
-        };
+            attachment.Message = message;
+            attachment.Version = Guid.NewGuid();
+        }
+
+        try
+        {
+            // EF Core checks the original attachment Version concurrency token.
+            // The message and attachment claims commit together or roll back.
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new ArgumentException(
+                "An attachment is already in use. Refresh before retrying.");
+        }
+
+        return await MapAsync(message, conversation);
     }
+
+    private async Task<MessageDto> MapAsync(
+        Message message, Conversation conversation) => new()
+    {
+        Id = message.Id,
+        ConversationId = message.ConversationId,
+        SenderId = message.SenderId,
+        SenderName = await _context.Users
+            .Where(u => u.Id == message.SenderId)
+            .Select(u => u.UserName)
+            .SingleAsync() ?? string.Empty,
+        ReceiverId = conversation.UserAId == message.SenderId
+            ? conversation.UserBId
+            : conversation.UserAId,
+        Text = message.Text,
+        Type = (int)message.Type,
+        SentAt = DateTime.SpecifyKind(message.SentAt, DateTimeKind.Utc),
+        DeliveredAt = message.DeliveredAt.HasValue
+            ? DateTime.SpecifyKind(message.DeliveredAt.Value, DateTimeKind.Utc)
+            : null,
+        ReadAt = message.ReadAt.HasValue
+            ? DateTime.SpecifyKind(message.ReadAt.Value, DateTimeKind.Utc)
+            : null,
+        Attachments = message.Attachments.Select(AttachmentService.Map).ToList()
+    };
 
 
     public async Task<IReadOnlyList<MessageDto>> GetMessageAsync(
@@ -124,6 +249,8 @@ public class ChatService : IChatService
                        ? conversation.UserBId
                        : conversation.UserAId,
                 Text = m.Text,
+                Type = (int)m.Type,
+                Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
                 SentAt = m.SentAt,
 
                 // Important: retrieve persisted message statuses
@@ -275,6 +402,7 @@ public class ChatService : IChatService
         var messages = await _context.Messages
             .Where(m =>
                 m.DeliveredAt == null &&
+                !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.IsLocked) &&
                 m.SenderId != recipientId &&
                 (m.Conversation.UserAId == recipientId ||
                  m.Conversation.UserBId == recipientId))
@@ -290,6 +418,8 @@ public class ChatService : IChatService
                 ReceiverId = recipientId,
 
                 Text = m.Text,
+                Type = (int)m.Type,
+                Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
                 SentAt = m.SentAt,
                 DeliveredAt = m.DeliveredAt,
                 ReadAt = m.ReadAt
