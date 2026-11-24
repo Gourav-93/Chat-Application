@@ -1,0 +1,79 @@
+name: Deploy Sandesh Testing
+
+# Push to main = automatic deploy to sandesh.plutosafe.in (TESTING server only).
+# Change the branch name below if needed. "Run workflow" button also works.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-sandesh-testing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Generate migration script
+        env:
+          ConnectionStrings__DefaultConnection: Server=localhost;Database=SandeshTesting;User Id=ci;Password=ci;TrustServerCertificate=True
+          Jwt__Issuer: ci
+          Jwt__Audience: ci
+        run: |
+          # Dummy random secrets: only needed so the app can be created at design time.
+          export Jwt__Key=$(openssl rand -hex 32)
+          export Otp__HashingKey=$(openssl rand -hex 32)
+          export Privacy__PepperKeys__v1=$(openssl rand -hex 32)
+          dotnet tool install --global dotnet-ef --version "10.*"
+          dotnet ef migrations script --idempotent -o migrate.sql
+
+      - name: Publish backend (self-contained linux-x64)
+        run: |
+          dotnet publish Two-Way-Com.csproj -c Release -r linux-x64 --self-contained true -o publish
+          rm -rf publish/wwwroot publish/frontend
+
+      - name: Package release
+        run: |
+          mkdir release
+          cp -r publish release/publish
+          cp -r frontend/dist release/dist
+          cp migrate.sql release/migrate.sql
+          tar -czf release.tar.gz -C release .
+
+      - name: Upload and deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_deploy ~/.ssh/known_hosts
+          OPTS="-i $HOME/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          scp $OPTS release.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:incoming/release.tar.gz"
+          ssh $OPTS "$DEPLOY_USER@$DEPLOY_HOST" "sudo /usr/local/bin/sandesh-deploy.sh"
