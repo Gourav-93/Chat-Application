@@ -2,19 +2,30 @@
  * File: ChatPanel.jsx
  * Purpose: Presents conversation history, live messages, and the controlled composer.
  * Responsibilities:
- * 1. Render recipient presence, typing feedback, receipts, and date-grouped messages.
+ * 1. Render recipient presence, typing feedback, receipts, and date-grouped messages, including emoji-only messages.
  * 2. Show history load states and actionable session or activity errors.
  * 3. Support both themes, mobile Back navigation, and accessible focus.
  * 4. Preserve scroll position and keyboard focus during older-message pagination.
+ * 5. Scope the composer and emoji picker to the active conversation.
  */
 
-import { Fragment, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, CheckCheck, EllipsisVertical, LoaderCircle, MessageCircleMore, UserRound } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
+import emojiRegex from "emoji-regex";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
 import MessageComposer from "./MessageComposer";
 
 const OLDER_HISTORY_THRESHOLD = 120;
+const emojiPattern = emojiRegex();
+
+function isEmojiOnly(text) {
+  if (!text.trim()) return false;
+  // Text-default symbols such as a bare copyright sign keep their text appearance.
+  return !text.replace(emojiPattern, (emoji) =>
+    /^\p{Emoji}$/u.test(emoji) && !/\p{Emoji_Presentation}/u.test(emoji) ? emoji : ""
+  ).trim();
+}
 
 // Compare local calendar dates, including across DST changes and pagination.
 function getLocalDateKey(date) {
@@ -151,6 +162,7 @@ export default function ChatPanel({
   const displayName = getDisplayName(conversation?.otherUserName, mobile);
   const showMobile = Boolean(mobile && mobile !== displayName);
   const messages = history.messages;
+  const emojiOnlyByMessage = useMemo(() => messages.map(({ text }) => isEmojiOnly(text)), [messages]);
   const busy = history.isLoading || history.isLoadingOlder;
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const activityAvailable = session.status === "connected" && !session.requiresSignIn;
@@ -486,6 +498,7 @@ export default function ChatPanel({
           {messages.map((message, index) => {
             const own = Boolean(history.userId) &&
               message.senderId.toLowerCase() === String(history.userId).toLowerCase();
+            const emojiOnly = emojiOnlyByMessage[index];
             const receiptStatus = own ? getReceiptStatus(message) : null;
             const ReceiptIcon = receiptStatus === "Sent" ? Check : CheckCheck;
             const timestamp = formatMessageTimestamp(message.sentAt);
@@ -509,12 +522,13 @@ export default function ChatPanel({
                 <li data-message-id={message.id}
                   className={"flex " + (own ? "justify-end" : "justify-start")}>
                   <div className="min-w-0 max-w-[90%] sm:max-w-[80%] lg:max-w-[70%]">
-                    <div className={"rounded-2xl px-3 py-2 shadow-sm " +
+                    <div className={emojiOnly ? undefined : "rounded-2xl px-3 py-2 shadow-sm " +
                       (own ? "rounded-br-md bg-blue-600 text-white" :
                         isDark ? "rounded-bl-md bg-[#1b2b45] text-slate-100" :
                           "rounded-bl-md border border-slate-200 bg-white text-slate-900")}>
                       <span className="sr-only">{own ? "You" : displayName}: </span>
-                      <p className="whitespace-pre-wrap [overflow-wrap:anywhere] text-sm leading-5">
+                      <p className={"chat-flag-text whitespace-pre-wrap [overflow-wrap:anywhere] " +
+                        (emojiOnly ? "text-3xl leading-tight sm:text-4xl" : "text-sm leading-5")}>
                         {message.text}
                       </p>
                     </div>
@@ -557,7 +571,7 @@ export default function ChatPanel({
           </>
         )}
       </div>
-      <MessageComposer value={draft} onChange={onDraftChange} onSend={onSend}
+      <MessageComposer key={selectionKey} value={draft} onChange={onDraftChange} onSend={onSend}
         onTypingInput={onTypingInput} stopTyping={stopTyping}
         pending={Boolean(session.sending?.pending)}
         disabled={session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}
