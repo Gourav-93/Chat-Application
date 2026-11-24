@@ -47,6 +47,7 @@ jobs:
           export Jwt__Key=$(openssl rand -hex 32)
           export Otp__HashingKey=$(openssl rand -hex 32)
           export Privacy__PepperKeys__v1=$(openssl rand -hex 32)
+          dotnet restore Two-Way-Com.csproj
           dotnet tool install --global dotnet-ef --version "10.*"
           dotnet ef migrations script --idempotent -o migrate.sql
 
