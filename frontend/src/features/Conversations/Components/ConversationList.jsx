@@ -10,7 +10,7 @@
  */
 
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import { LoaderCircle, MessageCircleMore, Search, UserRound, X } from "lucide-react";
+import { Archive, ChevronRight, EllipsisVertical, LoaderCircle, LockKeyhole, MessageCircleMore, Search, UserRound, X } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
 import { AuthContext } from "../../../app/AuthContext";
 import useConversations from "../Hooks/useConversations";
@@ -40,14 +40,19 @@ export default function ConversationList({
   focusRequest,
   backendUnavailable = false,
   refreshKey = 0,
+  section = "normal",
+  onAction,
+  sections,
+  onSectionOpen,
+  actionBusy = false,
 } = {}) {
   const theme = useContext(ThemeContext);
   const auth = useContext(AuthContext);
   const userId = auth?.isAuthenticated ? auth.user?.userId : null;
   const isDark = theme?.isDark ?? true;
   const {
-    conversations, isLoading, isRefreshing, snapshotReady, hasSnapshot, accessError,
-  } = useConversations(refreshKey);
+    conversations, isLoading, isRefreshing, snapshotReady, hasSnapshot, accessError, hasMore, loadMore,
+  } = useConversations(refreshKey, section);
   const [query, setQuery] = useState("");
   const searchId = useId();
   const listId = useId();
@@ -82,6 +87,7 @@ export default function ConversationList({
     (row || searchRef.current)?.focus();
   }, [focusRequest]);
   const muted = isDark ? "text-slate-400" : "text-slate-500";
+  const mainHasFolders = section === "normal" && (sections?.hasArchivedChats || sections?.hasLockedChats);
   const searchQuery = query.trim().toLocaleLowerCase();
   const filtered = conversations.filter((conversation) =>
     conversation.otherUserName.toLocaleLowerCase().includes(searchQuery) ||
@@ -102,9 +108,9 @@ export default function ConversationList({
     content = (
       <div role="status" className="flex min-h-48 flex-col items-center justify-center px-6 py-8 text-center">
         <MessageCircleMore size={42} className={"mb-4 " + muted} aria-hidden="true" />
-        <h2 className="font-semibold">No conversations yet</h2>
+        <h2 className="font-semibold">{section === "locked" ? "No locked chats" : section === "archived" ? "No archived chats" : mainHasFolders ? "No other chats" : "No conversations yet"}</h2>
         <p className={"mt-2 max-w-xs text-sm leading-6 " + muted}>
-          Your conversations will appear here once you start chatting.
+          {section === "normal" ? mainHasFolders ? "Open a folder above to view your chats." : "Your conversations will appear here once you start chatting." : "Chats you move here will keep their messages and unread counts."}
         </p>
       </div>
     );
@@ -131,7 +137,7 @@ export default function ConversationList({
           return (
             <li
               key={conversation.conversationId}
-              className={"border-b " + (isDark ? "border-[#293854]" : "border-slate-200")}
+              className={"relative border-b pr-11 " + (isDark ? "border-[#293854]" : "border-slate-200")}
             >
               <button
                 type="button"
@@ -180,6 +186,17 @@ export default function ConversationList({
                 </span>
               </span>
               </button>
+              <details className="absolute top-3 right-0 z-10" onKeyDown={(event) => { if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary").focus(); } }}>
+                <summary aria-label={`Actions for ${displayName}`} className={`ml-auto flex min-h-11 w-11 cursor-pointer list-none items-center justify-center rounded-xl ${muted} hover:bg-slate-500/10 [&::-webkit-details-marker]:hidden`}><EllipsisVertical size={18} /></summary>
+                <div className={`absolute top-full right-0 min-w-40 rounded-xl border p-1 shadow-xl ${isDark ? "border-[#293854] bg-[#111d31]" : "border-slate-200 bg-white"}`}>
+                <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; onAction?.("archive", conversation); }} className={`min-h-11 w-full rounded-lg px-3 text-left text-sm ${muted} hover:bg-slate-500/10`}>
+                  {conversation.isArchived ? "Unarchive" : "Archive"}
+                </button>
+                <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; onAction?.(conversation.isLocked ? "unlock" : "lock", conversation); }} className={`min-h-11 w-full rounded-lg px-3 text-left text-sm ${muted} hover:bg-slate-500/10`}>
+                  {conversation.isLocked ? "Unlock chat" : "Lock chat"}
+                </button>
+                </div>
+              </details>
             </li>
           );
         })}
@@ -227,7 +244,22 @@ export default function ConversationList({
         tabIndex={0}
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500"
       >
+        {section === "normal" && (
+          <div className="px-2">
+            {[["archived", "Archived", Archive, sections?.hasArchivedChats], ["locked", "Locked Chats", LockKeyhole, sections?.hasLockedChats]]
+              .filter(([, , , visible]) => visible)
+              .map(([value, label, Icon]) => (
+                <button key={value} type="button" onClick={() => onSectionOpen?.(value)} disabled={backendUnavailable || actionBusy}
+                  className={`flex min-h-14 w-full min-w-0 items-center gap-3 rounded-xl px-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50 ${isDark ? "hover:bg-white/5" : "hover:bg-slate-50"}`}>
+                  <span className={`flex size-11 shrink-0 items-center justify-center ${isDark ? "text-blue-300" : "text-blue-600"}`}><Icon size={22} aria-hidden="true" /></span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">{label}</span>
+                  <ChevronRight size={18} className={`shrink-0 ${muted}`} aria-hidden="true" />
+                </button>
+              ))}
+          </div>
+        )}
         {content}
+        {hasMore && <button type="button" disabled={isRefreshing} onClick={loadMore} className="mx-4 mb-4 min-h-11 rounded-xl border px-4 text-sm">Load more chats</button>}
       </div>
     </section>
   );

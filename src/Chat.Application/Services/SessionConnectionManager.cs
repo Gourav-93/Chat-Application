@@ -5,7 +5,8 @@ namespace Chat.Application.Services;
 
 public sealed class SessionConnectionManager(
     IHubContext<ChatHub> hub,
-    ILogger<SessionConnectionManager> logger)
+    ILogger<SessionConnectionManager> logger,
+    PrivacyAccessStore privacy)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -108,6 +109,7 @@ public sealed class SessionConnectionManager(
         Guid userId,
         Guid sessionId)
     {
+        privacy.RevokeSession(sessionId);
         await _gate.WaitAsync();
 
         try

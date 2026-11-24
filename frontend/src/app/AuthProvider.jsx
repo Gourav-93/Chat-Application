@@ -16,6 +16,7 @@ import { AuthContext } from "./AuthContext";
 // import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRef } from "react";
 import api, { setAccessToken, setUnauthorizedHandler, } from "../shared/lib/api";
+import { clearPrivacy } from "../shared/lib/privacyAccess";
 
 const SESSION_KEY = "sandesh-auth-session";
 const MAX_TIMEOUT = 2147483647;
@@ -85,6 +86,7 @@ if (
 }
 
     sessionRef.current = null;
+    clearPrivacy("");
 
     // setAccessToken(null);
     // sessionStorage.removeItem(SESSION_KEY);
@@ -152,8 +154,10 @@ endSession("", token);
     };
 
     // Save the session for refresh restoration.
+    clearPrivacy("");
     localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
     sessionRef.current = nextSession;
+    clearPrivacy("");
 
 setAccessToken(nextSession.token);
 setLogoutReason("");

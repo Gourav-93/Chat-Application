@@ -24,6 +24,10 @@ public sealed class ActiveSessionHubFilter(
             );
         }
 
-        return await next(context);
+        try { return await next(context); }
+        catch (PrivacyException error)
+        {
+            throw new HubException(error.Code + ": " + error.Message);
+        }
     }
 }

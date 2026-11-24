@@ -53,7 +53,7 @@ function getReceiptStatus(message) {
   return "Sent";
 }
 
-function ChatHeaderActions({ isDark, onClose }) {
+function ChatHeaderActions({ isDark, onClose, conversation, onAction }) {
   const [open, setOpen] = useState(false);
   const actionsRef = useRef(null);
   const triggerRef = useRef(null);
@@ -83,7 +83,7 @@ function ChatHeaderActions({ isDark, onClose }) {
   return (
     <div
       ref={actionsRef}
-      className="relative hidden shrink-0 md:block"
+      className="relative shrink-0"
       onBlur={(event) => {
         if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) {
           setOpen(false);
@@ -105,9 +105,11 @@ function ChatHeaderActions({ isDark, onClose }) {
       <div
         id={popupId}
         hidden={!open}
-        className={"absolute top-full right-0 z-20 mt-2 w-36 rounded-xl border p-1 shadow-lg " +
+        className={"absolute top-full right-0 z-20 mt-2 w-44 rounded-xl border p-1 shadow-lg " +
           (isDark ? "border-[#293854] bg-[#111d31]" : "border-slate-200 bg-white")}
       >
+        <button type="button" onClick={() => { setOpen(false); onAction("archive", conversation); }} className="min-h-11 w-full rounded-lg px-3 text-left text-sm hover:bg-slate-500/10">{conversation.isArchived ? "Unarchive chat" : "Archive chat"}</button>
+        <button type="button" onClick={() => { setOpen(false); onAction(conversation.isLocked ? "unlock" : "lock", conversation); }} className="min-h-11 w-full rounded-lg px-3 text-left text-sm hover:bg-slate-500/10">{conversation.isLocked ? "Unlock chat" : "Lock chat"}</button>
         <button
           type="button"
           onClick={onClose}
@@ -125,6 +127,7 @@ function ChatHeaderActions({ isDark, onClose }) {
 export default function ChatPanel({
   selection, history, onBack, session, activity, draft, onDraftChange, onSend,
   onTypingInput, stopTyping, isTyping = false,
+  onConversationAction,
 }) {
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
@@ -358,7 +361,7 @@ export default function ChatPanel({
           </p>
         </div>
         {typeof onBack === "function" && (
-          <ChatHeaderActions key={selectionKey} isDark={isDark} onClose={onBack} />
+          <ChatHeaderActions key={selectionKey} isDark={isDark} onClose={onBack} conversation={conversation} onAction={onConversationAction} />
         )}
       </header>
       {session.error && !session.failure?.retryable && !history.requiresSignIn && (

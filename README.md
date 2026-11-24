@@ -11,6 +11,7 @@ Sandesh is a real-time, one-to-one chat application with mobile OTP sign-in, per
 - Development invitation previews for unregistered `+91` numbers, printed in the backend terminal.
 - Live messages, paginated history, unread counts, delivery/read receipts, typing, presence, and last seen.
 - Responsive chat navigation, dark/light themes, and a profile menu.
+- Per-user PIN-protected Locked Chats and independent Archive, shown as chat-list folders only when nonempty. Locked Chats relock on section exit or five minutes of inactivity; direct interactions renew access while incoming messages do not. Configure the privacy pepper and manually apply the additive migration before use; see [Chat Privacy setup and verification](docs/chat-privacy.md).
 
 The application is under active development. Builds and configuration checks pass, while broader browser and deployment verification is ongoing. Development uses console OTP delivery. Public OTP sign-in requires an approved SMS provider. See the [architecture and feature overview](docs/system-overview.md) for behavior, contracts, and known limitations.
 
@@ -140,6 +141,18 @@ dotnet user-secrets set "Jwt:Audience" "Sandesh.Local.Client" --project Two-Way-
 ```
 
 Run the key-generation step once for a new local setup. Regenerating a JWT key invalidates existing login tokens. User Secrets are local plaintext values protected by access to your operating-system profile. Use the same OS user for configuration and backend startup.
+
+The chat privacy feature also requires an independent pepper. For a new setup, or an existing setup missing `Privacy:PepperKeys:v1`, generate it once:
+
+```powershell
+$random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$privacyBytes = New-Object byte[] 48
+$random.GetBytes($privacyBytes)
+$random.Dispose()
+dotnet user-secrets set "Privacy:PepperKeys:v1" ([Convert]::ToBase64String($privacyBytes)) --project Two-Way-Com.csproj
+```
+
+The default `Privacy:CurrentPepperVersion` is `v1`. Keep an existing pepper: replacing it prevents verification of PINs created with that key. If startup reports `Privacy requires a valid pepper key ring`, check that the selected version has a secret of at least 32 bytes. `.env.example` documents deployment variables; `dotnet run` does not load a `.env` file automatically. See [chat privacy configuration](docs/chat-privacy.md#configuration-and-hashing) for key rotation details.
 
 Choose the SQL Server instance you installed. The following connection example targets Windows LocalDB with integrated authentication. Replace the Server portion for SQL Server Express or another approved development instance, then run from the repository root.
 

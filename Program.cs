@@ -48,6 +48,12 @@ builder.Services.AddSwaggerGen(options =>
 // 3. Existing chat and OTP services: keep the current business behavior.
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<PrivacyPinHasher>();
+builder.Services.AddSingleton<PrivacyAccessStore>();
+builder.Services.AddScoped<PrivacyService>();
+builder.Services.AddScoped<PrivacyRealtime>();
+builder.Services.AddScoped<PrivacyRequestFilter>();
 
 if (builder.Environment.IsDevelopment())
 {
@@ -145,11 +151,21 @@ builder.Services.AddAuthorization();
 // 6. Preserve OTP IP policies and limit invitation previews by authenticated user.
 builder.Services.AddRateLimiter(_ => { });
 builder.Services.AddOptions<RateLimiterOptions>()
-    .Configure<IOptions<OtpOptions>, IOptions<InvitationOptions>>((options, settings, invitationSettings) =>
+    .Configure<IOptions<OtpOptions>, IOptions<InvitationOptions>, IOptions<PrivacyOptions>>((options, settings, invitationSettings, privacySettings) =>
 {
     var otp = settings.Value;
     var invitation = invitationSettings.Value;
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("privacy-pin", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = privacySettings.Value.IpPermitLimit,
+            Window = TimeSpan.FromMinutes(privacySettings.Value.IpWindowMinutes),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
 
     options.AddPolicy("otp-send", context =>
         RateLimitPartition.GetFixedWindowLimiter(
