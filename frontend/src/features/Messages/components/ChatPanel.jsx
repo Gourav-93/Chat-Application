@@ -13,6 +13,7 @@ import { ArrowLeft, Check, CheckCheck, EllipsisVertical, LoaderCircle, MessageCi
 import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
 import MessageComposer from "./MessageComposer";
+import MessageAttachments from "./MessageAttachments";
 
 const OLDER_HISTORY_THRESHOLD = 120;
 
@@ -514,9 +515,10 @@ export default function ChatPanel({
                         isDark ? "rounded-bl-md bg-[#1b2b45] text-slate-100" :
                           "rounded-bl-md border border-slate-200 bg-white text-slate-900")}>
                       <span className="sr-only">{own ? "You" : displayName}: </span>
-                      <p className="whitespace-pre-wrap [overflow-wrap:anywhere] text-sm leading-5">
+                      <MessageAttachments attachments={message.attachments} />
+                      {message.text && <p className="whitespace-pre-wrap [overflow-wrap:anywhere] text-sm leading-5">
                         {message.text}
-                      </p>
+                      </p>}
                     </div>
                     <div className={"mt-1 flex items-center justify-end gap-1 px-1 text-[11px] " + muted}>
                       {timestamp ? (
@@ -557,7 +559,7 @@ export default function ChatPanel({
           </>
         )}
       </div>
-      <MessageComposer value={draft} onChange={onDraftChange} onSend={onSend}
+      <MessageComposer key={conversation.conversationId} conversationId={conversation.conversationId} value={draft} onChange={onDraftChange} onSend={onSend}
         onTypingInput={onTypingInput} stopTyping={stopTyping}
         pending={Boolean(session.sending?.pending)}
         disabled={session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}

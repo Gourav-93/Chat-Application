@@ -152,20 +152,22 @@ function ChatDashboard({ privacy }) {
     draftsRef.current = { ...draftsRef.current, [conversationId]: next };
     setDrafts(draftsRef.current);
   };
-  const sendDraft = async () => {
+  const sendDraft = async (attachmentIds = [], clientMessageId = null, caption = null) => {
     const submitted = draftsRef.current[conversationId];
-    if (!submitted?.text.trim() || session.sending?.pending ||
-        submittedRef.current?.draft === submitted) return;
+    const text = caption ?? submitted?.text ?? "";
+    if ((!text.trim() && !attachmentIds.length) || session.sending?.pending ||
+        submittedRef.current) return false;
     const operation = { conversationId, draft: submitted };
     submittedRef.current = operation;
-    const success = await session.send(conversationId, submitted.text);
-    if (success && draftsRef.current[conversationId] === submitted) {
+    const success = await session.send(conversationId, text, attachmentIds, clientMessageId);
+    if (success && submitted && draftsRef.current[conversationId] === submitted && submitted.text === text) {
       // Do not erase text typed during the request or another conversation's draft.
       draftsRef.current = { ...draftsRef.current,
         [conversationId]: { text: "", revision: submitted.revision + 1 } };
       setDrafts(draftsRef.current);
     }
     if (submittedRef.current === operation) submittedRef.current = null;
+    return success;
   };
 
   const handleSelect = useCallback((conversation) => {
