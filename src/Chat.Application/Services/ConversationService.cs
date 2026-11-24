@@ -158,7 +158,7 @@ public class ConversationService : IConversationService
                 LastMessage = c.Messages
                     .OrderByDescending(m => m.SentAt)
                     .ThenByDescending(m => m.Id)
-                    .Select(m => m.Text)
+                    .Select(m => m.Text != "" ? m.Text : m.Type == Chat.Domain.Entities.MessageType.Image ? "Photo" : "Attachment")
                     .FirstOrDefault(),
 
                 LastMessageAt = c.Messages

@@ -99,3 +99,6 @@ $RECYCLE.BIN/
 .Spotlight-V100/
 .Trashes/
 .nfs*
+
+# Private binary attachment storage
+/private-uploads/

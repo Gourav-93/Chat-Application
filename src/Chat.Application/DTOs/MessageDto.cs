@@ -1,6 +1,8 @@
 namespace Chat.Application.DTOs;
 public class MessageDto
 {
+  public int Type {get;set;}
+  public List<AttachmentDto> Attachments {get;set;}=[];
   public int Id {get; set;}
   public int ConversationId {get; set;}
   public Guid SenderId {get; set;}
