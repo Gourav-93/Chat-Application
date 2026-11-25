@@ -129,6 +129,29 @@ SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAcce
         await _privateEvents.SendAsync(message.ReceiverId, message.ConversationId, "ReceiveMessage", message);
     }
 
+    public async Task<MessageDto> EditMessage(int messageId, EditMessageDto dto)
+    {
+        if (!Guid.TryParse(Context.UserIdentifier, out var senderId))
+            throw new HubException("User identity not found.");
+        try
+        {
+            MessageDto message;
+            using (await _privacyAccess.EnterAsync(senderId, Context.ConnectionAborted))
+            {
+                var conversationId = await _privacy.MessageConversationAsync(messageId, senderId);
+                await RequirePrivacyAsync(conversationId);
+                message = await _chatService.EditMessageAsync(messageId, dto.Text, senderId);
+            }
+            await _privateEvents.SendAsync(message.SenderId, message.ConversationId, "MessageEdited", message);
+            await _privateEvents.SendAsync(message.ReceiverId, message.ConversationId, "MessageEdited", message);
+            return message;
+        }
+        catch (ArgumentException ex) { throw new HubException(ex.Message); }
+        catch (UnauthorizedAccessException ex) { throw new HubException(ex.Message); }
+        catch (KeyNotFoundException ex) { throw new HubException(ex.Message); }
+        catch (InvalidOperationException ex) { throw new HubException(ex.Message); }
+    }
+
 
     public async Task GetMessages(
         int conversationId,

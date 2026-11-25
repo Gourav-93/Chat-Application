@@ -13,4 +13,5 @@ public class MessageDto
   public DateTime SentAt {get; set;}
   public DateTime? DeliveredAt { get; set; }
   public DateTime? ReadAt { get; set; }
+  public DateTime? EditedAt { get; set; }
 }

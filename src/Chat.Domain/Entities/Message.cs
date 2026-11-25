@@ -22,6 +22,8 @@ public class Message
 
     public DateTime? ReadAt { get; set; } // Timestamp of when the message was read by the recipient
 
+    public DateTime? EditedAt { get; set; }
+
     // Navigation properties
     public Conversation Conversation { get; set; } = null!; // Navigation property for the conversation to which the message belongs
 

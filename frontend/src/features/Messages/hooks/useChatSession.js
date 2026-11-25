@@ -7,7 +7,7 @@
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getPrivacySnapshot, subscribePrivacy } from "../../../shared/lib/privacyAccess";
 import { AuthContext } from "../../../app/AuthContext";
-import { createMessageHistoryService, mergeMessageReceipts } from "../services/MessageHistoryService";
+import { createMessageHistoryService, mergeMessageContent, mergeMessageReceipts } from "../services/MessageHistoryService";
 
 const EMPTY_MESSAGES = new Map();
 const INITIAL_RECONNECT_DELAY = 1000;
@@ -291,7 +291,7 @@ export default function useChatSession() {
           if (message.senderId.toLowerCase() !== id &&
               message.receiverId.toLowerCase() !== id) continue;
           if (JSON.stringify(messages.get(message.id)) === JSON.stringify(message)) continue;
-          messages.set(message.id, { ...message,
+          messages.set(message.id, { ...mergeMessageContent(messages.get(message.id), message),
             ...mergeMessageReceipts(messages.get(message.id), message) });
           changed = true;
         }
@@ -368,6 +368,18 @@ export default function useChatSession() {
     if (owner && !requiresSignIn) owner.start();
   }, [owner, requiresSignIn]);
 
+  const editMessage = useCallback(async (messageId, text) => {
+    if (!owner || requiresSignIn) throw new Error("Your session is unavailable.");
+    const edited = await owner.service.editMessage(messageId, text);
+    if (edited) setState((previous) => {
+      if (previous?.owner !== owner) return previous;
+      const messages = new Map(previous.messages);
+      messages.set(edited.id, { ...mergeMessageContent(messages.get(edited.id), edited),
+        ...mergeMessageReceipts(messages.get(edited.id), edited) });
+      return { ...previous, messages, revision: previous.revision + 1 };
+    });
+  }, [owner, requiresSignIn]);
+
   const retryReceipts = useCallback(() => {
     if (owner && !requiresSignIn) owner.retryDeliveries();
   }, [owner, requiresSignIn]);
@@ -384,7 +396,7 @@ export default function useChatSession() {
   }, [owner, requiresSignIn]);
 
   return {
-    owner, userId, requiresSignIn, send, start, retryReceipts, setTyping, subscribeTyping,
+    owner, userId, requiresSignIn, send, editMessage, start, retryReceipts, setTyping, subscribeTyping,
     receipts: current && !requiresSignIn ? state.receipts : EMPTY_MESSAGES,
     presence: current && !requiresSignIn && state.status === "connected" ? state.presence : EMPTY_MESSAGES,
     receiptError: current ? state.receiptError : "",
