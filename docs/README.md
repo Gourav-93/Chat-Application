@@ -7,6 +7,7 @@ Start with the [root README](../README.md) to configure and run Sandesh from a c
 
 | Document | Purpose |
 | --- | --- |
+| [Current location sharing](location-sharing.md) | Composer flow, browser requirements, structured message contract, additive migration, teammate setup and verification scope. |
 | [Database setup](database-setup.md) | SQL Server identity, shared connection source, the current migration baseline, and existing-database safety. |
 | [Chat Privacy and Archive](chat-privacy.md) | Privacy pepper, manual migration, PIN security, APIs, recovery proposal, and verification. |
 | [User blocking](user-blocking.md) | Teammate update commands, blocking migration, permanent message suppression, Online/Last seen privacy, APIs and two-account verification. |
@@ -18,6 +19,8 @@ Start with the [root README](../README.md) to configure and run Sandesh from a c
 | [Historical Send OTP results](send-otp-testing.md) | Recorded manual checks and remaining coverage from the earlier OTP work. |
 
 ## Documentation ownership
+
+The Location Sharing guide owns the location message contract, map-provider behavior, `AddMessageLocation` migration procedure and feature verification. Its migration has been generated but not applied during implementation; database and real-browser acceptance remain pending.
 
 The root README owns the complete local setup sequence and the verified development database name. The deployment guide owns the configuration key/default table. The system overview owns the high-level API and event reference. Specialized guides link to those sources and provide additional detail.
 

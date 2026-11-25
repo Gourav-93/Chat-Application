@@ -47,12 +47,14 @@ All paths below use the backend API origin. Authenticated routes require a beare
 
 ## SignalR contract
 
+Current location sharing extends the existing message pipeline with optional `location: { latitude, longitude }` and a required nonempty `clientMessageId` when location is present. `Location = 4` is appended without changing existing message-type values. Coordinates persist as nullable message columns and are returned in live, history and pending-message payloads. Location has no separate REST endpoint or file upload. See the [complete location contract](location-sharing.md#message-contract).
+
 The hub path is `/hubs/chat`. Clients authenticate through a JWT access-token factory. The server supports the SignalR `access_token` query parameter for this path, so hosting logs need query-string protection.
 
 | Hub operation or lifecycle | Resulting event/behavior |
 | --- | --- |
 | Connect | Registers the connection under the active session; sends `PendingMessages` to the caller when undelivered incoming messages exist. |
-| `SendMessage({ conversationId, text })` | Persists a message and broadcasts `ReceiveMessage` to both participants' user groups, including their other tabs. |
+| `SendMessage({ conversationId, text, attachmentIds?, clientMessageId?, location? })` | Persists a message and routes `ReceiveMessage` through existing participant/privacy/blocking checks, including permitted tabs. Location and attachment sends require an operation ID. |
 | `GetMessages(conversationId, pageNumber, pageSize)` | Sends `MessageHistory` to the caller. |
 | `MarkDelivered(messageId)` | Sends `MessageStatusUpdated` to the original sender's group. |
 | `MarkRead(conversationId)` | Sends `MessageStatusUpdated` and, when reads change, `ConversationUnreadChanged` to the reader's group. |

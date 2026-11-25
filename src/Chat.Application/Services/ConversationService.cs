@@ -162,6 +162,7 @@ public class ConversationService : IConversationService
                     .ThenByDescending(m => m.Id)
                     .Select(m => EF.Functions.DataLength(m.Text) > 0
                         ? m.Text
+                        : m.Type == MessageType.Location ? "Location"
                         : m.Type == MessageType.Image
                             ? "Photo"
                             : "Attachment")

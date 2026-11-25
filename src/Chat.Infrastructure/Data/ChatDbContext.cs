@@ -38,6 +38,9 @@ public class ChatDbContext : DbContext
         });
         modelBuilder.Entity<Message>().Property(m => m.IsDeliverySuppressed).HasDefaultValue(false);
         modelBuilder.Entity<Message>().ToTable(t => t.HasCheckConstraint(
+            "CK_Messages_Location", "([Latitude] IS NULL AND [Longitude] IS NULL AND [Type] <> 4) OR " +
+            "([Latitude] IS NOT NULL AND [Longitude] IS NOT NULL AND [Latitude] BETWEEN -90 AND 90 AND [Longitude] BETWEEN -180 AND 180 AND [Type] = 4)"));
+        modelBuilder.Entity<Message>().ToTable(t => t.HasCheckConstraint(
             "CK_Messages_SuppressedReceipts", "[IsDeliverySuppressed] = 0 OR ([DeliveredAt] IS NULL AND [ReadAt] IS NULL)"));
         modelBuilder.Entity<Message>().HasIndex(m=>m.SenderId);
         modelBuilder.Entity<Message>().Property(m=>m.Type).HasDefaultValue(MessageType.Text);

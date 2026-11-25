@@ -3,6 +3,8 @@ namespace Chat.Domain.Entities;
 
 public class Message
 {
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
     // Immutable after acceptance. Never clear this when a contact is unblocked.
     public bool IsDeliverySuppressed { get; set; }
     public MessageType Type {get;set;}

@@ -81,6 +81,8 @@ Serve `frontend/dist` from an HTTPS static server. Route `/api/*`, `/hubs/chat` 
 
 ## Staging and production procedure
 
+For releases containing location sharing, obtain approval and apply `AddMessageLocation` to the verified runtime database before starting the updated backend. Serve the frontend over HTTPS, permit geolocation in any hosting Permissions-Policy, and permit the OpenStreetMap iframe in any applicable Content-Security-Policy. No location API key or attachment feature flag is required. See [location deployment requirements](location-sharing.md#browser-and-deployment-requirements) and the pending real-browser/database checklist before release.
+
 1. Provision separate database identities, database names, JWT settings and OTP hashing secrets for each environment. Have the database owner review the existing migration baseline and backup/recovery plan through the [database guide](database-setup.md).
 2. From the repository root, restore and publish the backend.
 
