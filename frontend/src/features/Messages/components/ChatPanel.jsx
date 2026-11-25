@@ -2,19 +2,20 @@
  * File: ChatPanel.jsx
  * Purpose: Presents conversation history, live messages, and the controlled composer.
  * Responsibilities:
- * 1. Render recipient presence, typing feedback, receipts, and date-grouped messages, including emoji-only messages.
+ * 1. Render presence, typing feedback, receipts, and date-grouped messages with attachments and emoji styling.
  * 2. Show history load states and actionable session or activity errors.
  * 3. Support both themes, mobile Back navigation, and accessible focus.
  * 4. Preserve scroll position and keyboard focus during older-message pagination.
- * 5. Scope the composer and emoji picker to the active conversation.
  */
 
-import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, CheckCheck, EllipsisVertical, LoaderCircle, MessageCircleMore, UserRound } from "lucide-react";
+import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef } from "react";
+import { ArrowLeft, Check, CheckCheck, LoaderCircle, MessageCircleMore, UserRound } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
 import emojiRegex from "emoji-regex";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
 import MessageComposer from "./MessageComposer";
+import MessageAttachments from "./MessageAttachments";
+import { ChatActions } from "../../Conversations/Components/ConversationList";
 
 const OLDER_HISTORY_THRESHOLD = 120;
 const emojiPattern = emojiRegex();
@@ -64,81 +65,12 @@ function getReceiptStatus(message) {
   return "Sent";
 }
 
-function ChatHeaderActions({ isDark, onClose, conversation, onAction }) {
-  const [open, setOpen] = useState(false);
-  const actionsRef = useRef(null);
-  const triggerRef = useRef(null);
-  const popupId = useId();
-
-  useEffect(() => {
-    if (!open) return undefined;
-
-    const handlePointerDown = (event) => {
-      if (!actionsRef.current?.contains(event.target)) setOpen(false);
-    };
-    const handleEscape = (event) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      event.preventDefault();
-      setOpen(false);
-      triggerRef.current?.focus({ preventScroll: true });
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [open]);
-
-  return (
-    <div
-      ref={actionsRef}
-      className="relative shrink-0"
-      onBlur={(event) => {
-        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) {
-          setOpen(false);
-        }
-      }}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-label="Chat actions"
-        aria-expanded={open}
-        aria-controls={popupId}
-        onClick={() => setOpen((previous) => !previous)}
-        className={"flex size-11 items-center justify-center rounded-xl transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 " +
-          (isDark ? "hover:bg-white/10" : "hover:bg-slate-100")}
-      >
-        <EllipsisVertical size={21} aria-hidden="true" />
-      </button>
-      <div
-        id={popupId}
-        hidden={!open}
-        className={"absolute top-full right-0 z-20 mt-2 w-44 rounded-xl border p-1 shadow-lg " +
-          (isDark ? "border-[#293854] bg-[#111d31]" : "border-slate-200 bg-white")}
-      >
-        <button type="button" onClick={() => { setOpen(false); onAction("archive", conversation); }} className="min-h-11 w-full rounded-lg px-3 text-left text-sm hover:bg-slate-500/10">{conversation.isArchived ? "Unarchive chat" : "Archive chat"}</button>
-        <button type="button" onClick={() => { setOpen(false); onAction(conversation.isLocked ? "unlock" : "lock", conversation); }} className="min-h-11 w-full rounded-lg px-3 text-left text-sm hover:bg-slate-500/10">{conversation.isLocked ? "Unlock chat" : "Lock chat"}</button>
-        <button
-          type="button"
-          onClick={onClose}
-          className={"min-h-10 w-full rounded-lg px-3 text-left text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 " +
-            (isDark ? "hover:bg-white/10" : "hover:bg-slate-100")}
-        >
-          Close chat
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // History comes from the dashboard-owned hook; this component never fetches.
 export default function ChatPanel({
   selection, history, onBack, session, activity, draft, onDraftChange, onSend,
   onTypingInput, stopTyping, isTyping = false,
   onConversationAction,
+  actionBusy = false, pendingConversationId,
 }) {
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
@@ -162,7 +94,9 @@ export default function ChatPanel({
   const displayName = getDisplayName(conversation?.otherUserName, mobile);
   const showMobile = Boolean(mobile && mobile !== displayName);
   const messages = history.messages;
-  const emojiOnlyByMessage = useMemo(() => messages.map(({ text }) => isEmojiOnly(text)), [messages]);
+  const emojiOnlyByMessage = useMemo(() => messages.map(({ text, attachments }) =>
+    !attachments?.length && isEmojiOnly(text ?? ""),
+  ), [messages]);
   const busy = history.isLoading || history.isLoadingOlder;
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const activityAvailable = session.status === "connected" && !session.requiresSignIn;
@@ -377,7 +311,7 @@ export default function ChatPanel({
           </p>
         </div>
         {typeof onBack === "function" && (
-          <ChatHeaderActions key={selectionKey} isDark={isDark} onClose={onBack} conversation={conversation} onAction={onConversationAction} />
+          <ChatActions key={selectionKey} onClose={onBack} conversation={conversation} onAction={onConversationAction} actionBusy={actionBusy} pendingConversationId={pendingConversationId} />
         )}
       </header>
       {session.error && !session.failure?.retryable && !history.requiresSignIn && (
@@ -527,10 +461,11 @@ export default function ChatPanel({
                         isDark ? "rounded-bl-md bg-[#1b2b45] text-slate-100" :
                           "rounded-bl-md border border-slate-200 bg-white text-slate-900")}>
                       <span className="sr-only">{own ? "You" : displayName}: </span>
-                      <p className={"chat-flag-text whitespace-pre-wrap [overflow-wrap:anywhere] " +
+                      <MessageAttachments attachments={message.attachments} />
+                      {message.text && <p className={"chat-flag-text whitespace-pre-wrap [overflow-wrap:anywhere] " +
                         (emojiOnly ? "text-3xl leading-tight sm:text-4xl" : "text-sm leading-5")}>
                         {message.text}
-                      </p>
+                      </p>}
                     </div>
                     <div className={"mt-1 flex items-center justify-end gap-1 px-1 text-[11px] " + muted}>
                       {timestamp ? (
@@ -571,7 +506,7 @@ export default function ChatPanel({
           </>
         )}
       </div>
-      <MessageComposer key={selectionKey} value={draft} onChange={onDraftChange} onSend={onSend}
+      <MessageComposer key={conversation.conversationId} conversationId={conversation.conversationId} value={draft} onChange={onDraftChange} onSend={onSend}
         onTypingInput={onTypingInput} stopTyping={stopTyping}
         pending={Boolean(session.sending?.pending)}
         disabled={session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}

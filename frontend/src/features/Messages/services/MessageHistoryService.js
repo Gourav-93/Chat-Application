@@ -826,13 +826,13 @@ export function createMessageHistoryService(
       return connect();
     },
 
-    async send(conversationId, value) {
+    async send(conversationId, value, attachmentIds = [], clientMessageId = null) {
       checkSession();
       const text = value.trim();
       if (
         !Number.isInteger(conversationId) ||
         conversationId < 1 ||
-        !text ||
+        (!text && !attachmentIds.length) ||
         text.length > 5000
       ) {
         throw new Error("Enter a message containing 1 to 5,000 characters.");
@@ -855,6 +855,8 @@ export function createMessageHistoryService(
         return record.connection.invoke("SendMessage", {
           conversationId,
           text,
+          attachmentIds,
+          clientMessageId,
         });
       });
       const timeout = new Promise((_, reject) => {

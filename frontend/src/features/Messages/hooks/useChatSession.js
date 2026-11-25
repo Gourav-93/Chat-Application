@@ -335,13 +335,13 @@ export default function useChatSession() {
     state.owner.userId === userId && state.owner.expiresAt === expiresAt;
   const owner = current ? state.owner : null;
   const requiresSignIn = !validSession || Boolean(current && state.expired);
-  const send = useCallback(async (conversationId, text) => {
+  const send = useCallback(async (conversationId, text, attachmentIds = [], clientMessageId = null) => {
     if (!owner || requiresSignIn || sendRef.current) return false;
     const operation = { owner, conversationId };
     sendRef.current = operation;
     setSending({ ...operation, pending: true, error: "" });
     try {
-      await owner.service.send(conversationId, text);
+      await owner.service.send(conversationId, text, attachmentIds, clientMessageId);
       if (sendRef.current !== operation) return false;
       setSending({ ...operation, pending: false, error: "" });
       setState((previous) => previous?.owner === owner
