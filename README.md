@@ -425,3 +425,8 @@ Verify authorized downloads, rejection of unauthorized users and invalid files, 
 - [Architecture, features, and contracts](docs/system-overview.md)
 - [Frontend development](frontend/README.md)
 - [OTP/session contracts and historical verification](docs/otp-only-auth.md)
+
+
+# CI&CD
+
+Added CI&CD for auto deployment
