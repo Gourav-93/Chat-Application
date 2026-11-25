@@ -25,7 +25,8 @@ export default function useMessageHistory(selection, session) {
   const ownerReady = Boolean(owner) && !requiresSignIn;
   const conversationId = selection?.conversation?.conversationId;
   const selectionKey = conversationId
-    ? conversationId + ":" + (selection.generation ?? 0)
+    ? conversationId + ":" + (selection.generation ?? 0) + ":" +
+      (session.visibility?.conversationId === conversationId ? session.visibility.version : 0)
     : null;
   const ticketMatches = ownerReady &&
     ticket?.owner === owner && ticket.selectionKey === selectionKey;

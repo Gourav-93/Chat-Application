@@ -33,4 +33,6 @@ public interface IChatService
     Task<IReadOnlyList<MessageDto>> GetUndeliveredMessagesAsync(
     Guid recipientId);
 
+    Task ClearConversationAsync(int conversationId, Guid userId, bool mediaOnly);
+
 }

@@ -18,13 +18,15 @@ public partial class ChatHub : Hub
     private readonly PrivacyService _privacy;
     private readonly PrivacyAccessStore _privacyAccess;
     private readonly PrivacyRealtime _privateEvents;
+    private readonly ILogger<ChatHub> _logger;
 
     public ChatHub(
         IChatService chatService,
         IPresenceService presenceService,
         IConversationService conversationService,
         ActiveSessionValidator activeSessions,
-SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAccessStore privacyAccess, PrivacyRealtime privateEvents)
+SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAccessStore privacyAccess, PrivacyRealtime privateEvents,
+ILogger<ChatHub> logger)
     {
         _chatService = chatService;
         _presenceService = presenceService;
@@ -34,6 +36,7 @@ SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAcce
         _privacy = privacy;
         _privacyAccess = privacyAccess;
         _privateEvents = privateEvents;
+        _logger = logger;
     }
     public override async Task OnConnectedAsync()
     {
@@ -67,6 +70,7 @@ SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAcce
             return;
         }
         _privacyAccess.Register(Context.ConnectionId, new PrivacyAccessStore.Peer(currentUserId, sessionId, Context.User!));
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"user-{currentUserId}");
 
         // Register this SignalR connection.
         bool isFirstConnection = await _presenceService.UserConnectedAsync(
@@ -142,8 +146,16 @@ SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAcce
                 await RequirePrivacyAsync(conversationId);
                 message = await _chatService.EditMessageAsync(messageId, dto.Text, senderId);
             }
-            await _privateEvents.SendAsync(message.SenderId, message.ConversationId, "MessageEdited", message);
-            await _privateEvents.SendAsync(message.ReceiverId, message.ConversationId, "MessageEdited", message);
+            try
+            {
+                await _privateEvents.SendAsync(message.SenderId, message.ConversationId, "MessageEdited", message);
+                await _privateEvents.SendAsync(message.ReceiverId, message.ConversationId, "MessageEdited", message);
+            }
+            catch (Exception ex)
+            {
+                // The edit is committed; a broadcast failure must not invite a duplicate save.
+                _logger.LogError(ex, "Message {MessageId} was edited but realtime delivery failed", message.Id);
+            }
             return message;
         }
         catch (ArgumentException ex) { throw new HubException(ex.Message); }

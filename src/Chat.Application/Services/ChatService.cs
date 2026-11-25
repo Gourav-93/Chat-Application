@@ -222,6 +222,12 @@ public class ChatService : IChatService
         if (relationship.Outgoing)
             throw new PrivacyException(409, "contact_blocked", "Unblock this contact before editing messages.");
 
+        var cleared = await _context.UserConversationSettings.AsNoTracking().AnyAsync(s =>
+            s.UserId == senderId && s.ConversationId == message.ConversationId &&
+            s.MessagesClearedAt != null && (message.SentAt < s.MessagesClearedAt ||
+            (message.SentAt == s.MessagesClearedAt && message.Id <= s.MessagesClearedThroughMessageId)));
+        if (cleared) throw new KeyNotFoundException("Message not found.");
+
         var now = DateTime.UtcNow;
         if (message.SentAt < now.AddMinutes(-15))
             throw new ArgumentException("Messages can be edited for 15 minutes after sending.");
@@ -309,9 +315,18 @@ public class ChatService : IChatService
             return Array.Empty<MessageDto>();
 
         // Fetch latest messages first
+        var settings = await _context.UserConversationSettings.AsNoTracking()
+            .SingleOrDefaultAsync(s => s.UserId == userId && s.ConversationId == conversationId);
         var messages = await _context.Messages
             .Where(m => m.ConversationId == conversationId &&
-                (!m.IsDeliverySuppressed || m.SenderId == userId))
+                (!m.IsDeliverySuppressed || m.SenderId == userId) &&
+                (settings == null || settings.MessagesClearedAt == null ||
+                 m.SentAt > settings.MessagesClearedAt ||
+                 (m.SentAt == settings.MessagesClearedAt && m.Id > settings.MessagesClearedThroughMessageId)) &&
+                (m.Text != "" || m.Type == MessageType.Location || m.Attachments.Any(a =>
+                    settings == null || settings.MediaClearedAt == null ||
+                    m.SentAt > settings.MediaClearedAt ||
+                    (m.SentAt == settings.MediaClearedAt && m.Id > settings.MediaClearedThroughMessageId))))
             .OrderByDescending(m => m.SentAt)
             .ThenByDescending(m => m.Id)
             .Skip((int)skipCount)
@@ -329,7 +344,10 @@ public class ChatService : IChatService
                 Location = m.Latitude.HasValue && m.Longitude.HasValue
                     ? new LocationDto { Latitude = m.Latitude, Longitude = m.Longitude } : null,
                 Type = (int)m.Type,
-                Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
+                Attachments = m.Attachments.Where(a => settings == null || settings.MediaClearedAt == null ||
+                    m.SentAt > settings.MediaClearedAt ||
+                    (m.SentAt == settings.MediaClearedAt && m.Id > settings.MediaClearedThroughMessageId))
+                    .Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
                 SentAt = m.SentAt,
 
                 // Important: retrieve persisted message statuses
@@ -377,7 +395,9 @@ public class ChatService : IChatService
     {
         var message = await _context.Messages
             .Include(m => m.Conversation)
-            .FirstOrDefaultAsync(m => m.Id == messageId && !m.IsDeliverySuppressed);
+            .FirstOrDefaultAsync(m => m.Id == messageId && !m.IsDeliverySuppressed &&
+                !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.MessagesClearedAt != null &&
+                    (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))));
 
         if (message == null)
             throw new KeyNotFoundException("Message not found.");
@@ -445,7 +465,9 @@ public class ChatService : IChatService
                 m.ConversationId == conversationId &&
                 m.SenderId != recipientId &&
                 !m.IsDeliverySuppressed &&
-                m.ReadAt == null)
+                m.ReadAt == null &&
+                !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.MessagesClearedAt != null &&
+                    (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))
             .ToListAsync();
 
         if (unreadMessages.Count == 0)
@@ -489,7 +511,14 @@ public class ChatService : IChatService
                 !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.IsLocked) &&
                 m.SenderId != recipientId &&
                 (m.Conversation.UserAId == recipientId ||
-                 m.Conversation.UserBId == recipientId))
+                 m.Conversation.UserBId == recipientId) &&
+                (!_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId &&
+                    s.MessagesClearedAt != null && (m.SentAt < s.MessagesClearedAt ||
+                    (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId)))) &&
+                (m.Text != "" || m.Type == MessageType.Location || m.Attachments.Any() &&
+                    !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId &&
+                        s.MediaClearedAt != null && (m.SentAt < s.MediaClearedAt ||
+                        (m.SentAt == s.MediaClearedAt && m.Id <= s.MediaClearedThroughMessageId)))))
             .OrderBy(m => m.SentAt)
             .ThenBy(m => m.Id)
             .Select(m => new MessageDto
@@ -505,7 +534,10 @@ public class ChatService : IChatService
                 Location = m.Latitude.HasValue && m.Longitude.HasValue
                     ? new LocationDto { Latitude = m.Latitude, Longitude = m.Longitude } : null,
                 Type = (int)m.Type,
-                Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
+                Attachments = m.Attachments.Where(a => !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId &&
+                    s.MediaClearedAt != null && (m.SentAt < s.MediaClearedAt ||
+                    (m.SentAt == s.MediaClearedAt && m.Id <= s.MediaClearedThroughMessageId))))
+                    .Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
                 SentAt = m.SentAt,
                 DeliveredAt = m.DeliveredAt,
                 ReadAt = m.ReadAt,
@@ -538,6 +570,43 @@ public class ChatService : IChatService
         }
 
         return messages;
+    }
+
+    public async Task ClearConversationAsync(int conversationId, Guid userId, bool mediaOnly)
+    {
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        var conversation = await _context.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId &&
+            (c.UserAId == userId || c.UserBId == userId));
+        if (conversation is null) throw new UnauthorizedAccessException("Invalid conversation.");
+
+        var otherId = conversation.UserAId == userId ? conversation.UserBId : conversation.UserAId;
+        // Sends and clears share this transaction-scoped pair lock, including incoming sends.
+        await _pairLock.AcquireAsync(userId, otherId);
+        var latest = await _context.Messages.Where(m => m.ConversationId == conversationId)
+            .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
+            .Select(m => new { m.Id, m.SentAt }).FirstOrDefaultAsync();
+        if (latest is null) { await tx.CommitAsync(); return; }
+
+        var settings = await _context.UserConversationSettings.SingleOrDefaultAsync(s =>
+            s.UserId == userId && s.ConversationId == conversationId);
+        if (settings is null)
+        {
+            settings = new UserConversationSettings { UserId = userId, ConversationId = conversationId, UpdatedAt = DateTime.UtcNow };
+            _context.UserConversationSettings.Add(settings);
+        }
+        if (mediaOnly)
+        {
+            settings.MediaClearedAt = latest.SentAt;
+            settings.MediaClearedThroughMessageId = latest.Id;
+        }
+        else
+        {
+            settings.MessagesClearedAt = latest.SentAt;
+            settings.MessagesClearedThroughMessageId = latest.Id;
+        }
+        settings.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        await tx.CommitAsync();
     }
 
 

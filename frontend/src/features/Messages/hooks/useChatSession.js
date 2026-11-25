@@ -13,6 +13,18 @@ const EMPTY_MESSAGES = new Map();
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
 
+function applyVisibility(previous, { conversationId, mediaOnly }) {
+  const messages = new Map(previous.messages);
+  for (const [id, message] of messages) {
+    if (message.conversationId !== conversationId) continue;
+    if (!mediaOnly || (!message.text && !message.location)) messages.delete(id);
+    else messages.set(id, { ...message, attachments: [] });
+  }
+  return { ...previous, messages,
+    visibility: { conversationId, mediaOnly, version: (previous.visibility?.version || 0) + 1 },
+    revision: previous.revision + 1 };
+}
+
 export default function useChatSession() {
   const privacy = useSyncExternalStore(subscribePrivacy, getPrivacySnapshot);
   const auth = useContext(AuthContext);
@@ -211,6 +223,7 @@ export default function useChatSession() {
       onConversationsInvalidated: () => update((previous) => ({
         ...previous, revision: previous.revision + 1,
       })),
+      onVisibilityChanged: (event) => update((previous) => applyVisibility(previous, event)),
       onSessionReplaced: (message) => {
         if (!active) return;
         stopRecovery();
@@ -384,6 +397,12 @@ export default function useChatSession() {
     if (owner && !requiresSignIn) owner.retryDeliveries();
   }, [owner, requiresSignIn]);
 
+  const clearCachedVisibility = useCallback((conversationId, mediaOnly) => {
+    if (!owner || requiresSignIn) return;
+    setState((previous) => previous?.owner === owner
+      ? applyVisibility(previous, { conversationId, mediaOnly }) : previous);
+  }, [owner, requiresSignIn]);
+
   // A selection guard is required so pending typing cannot target an old chat.
   const setTyping = useCallback((conversationId, isTyping, isCurrent) => {
     if (!owner || requiresSignIn) return false;
@@ -396,7 +415,7 @@ export default function useChatSession() {
   }, [owner, requiresSignIn]);
 
   return {
-    owner, userId, requiresSignIn, send, editMessage, start, retryReceipts, setTyping, subscribeTyping,
+    owner, userId, requiresSignIn, send, editMessage, start, retryReceipts, setTyping, subscribeTyping, clearCachedVisibility,
     receipts: current && !requiresSignIn ? state.receipts : EMPTY_MESSAGES,
     presence: current && !requiresSignIn && state.status === "connected" ? state.presence : EMPTY_MESSAGES,
     receiptError: current ? state.receiptError : "",
@@ -407,6 +426,7 @@ export default function useChatSession() {
     blockRevision: current ? state.blockRevision : 0,
     presenceRevision: current ? state.presenceRevision || 0 : 0,
     messages: current && !requiresSignIn ? state.messages : EMPTY_MESSAGES,
+    visibility: current ? state.visibility : null,
     sending: sending?.owner === owner ? sending : null,
   };
 }
