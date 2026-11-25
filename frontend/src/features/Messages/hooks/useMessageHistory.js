@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { mergeMessageReceipts } from "../services/MessageHistoryService";
+import { mergeMessageContent, mergeMessageReceipts } from "../services/MessageHistoryService";
 
 const PAGE_SIZE = 30;
 const EMPTY_MESSAGES = [];
@@ -48,7 +48,7 @@ export default function useMessageHistory(selection, session) {
             : EMPTY_MESSAGES;
           const unique = new Map();
           for (const message of [...messages, ...prior]) {
-            unique.set(message.id, { ...message,
+            unique.set(message.id, { ...mergeMessageContent(unique.get(message.id), message),
               ...mergeMessageReceipts(unique.get(message.id), message) });
           }
           return {
@@ -106,10 +106,10 @@ export default function useMessageHistory(selection, session) {
   const messages = useMemo(() => {
     if (!ownerReady || !conversationId) return EMPTY_MESSAGES;
     const unique = new Map(pageMessages.map((message) => [message.id,
-      { ...message, ...mergeMessageReceipts(null, message) }]));
+      { ...mergeMessageContent(null, message), ...mergeMessageReceipts(null, message) }]));
     for (const message of session.messages.values()) {
       if (message.conversationId === conversationId) {
-        unique.set(message.id, { ...message,
+        unique.set(message.id, { ...mergeMessageContent(unique.get(message.id), message),
           ...mergeMessageReceipts(unique.get(message.id), message) });
       }
     }

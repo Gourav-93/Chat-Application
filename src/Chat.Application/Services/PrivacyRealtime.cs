@@ -19,7 +19,7 @@ public sealed class PrivacyRealtime(PrivacyAccessStore access, PrivacyService pr
     {
         // Central guard covers normal events and locked-chat delivery tokens, including
         // idempotent send retries after unblock. Never trust a public DTO for visibility.
-        if (eventName == "ReceiveMessage" && payload is MessageDto incoming && incoming.ReceiverId == userId &&
+        if (eventName is "ReceiveMessage" or "MessageEdited" && payload is MessageDto incoming && incoming.ReceiverId == userId &&
             !await db.Messages.AsNoTracking().AnyAsync(m => m.Id == incoming.Id &&
                 m.ConversationId == conversationId && !m.IsDeliverySuppressed && m.SenderId != userId &&
                 (m.Conversation.UserAId == userId || m.Conversation.UserBId == userId))) return;

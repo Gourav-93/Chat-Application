@@ -194,6 +194,57 @@ public class ChatService : IChatService
         return await MapAsync(message, conversation);
     }
 
+    public async Task<MessageDto> EditMessageAsync(int messageId, string? value, Guid senderId)
+    {
+        var text = value?.Trim() ?? string.Empty;
+        if (text.Length is < 1 or > 5000)
+            throw new ArgumentException("Message must contain 1 to 5,000 characters.");
+
+        var message = await _context.Messages.Include(m => m.Attachments)
+            .SingleOrDefaultAsync(m => m.Id == messageId);
+        if (message is null)
+            throw new KeyNotFoundException("Message not found.");
+        if (message.SenderId != senderId)
+            throw new UnauthorizedAccessException("You can edit only your own messages.");
+        if (message.Type != MessageType.Text || message.Attachments.Count != 0)
+            throw new ArgumentException("Only text-only messages can be edited.");
+
+        var conversation = await _context.Conversations
+            .SingleOrDefaultAsync(c => c.Id == message.ConversationId);
+        if (conversation is null || (conversation.UserAId != senderId && conversation.UserBId != senderId))
+            throw new UnauthorizedAccessException("Invalid conversation.");
+
+        var recipientId = conversation.UserAId == senderId ? conversation.UserBId : conversation.UserAId;
+        // Keep edit and block mutations in the same transaction and pair-lock order as sends.
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        await _pairLock.AcquireAsync(senderId, recipientId);
+        var relationship = await _blocks.GetRelationshipAsync(senderId, recipientId);
+        if (relationship.Outgoing)
+            throw new PrivacyException(409, "contact_blocked", "Unblock this contact before editing messages.");
+
+        var now = DateTime.UtcNow;
+        if (message.SentAt < now.AddMinutes(-15))
+            throw new ArgumentException("Messages can be edited for 15 minutes after sending.");
+
+        var expectedText = message.Text;
+        var expectedEditedAt = message.EditedAt;
+        var updated = await _context.Messages
+            .Where(m => m.Id == messageId && m.SenderId == senderId &&
+                m.ConversationId == message.ConversationId && m.Type == MessageType.Text &&
+                !m.Attachments.Any() && m.SentAt >= now.AddMinutes(-15) &&
+                m.Text == expectedText && m.EditedAt == expectedEditedAt)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(m => m.Text, text)
+                .SetProperty(m => m.EditedAt, now));
+        if (updated != 1)
+            throw new InvalidOperationException("This message changed while you were editing it. Reload and try again.");
+
+        await tx.CommitAsync();
+        message.Text = text;
+        message.EditedAt = now;
+        return await MapAsync(message, conversation);
+    }
+
     private async Task<MessageDto> MapAsync(
         Message message, Conversation conversation) => new()
     {
@@ -217,6 +268,9 @@ public class ChatService : IChatService
             : null,
         ReadAt = message.ReadAt.HasValue
             ? DateTime.SpecifyKind(message.ReadAt.Value, DateTimeKind.Utc)
+            : null,
+        EditedAt = message.EditedAt.HasValue
+            ? DateTime.SpecifyKind(message.EditedAt.Value, DateTimeKind.Utc)
             : null,
         Attachments = message.Attachments.Select(AttachmentService.Map).ToList()
     };
@@ -280,7 +334,8 @@ public class ChatService : IChatService
 
                 // Important: retrieve persisted message statuses
                 DeliveredAt = m.DeliveredAt,
-                ReadAt = m.ReadAt
+                ReadAt = m.ReadAt,
+                EditedAt = m.EditedAt
             })
             .ToListAsync();
 
@@ -308,6 +363,8 @@ public class ChatService : IChatService
                     message.ReadAt.Value,
                     DateTimeKind.Utc);
             }
+            if (message.EditedAt.HasValue)
+                message.EditedAt = DateTime.SpecifyKind(message.EditedAt.Value, DateTimeKind.Utc);
         }
 
         return messages;
@@ -451,7 +508,8 @@ public class ChatService : IChatService
                 Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
                 SentAt = m.SentAt,
                 DeliveredAt = m.DeliveredAt,
-                ReadAt = m.ReadAt
+                ReadAt = m.ReadAt,
+                EditedAt = m.EditedAt
             })
             .ToListAsync();
 
@@ -475,6 +533,8 @@ public class ChatService : IChatService
                     message.ReadAt.Value,
                     DateTimeKind.Utc);
             }
+            if (message.EditedAt.HasValue)
+                message.EditedAt = DateTime.SpecifyKind(message.EditedAt.Value, DateTimeKind.Utc);
         }
 
         return messages;
