@@ -35,10 +35,13 @@ public sealed class PrivacyRequestFilter(PrivacyAccessStore access, ActiveSessio
             context.ExceptionHandled = true;
             context.Result = new ConflictObjectResult(new { code = "privacy_conflict", message = "Settings changed. Refresh and try again." });
         }
-        else if (context.Exception is Microsoft.Data.SqlClient.SqlException { Number: 51002 })
+        else if (context.Exception is Microsoft.Data.SqlClient.SqlException { Number: 51002 or 51003 } sqlError)
         {
             context.ExceptionHandled = true;
-            context.Result = new ObjectResult(new { code = "privacy_busy", message = "Privacy verification is busy. Try again shortly." }) { StatusCode = 503 };
+            context.Result = new ObjectResult(new {
+                code = sqlError.Number == 51003 ? "contact_busy" : "privacy_busy",
+                message = sqlError.Number == 51003 ? "Contact operation is busy. Try again shortly." : "Privacy verification is busy. Try again shortly."
+            }) { StatusCode = 503 };
         }
     }
 }

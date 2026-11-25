@@ -30,6 +30,8 @@ import ChatPanel from "../../Messages/components/ChatPanel";
 import useMessageHistory from "../../Messages/hooks/useMessageHistory";
 import useChatSession from "../../Messages/hooks/useChatSession";
 import useConversationActivity from "../../Messages/hooks/useConversationActivity";
+import useUserBlocks from "../Hooks/useUserBlocks";
+import UserBlockingDialog from "../Components/UserBlockingDialog";
 
 const isGatewayFailure = (status) => status === 502 || status === 503 || status === 504;
 const browserIsOnline = () => navigator.onLine !== false;
@@ -88,6 +90,7 @@ export default function ChatPage() {
 }
 
 function ChatDashboard({ privacy }) {
+  const [blockDialog, setBlockDialog] = useState(null);
   const [pinConfigured, setPinConfigured] = useState(null);
   const [section, setSection] = useState(getPrivacyToken() ? "locked" : "normal");
   const dashboardRef = useRef(null);
@@ -128,6 +131,7 @@ function ChatDashboard({ privacy }) {
 
   // Messaging and history share exactly one session-owned transport.
   const session = useChatSession();
+  const blocks = useUserBlocks(session.userId, selection.conversation?.otherUserId, session.blockRevision, session.status);
   const { owner, failure, status, requiresSignIn } = session;
   const gatewayFailure = failure?.kind === "http" && isGatewayFailure(failure.status);
   const failedAvailabilityCheck = gatewayFailure ||
@@ -178,7 +182,7 @@ function ChatDashboard({ privacy }) {
   }, [refreshKey]);
   const history = useMessageHistory(selection, session);
   // An open New Chat dialog pauses selected-chat typing and read acknowledgements.
-  const activity = useConversationActivity(selection, session, history, !newChatOpen && !pinDialog);
+  const activity = useConversationActivity(selection, session, history, !newChatOpen && !pinDialog && !blockDialog);
   const { onTypingInput, stopTyping, isTyping } = activity;
   const [drafts, setDrafts] = useState({});
 
@@ -194,6 +198,7 @@ function ChatDashboard({ privacy }) {
     setDrafts(draftsRef.current);
   };
   const sendDraft = async (attachmentIds = [], clientMessageId = null, caption = null) => {
+    if (blocks.loading || blocks.busy || blocks.isBlocked(selection.conversation?.otherUserId)) return false;
     const submitted = draftsRef.current[conversationId];
     const text = caption ?? submitted?.text ?? "";
     if ((!text.trim() && !attachmentIds.length) || session.sending?.pending ||
@@ -404,6 +409,7 @@ function ChatDashboard({ privacy }) {
   }
 
   async function conversationAction(action, conversation) {
+    if (action === "block") { if (!blocks.busy) setBlockDialog({ contact: conversation }); return; }
     if (actionRequestRef.current || pinDialog) return;
     if (action === "lock") { await openPinDialog("lock", conversation); return; }
     const returnFocus = document.activeElement;
@@ -518,6 +524,7 @@ function ChatDashboard({ privacy }) {
             </button>
 
             <ProfileMenu
+             onBlockedUsers={() => setBlockDialog({ contact: null })}
              pinConfigured={pinConfigured}
              actionBusy={actionBusy}
              onManagePrivacyPin={() => openPinDialog("manage")}
@@ -564,6 +571,7 @@ function ChatDashboard({ privacy }) {
         <ServerUnavailable colors={colors} className="hidden min-w-0 flex-1 px-6 md:flex" />
       ) : selection.conversation ? (
         <ChatPanel selection={selection} history={history} onBack={handleBack}
+          blocks={blocks}
           onConversationAction={conversationAction}
           actionBusy={actionBusy}
           pendingConversationId={pendingConversationId}
@@ -599,6 +607,7 @@ function ChatDashboard({ privacy }) {
         <NewChatDialog onClose={closeNewChat} onStarted={handleConversationStarted} />
       )}
       {pinDialog && <PrivacyPinDialog mode={pinDialog.mode} retryAt={pinDialog.retryAt} returnFocus={pinDialog.returnFocus} onSubmit={submitPin} onClose={() => setPinDialog(null)} />}
+      {blockDialog && <UserBlockingDialog contact={blockDialog.contact} blocks={blocks} onClose={() => setBlockDialog(null)} />}
       <div role="status" aria-atomic="true" className="pointer-events-none fixed inset-x-3 bottom-3 z-50 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm">
         {(showOutageToast || actionMessage) && (
           <div className={`pointer-events-auto flex items-center gap-2 rounded-xl border py-2 pl-4 pr-1 text-sm shadow-lg ${colors.border} ${colors.sidebar}`}>

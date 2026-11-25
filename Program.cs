@@ -86,6 +86,8 @@ if (builder.Configuration.GetValue<bool>("Attachments:Enabled") ||
 }
 
 builder.Services.AddScoped<IChatService, ChatService>();
+builder.Services.AddScoped<IUserPairLock, UserPairLock>();
+builder.Services.AddScoped<IUserBlockService, UserBlockService>();
 builder.Services.AddScoped<IConversationService, ConversationService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<PrivacyPinHasher>();

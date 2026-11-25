@@ -61,6 +61,7 @@ export default function ChatPanel({
   onTypingInput, stopTyping, isTyping = false,
   onConversationAction,
   actionBusy = false, pendingConversationId,
+  blocks,
 }) {
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
@@ -87,7 +88,8 @@ export default function ChatPanel({
   const busy = history.isLoading || history.isLoadingOlder;
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const activityAvailable = session.status === "connected" && !session.requiresSignIn;
-  const showTyping = activityAvailable && isTyping;
+  const blocked = blocks?.isBlocked(conversation?.otherUserId) ?? false;
+  const showTyping = activityAvailable && isTyping && !blocked;
   let recipientActivity = activityAvailable ? activity.label : "Activity unavailable";
   if (recipientActivity === "typing...") {
     const presence = session.presence.get(conversation?.otherUserId?.toLowerCase());
@@ -298,7 +300,9 @@ export default function ChatPanel({
           </p>
         </div>
         {typeof onBack === "function" && (
-          <ChatActions key={selectionKey} onClose={onBack} conversation={conversation} onAction={onConversationAction} actionBusy={actionBusy} pendingConversationId={pendingConversationId} />
+          <ChatActions key={selectionKey} onClose={onBack} conversation={conversation} onAction={onConversationAction} actionBusy={actionBusy} pendingConversationId={pendingConversationId}
+            isBlocked={blocked} blockBusy={blocks?.busy || blocks?.loading}
+            onBlock={() => blocked ? blocks.setBlocked(conversation, false) : onConversationAction("block", conversation)} />
         )}
       </header>
       {session.error && !session.failure?.retryable && !history.requiresSignIn && (
@@ -491,11 +495,16 @@ export default function ChatPanel({
           </>
         )}
       </div>
-      <MessageComposer key={conversation.conversationId} conversationId={conversation.conversationId} value={draft} onChange={onDraftChange} onSend={onSend}
+      {blocked ? <div className="shrink-0 border-t border-slate-500/20 p-4 text-center">
+        <p className={`mb-2 text-sm ${muted}`}>You blocked this contact.</p>
+        <button type="button" disabled={blocks.busy} onClick={() => blocks.setBlocked(conversation, false)}
+          className="min-h-11 rounded-xl bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50">Unblock User</button>
+      </div> : <MessageComposer key={conversation.conversationId} conversationId={conversation.conversationId} value={draft} onChange={onDraftChange} onSend={onSend}
         onTypingInput={onTypingInput} stopTyping={stopTyping}
         pending={Boolean(session.sending?.pending)}
-        disabled={session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}
-        error={session.sending?.conversationId === conversation.conversationId ? session.sending.error : ""} />
+        disabled={blocks?.loading || blocks?.busy || session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}
+        error={session.sending?.conversationId === conversation.conversationId ? session.sending.error : ""} />}
+      {blocks?.error && <p role="alert" className="px-4 py-2 text-sm">{blocks.error} <button type="button" className="min-h-11 underline" onClick={blocks.retry}>Retry</button></p>}
     </section>
   );
 }

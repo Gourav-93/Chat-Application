@@ -156,25 +156,28 @@ public class ConversationService : IConversationService
                     : c.UserA.MobileNumber,
 
                 LastMessage = c.Messages
+                    .Where(m => !m.IsDeliverySuppressed || m.SenderId == currentUserId)
                     .OrderByDescending(m => m.SentAt)
                     .ThenByDescending(m => m.Id)
                     .Select(m => m.Text != "" ? m.Text : m.Type == Chat.Domain.Entities.MessageType.Image ? "Photo" : "Attachment")
                     .FirstOrDefault(),
 
                 LastMessageAt = c.Messages
+                    .Where(m => !m.IsDeliverySuppressed || m.SenderId == currentUserId)
                     .OrderByDescending(m => m.SentAt)
                     .ThenByDescending(m => m.Id)
                     .Select(m => (DateTime?)m.SentAt)
                     .FirstOrDefault(),
 
                 LastMessageSenderId = c.Messages
+                    .Where(m => !m.IsDeliverySuppressed || m.SenderId == currentUserId)
                     .OrderByDescending(m => m.SentAt)
                     .ThenByDescending(m => m.Id)
                     .Select(m => (Guid?)m.SenderId)
                     .FirstOrDefault(),
 
                 // Counts incoming messages the current user has not read.
-                UnreadCount = c.Messages.Count(m => m.SenderId != currentUserId && m.ReadAt == null)
+                UnreadCount = c.Messages.Count(m => !m.IsDeliverySuppressed && m.SenderId != currentUserId && m.ReadAt == null)
             })
             .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
             .ThenByDescending(c => c.ConversationId)

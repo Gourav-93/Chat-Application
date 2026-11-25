@@ -10,12 +10,13 @@ Sandesh is a real-time, one-to-one chat application with mobile OTP sign-in, per
 - Search by verified international mobile number and create or reuse a conversation.
 - Development invitation previews for unregistered `+91` numbers, printed in the backend terminal.
 - Live messages, paginated history, unread counts, delivery/read receipts, typing, presence, and last seen.
+- Persistent Block User / Unblock User controls and a blocked-users list in the profile menu. Messages accepted during a block stay visible only to their sender with a single tick, including after unblock. A blocked contact cannot see the blocker's Online or Last seen; unrelated contacts retain normal presence. Apply `AddUserBlocking` before starting the updated backend; see [user blocking and teammate setup](docs/user-blocking.md).
 - Responsive chat navigation, dark/light themes, and a profile menu.
 - Per-user PIN-protected Locked Chats and independent Archive, shown as chat-list folders only when nonempty. Locked Chats relock on section exit or five minutes of inactivity; direct interactions renew access while incoming messages do not. Configure the privacy pepper and manually apply the additive migration before use; see [Chat Privacy setup and verification](docs/chat-privacy.md).
 
 - Image and document sharing through the message composer's `+` menu, with separate Image and Document file pickers, optional captions, and authorized downloads. The current frontend testing implementation selects one file per message; the backend supports multiple attachments.
 - Private REST uploads/downloads, file size and content validation, attachment ownership, Locked Chat authorization, pending upload cancellation and expiry cleanup. SignalR carries attachment metadata rather than file bytes.
-- Attachment sharing requires Development User Secrets and the additive `AddMessageAttachments` migration. See [Image and Document Sharing](docs/image-document-sharing.md).
+- Attachment sharing requires Development User Secrets and the additive `AddMessageAttachments` migration. See [Image and Document Sharing](docs/img-doc-setup-documention.md).
 
 The application is under active development. Builds and configuration checks pass, while broader browser and deployment verification is ongoing. Development uses console OTP delivery. Public OTP sign-in requires an approved SMS provider. See the [architecture and feature overview](docs/system-overview.md) for behavior, contracts, and known limitations.
 
@@ -77,12 +78,13 @@ frontend/
   .env.team.example
   config/endpoints.js        Shared URL resolver
   src/                      React application
-  tests/                    Opt-in integration baseline
+  tests/                    Vitest component and hook regression tests
 docs/
   README.md                 Documentation index
   database-setup.md
   chat-privacy.md
-  image-document-sharing.md  Attachment setup, API contract and verification
+  user-blocking.md           Block/unblock setup, presence privacy, APIs and verification
+  img-doc-setup-documention.md  Attachment setup, API contract and verification
   deployment.md             Canonical configuration reference and deployment
   system-overview.md
   otp-only-auth.md
@@ -95,7 +97,7 @@ The API serves backend endpoints. React is hosted separately through Vite locall
 ## Prerequisites
 
 - .NET 10 SDK. Check with `dotnet --version`.
-- Node.js 22.12+ within the 22.x line, or a compatible newer LTS release, and npm. Check with `node --version` and `npm --version`.
+- Stable Node.js 22.22.2+ within the 22.x line, or a compatible newer LTS release, and npm. This includes the jsdom test dependency's minimum version. Check with `node --version` and `npm --version`.
 - SQL Server with permission to create/update your own development database. SQL Server Express LocalDB is an option on Windows. Other operating systems need an accessible SQL Server instance.
 - EF CLI matching the project's EF packages, currently `10.0.14`. Check with `dotnet ef --version`.
 - A current browser supporting Web Locks, such as Chrome or Edge. Use localhost or HTTPS.
@@ -114,7 +116,7 @@ git branch --show-current
 git status --short
 ```
 
-Select the team's approved branch or release before setup. The earlier baseline documentation was reviewed on `stabilization/v1`; select the team-approved branch containing the attachment feature for this setup. Check that the selected version includes the configuration files shown above.
+Select the team's approved branch or release containing the attachment and user-blocking changes before setup. Check that it includes `20261125063713_AddUserBlocking` and the configuration files shown above. A local, uncommitted implementation becomes available to teammates only after normal team integration.
 
 For a ZIP, select the approved branch/tag on GitHub, choose **Code > Download ZIP**, extract it, and open a terminal in the extracted directory containing `Two-Way-Com.csproj`. Skip Git commands when using a ZIP. The archive contains source and templates; create User Secrets on your own machine and install dependencies separately.
 
@@ -173,13 +175,21 @@ The default `Privacy:CurrentPepperVersion` is `v1`. Keep an existing pepper: rep
 
 **After updating an existing checkout:** do not regenerate JWT, OTP, or privacy keys. If the privacy pepper is missing, use the [guarded terminal command for existing installations](docs/chat-privacy.md#existing-installation-after-updating). It preserves an existing `v1` User Secret and creates one only when absent. Restart the backend after configuring a missing secret.
 
-Choose the SQL Server instance you installed. The following connection example targets Windows LocalDB with integrated authentication. Replace the Server portion for SQL Server Express or another approved development instance, then run from the repository root.
+Choose the SQL Server instance installed on your own machine. The verified local setup for this checkout uses the default SQL Server instance at `localhost` and database `RealTimeChat_DB`. Each teammate must select their own instance; copying the project does not install SQL Server or copy User Secrets.
+
+| Installed instance | `Server` value |
+| --- | --- |
+| Default SQL Server instance on this machine | `localhost` |
+| SQL Server Express named instance | `.\SQLEXPRESS` (confirm the installed name) |
+| Windows SQL Server Express LocalDB | `(localdb)\MSSQLLocalDB` |
+
+For a default local instance with Windows authentication, run the following from the repository root. Change only the server/database values to match your approved local target; preserve an existing working connection.
 
 ```powershell
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=(localdb)\MSSQLLocalDB;Database=RealTimeChat_DB;Integrated Security=True;Encrypt=True;TrustServerCertificate=True" --project Two-Way-Com.csproj
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=localhost;Database=RealTimeChat_DB;Integrated Security=True;Encrypt=True;TrustServerCertificate=True" --project Two-Way-Com.csproj
 ```
 
-`TrustServerCertificate=True` is a local development convenience for the LocalDB example. Deployed SQL Server connections should use a trusted certificate with certificate validation enabled. For SQL authentication, supply your own approved credentials through local secret tooling. The [database guide](docs/database-setup.md) explains existing-database checks and authentication choices.
+`TrustServerCertificate=True` is a local development convenience. Deployed SQL Server connections should use a trusted certificate with certificate validation enabled. For SQL authentication, supply your own approved credentials through local secret tooling. The [database guide](docs/database-setup.md) explains existing-database checks and authentication choices. Blocking requires no additional secrets, provider or feature flag.
 
 #### Configure image and document sharing
 
@@ -206,7 +216,7 @@ Verify attachment settings without printing other secrets:
 dotnet user-secrets list --project Two-Way-Com.csproj | Select-String '^Attachments:'
 ```
 
-The local provider creates `private-uploads/` under the backend content root. Keep this directory and uploaded files out of Git. Images are limited to 10 MiB, documents to 25 MiB, and the backend allows up to five attachments and 50 MiB combined per message. Pending uploads expire after 60 minutes; cleanup runs every five minutes when registered. `DevelopmentBypass` does not scan for malware and must never be used outside Development. Enable maintenance only after the attachment schema is available and storage is configured. See [attachment configuration](docs/image-document-sharing.md#configuration-and-storage).
+The local provider creates `private-uploads/` under the backend content root. Keep this directory and uploaded files out of Git. Images are limited to 10 MiB, documents to 25 MiB, and the backend allows up to five attachments and 50 MiB combined per message. Pending uploads expire after 60 minutes; cleanup runs every five minutes when registered. `DevelopmentBypass` does not scan for malware and must never be used outside Development. Enable maintenance only after the attachment schema is available and storage is configured. See [attachment configuration](docs/img-doc-setup-documention.md#configuration-and-storage).
 
 ### 3. Create or update your development database
 
@@ -232,10 +242,11 @@ if ($LASTEXITCODE -ne 0 -or $entry.Count -ne 1) { throw "Configure the local dat
 $connection = ($entry[0] -split '=', 2)[1].Trim()
 if ([string]::IsNullOrWhiteSpace($connection)) { throw "Local connection is empty." }
 $target = [System.Data.Common.DbConnectionStringBuilder]::new()
-$target.ConnectionString = $connection
+$target.set_ConnectionString($connection)
 # Inspect the server and database locally; do not print the full connection string.
-$target['Server']
-$target['Database']
+foreach ($key in @('Server', 'Data Source', 'Database', 'Initial Catalog')) {
+    if ($target.ContainsKey($key)) { Write-Output ($key + '=' + $target.get_Item($key)) }
+}
 ```
 
 If the connection uses aliases such as `Data Source` or `Initial Catalog`, inspect those keys instead. Confirm that the target is your own development SQL Server and that no environment or command-line override points the runtime elsewhere. Do not proceed against a shared or production database. Back up existing data and review the migration history before applying updates.
@@ -250,6 +261,7 @@ The expected migration sequence for this feature is:
 20261120130000_InitialCreate
 20261123180036_AddChatPrivacyAndArchive
 20261124071343_AddMessageAttachments
+20261125063713_AddUserBlocking
 ```
 
 After reviewing the target and pending migrations, apply them manually:
@@ -259,7 +271,9 @@ dotnet ef database update --project Two-Way-Com.csproj --startup-project Two-Way
 dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
 ```
 
-No migration should remain marked `(Pending)`. The update can create the intended development database when the SQL identity has permission. Existing installations must not generate duplicate migrations, delete previous migrations or drop their database. Startup does not automatically migrate the database. See [database setup](docs/database-setup.md) and [attachment migration instructions](docs/image-document-sharing.md#additive-migration-manual-execution). These migrations are SQL Server-specific and must not be applied to company MySQL.
+No migration should remain marked `(Pending)`. The update can create the intended development database when the SQL identity has permission. Existing installations must not generate duplicate migrations, delete previous migrations or drop their database. Startup does not automatically migrate the database. See [database setup](docs/database-setup.md) and [attachment migration instructions](docs/img-doc-setup-documention.md#additive-migration-manual-execution). These migrations are SQL Server-specific and must not be applied to company MySQL.
+
+`AddUserBlocking` adds `UserBlocks` and `Messages.IsDeliverySuppressed`, defaulting existing messages to `false`. It preserves existing users, history and conversation IDs. The Online/Last seen privacy fix uses that same block table and needs no additional migration once `AddUserBlocking` is applied. After inspecting the target, clear the temporary connection variables with `Remove-Variable connection, entry, target` when finished.
 
 ### 4. Configure and install the frontend
 
@@ -317,19 +331,32 @@ The hub URL is consumed by a SignalR client. The health endpoint confirms proces
 7. In an existing conversation, select `+`, choose Image or Document, select a supported file and send it with or without a caption. Check that the recipient receives the attachment, can view/download it and can retrieve it after refresh.
 8. Verify the attachment metadata in the actual local runtime database and the original binary file under `private-uploads/`. Use dedicated test data only.
 
-### Existing teammates after pulling the attachment feature
+### Existing teammates after pulling updates
 
 Stop the running backend and frontend, confirm the approved branch and review any local changes:
 
 ```powershell
 git status
 git branch --show-current
-git pull
+git pull --ff-only
 dotnet restore Two-Way-Com.csproj
 dotnet build Two-Way-Com.csproj
 ```
 
-Follow [Configure image and document sharing](#configure-image-and-document-sharing) to set all 12 attachment User Secrets. Preserve existing JWT, OTP, privacy and database secrets. Follow [Create or update your development database](#3-create-or-update-your-development-database) using your own verified local connection. Then update frontend dependencies and restart both applications using steps 4–6. The [attachment guide](docs/image-document-sharing.md#existing-installation-after-updating) provides the feature-specific update procedure.
+Preserve existing JWT, OTP, privacy, database and attachment secrets. Teammates who have not configured attachments should follow [Configure image and document sharing](#configure-image-and-document-sharing) once. Follow [Create or update your development database](#3-create-or-update-your-development-database) to load and inspect your own local connection and apply the checked-in migrations, including `AddUserBlocking`. Do this before starting the updated backend; a source pull does not update the database.
+
+Then install the updated frontend lockfile and check the client:
+
+```powershell
+Set-Location frontend
+npm.cmd ci
+npm.cmd run test
+npm.cmd run lint
+npm.cmd run build
+Set-Location ..
+```
+
+Restart both processes using steps 5–6. Refresh each open browser tab once to load the updated client. Subsequent block/unblock and presence changes synchronize without another page refresh. The [blocking update guide](docs/user-blocking.md#i-local-team-update-commands) provides the complete update sequence and two-account acceptance checklist; the [attachment guide](docs/img-doc-setup-documention.md#existing-installation-after-updating) covers storage settings.
 
 ## Configuration and environments
 
@@ -367,6 +394,9 @@ Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/
 | Startup reports missing JWT, OTP, or database configuration | Run local User Secrets setup from this project under the same OS user. Check conflicting environment overrides. |
 | `dotnet ef` is unavailable | Install the matching global tool and reopen the terminal if PATH needs refreshing. |
 | SQL login, certificate, or connection failure | Confirm the instance is running, the database target is correct, and your identity has access. Use the local certificate exception only for the intended development instance. |
+| `Invalid object name 'UserBlocks'` or `Invalid column name 'IsDeliverySuppressed'` | Apply `20261125063713_AddUserBlocking` to the same confirmed local database used by the running backend, then restart it. Use step 3's explicit `--connection`; do not generate another migration. |
+| `Cannot generate SSPI context` or `The target principal name is incorrect` | Windows integrated authentication failed. Verify the instance and Windows identity, and retry from your normal local PowerShell terminal if an isolated tool session failed. Have the SQL administrator check credentials/SPNs if the normal terminal also fails; connection retries do not repair authentication. |
+| A blocked contact still sees Online or Last seen | Restart the updated backend and refresh both clients once after installing this version. Confirm both use the same backend origin and that the block exists in its runtime database. The presence fix needs no migration beyond `AddUserBlocking`. |
 | Migration reports existing tables | Stop the update and review the squashed-baseline history with the database owner. |
 | `npm ci` reports incompatible Node | Use a Node release supported by Vite and keep the checked-in lockfile. |
 | `npm.ps1` is blocked | Use `npm.cmd` on Windows. |
@@ -376,7 +406,6 @@ Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/
 | OTP request returns 429 | Wait for the configured cooldown or rate-limit window. |
 | Protected API returns 401 or `SessionReplaced` arrives | The token expired, the account session was replaced, or logout revoked it. Sign in again. |
 | Messages, history, or typing fail | Inspect the hub connection, active session, and WebSocket routing. Check the contract version of the running backend. |
-
 | EF CLI targets `Sandesh_DesignOnly` or reports missing LocalDB runtime | Use the explicit verified local connection with `--connection` as shown in step 3. |
 | `MessageAttachments` has no rows after sending | Confirm the runtime database matches the queried database; inspect the upload response and configured storage directory. |
 | Attachment upload returns 503 | Check the feature flag, scanner configuration and storage availability. Do not bypass production scanning. |
@@ -394,10 +423,13 @@ Run the frontend checks from `frontend`.
 
 ```powershell
 npm.cmd run lint
+npm.cmd run test
 npm.cmd run build
 ```
 
-Browser, SQL and SMS verification should use dedicated test accounts. The opt-in baseline test has a documented conversation-ID mismatch with this checkout; review the [frontend test notes](frontend/README.md#integration-baseline) before running it against a server.
+The checked-in frontend suite last passed 9 tests and uses jsdom with mocked APIs, requiring no running server, SQL database or OTP. The backend test project was removed at the project owner's request; use the backend build and manual two-account checks below. SQL Server concurrency and broader backend integration verification remain pending. See [blocking verification](docs/user-blocking.md#h-testing-report) for scope.
+
+Browser, SQL and SMS verification should use dedicated test accounts. With two accounts in separate browser profiles, verify that blocking replaces the blocker's composer, leaves the blocked sender's messages at one tick, hides the blocker's Online/Last seen from that sender, and restores normal new-message/presence behavior after unblock. Older suppressed messages must remain hidden. Broader browser and deployment verification remains pending.
 
 For attachment verification, run the following read-only SQL in the verified local runtime database (the example assumes `RealTimeChat_DB`):
 
@@ -420,7 +452,8 @@ Verify authorized downloads, rejection of unauthorized users and invalid files, 
 - [Documentation index](docs/README.md)
 - [Database setup and migration safety](docs/database-setup.md)
 - [Chat Privacy and Archive](docs/chat-privacy.md)
-- [Image and Document Sharing](docs/image-document-sharing.md)
+- [User blocking and teammate setup](docs/user-blocking.md)
+- [Image and Document Sharing](docs/img-doc-setup-documention.md)
 - [Configuration reference and deployment](docs/deployment.md)
 - [Architecture, features, and contracts](docs/system-overview.md)
 - [Frontend development](frontend/README.md)

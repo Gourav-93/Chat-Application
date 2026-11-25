@@ -92,9 +92,11 @@ export function createMessageHistoryService(
     onState,
     onReceipt,
     onPresence,
+    onPresenceInvalidated,
     onTyping,
     onSessionReplaced,
     onConversationsInvalidated,
+    onUserBlocksChanged,
   } = {},
 ) {
   if (
@@ -155,9 +157,11 @@ export function createMessageHistoryService(
     record.connection.off("ConversationUnreadChanged", record.unreadHandler);
     record.connection.off("PendingMessages", record.pendingHandler);
     record.connection.off("PrivacyStateChanged", record.privacyHandler);
+    record.connection.off("UserBlockStateChanged", record.blockHandler);
     record.connection.off("PrivateMessageAvailable", record.privateMessageHandler);
     record.connection.off("MessageStatusUpdated", record.receiptHandler);
     record.connection.off("UserOnline", record.onlineHandler);
+    record.connection.off("PresenceRefresh", record.presenceRefreshHandler);
     record.connection.off("UserOffline", record.offlineHandler);
     record.connection.off("UserTyping", record.typingHandler);
     record.connection.off("SessionReplaced", record.replacedHandler);
@@ -384,7 +388,7 @@ export function createMessageHistoryService(
           !liveRecord() ||
           !data ||
           typeof data.userId !== "string" ||
-          data.isOnline !== isOnline
+          (data.isOnline !== isOnline && !(isOnline === false && data.isOnline === null))
         )
           return;
         const id = data.userId.toLowerCase();
@@ -392,7 +396,7 @@ export function createMessageHistoryService(
           id,
           (record.presenceVersions.get(id) || 0) + 1,
         );
-        onPresence?.({ ...data, isOnline });
+        onPresence?.({ ...data, isOnline: data.isOnline });
       };
       record.onlineHandler = (data) => presence(data, true);
       record.offlineHandler = (data) => presence(data, false);
@@ -436,6 +440,12 @@ export function createMessageHistoryService(
       connection.on("UserTyping", record.typingHandler);
       connection.on("MessageStatusUpdated", record.receiptHandler);
       connection.on("UserOnline", record.onlineHandler);
+      record.presenceRefreshHandler = () => {
+        if (!liveRecord()) return;
+        for (const [id, version] of record.presenceVersions) record.presenceVersions.set(id, version + 1);
+        onPresenceInvalidated?.();
+      };
+      connection.on("PresenceRefresh", record.presenceRefreshHandler);
       connection.on("UserOffline", record.offlineHandler);
       connection.on("ReceiveMessage", record.receiveHandler);
       connection.on("PendingMessages", record.pendingHandler);
@@ -445,6 +455,8 @@ export function createMessageHistoryService(
         else invalidateConversations(record);
       };
       connection.on("PrivacyStateChanged", record.privacyHandler);
+      record.blockHandler = () => { if (liveRecord()) onUserBlocksChanged?.(); };
+      connection.on("UserBlockStateChanged", record.blockHandler);
       record.privateMessageHandler = (event) => {
         if (!liveRecord() || typeof event?.acknowledgement !== "string") return;
         // This capability acknowledges transport delivery only and reveals no chat identity.
@@ -793,6 +805,7 @@ export function createMessageHistoryService(
       const record = current;
       const id = userId.toLowerCase();
       const version = record?.presenceVersions.get(id) || 0;
+      if (record) record.presenceVersions.set(id, version);
       const response = await command("GetUserStatus", [userId], isCurrent);
       const status = response.result;
       // A newer push event wins over a late presence snapshot.
@@ -806,7 +819,7 @@ export function createMessageHistoryService(
         status &&
         typeof status.userId === "string" &&
         status.userId.toLowerCase() === id &&
-        typeof status.isOnline === "boolean"
+        (typeof status.isOnline === "boolean" || status.isOnline === null)
       ) {
         onPresence?.(status);
       } else {

@@ -14,7 +14,7 @@ import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
  
 
-export default function ProfileMenu({ pinConfigured, onManagePrivacyPin, actionBusy = false }) {
+export default function ProfileMenu({ pinConfigured, onManagePrivacyPin, onBlockedUsers, actionBusy = false }) {
   const auth = useContext(AuthContext);
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
@@ -122,6 +122,8 @@ export default function ProfileMenu({ pinConfigured, onManagePrivacyPin, actionB
             )}
           </div>
           <div className="p-2">
+            <button type="button" className="min-h-11 w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={() => { triggerRef.current?.focus(); setIsOpen(false); onBlockedUsers?.(); }}>Blocked users</button>
             <button
               ref={pinRef}
               type="button"
