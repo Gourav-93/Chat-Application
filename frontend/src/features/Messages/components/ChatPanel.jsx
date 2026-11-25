@@ -15,6 +15,7 @@ import emojiRegex from "emoji-regex";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
 import MessageComposer from "./MessageComposer";
 import MessageAttachments from "./MessageAttachments";
+import MessageLocation from "./MessageLocation";
 import { ChatActions } from "../../Conversations/Components/ConversationList";
 
 const OLDER_HISTORY_THRESHOLD = 120;
@@ -95,8 +96,8 @@ export default function ChatPanel({
   const displayName = getDisplayName(conversation?.otherUserName, mobile);
   const showMobile = Boolean(mobile && mobile !== displayName);
   const messages = history.messages;
-  const emojiOnlyByMessage = useMemo(() => messages.map(({ text, attachments }) =>
-    !attachments?.length && isEmojiOnly(text ?? ""),
+  const emojiOnlyByMessage = useMemo(() => messages.map(({ text, attachments, location }) =>
+    !location && !attachments?.length && isEmojiOnly(text ?? ""),
   ), [messages]);
   const busy = history.isLoading || history.isLoadingOlder;
   const muted = isDark ? "text-slate-400" : "text-slate-500";
@@ -466,6 +467,7 @@ export default function ChatPanel({
                           "rounded-bl-md border border-slate-200 bg-white text-slate-900")}>
                       <span className="sr-only">{own ? "You" : displayName}: </span>
                       <MessageAttachments attachments={message.attachments} />
+                      <MessageLocation location={message.location} />
                       {message.text && <p className={"chat-flag-text whitespace-pre-wrap [overflow-wrap:anywhere] " +
                         (emojiOnly ? "text-3xl leading-tight sm:text-4xl" : "text-sm leading-5")}>
                         {message.text}

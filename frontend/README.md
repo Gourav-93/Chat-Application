@@ -6,7 +6,7 @@ Start with the [root README](../README.md#local-setup) for backend configuration
 
 The application uses React, JavaScript/JSX, Vite, React Router, Tailwind CSS, Axios, SignalR, and Lucide React. Declared dependencies are in [package.json](package.json); exact resolved versions are in [package-lock.json](package-lock.json).
 
-Use stable Node 22.22.2+ within 22.x or a compatible newer LTS release, including the minimum required by jsdom. Existing teammates should run `npm.cmd ci` after pulling the updated lockfile and keep their existing ignored environment files. Backend setup must include `AddUserBlocking`; see [teammate updates](../docs/user-blocking.md#i-local-team-update-commands).
+Use stable Node 22.22.2+ within 22.x or a compatible newer LTS release, including the minimum required by jsdom. Existing teammates should run `npm.cmd ci` after pulling the updated lockfile and keep their existing ignored environment files. Backend setup must include `AddUserBlocking` and the later `AddMessageLocation`; see [blocking teammate updates](../docs/user-blocking.md#i-local-team-update-commands) and [location setup](../docs/location-sharing.md#migration-and-teammate-setup).
 
 Run these commands from `frontend`. On platforms other than Windows, use `npm`.
 
@@ -57,6 +57,12 @@ The local development template enables `VITE_ENABLE_INVITATION_PREVIEW`. Existin
 
 The existing directory capitalization varies between feature folders. Follow the actual import paths when working on case-sensitive systems. The [system overview](../docs/system-overview.md) owns the API and SignalR contract reference.
 
+## Location sharing integration
+
+`MessageComposer` adds Location beside Image and Document. The menu remains usable independently of attachment capabilities; existing file options retain their enabled/disabled restrictions. [useLocationSelection.js](src/features/Messages/hooks/useLocationSelection.js) requests geolocation only after selection, handles errors/retry, and ignores stale callbacks. [MessageLocation.jsx](src/features/Messages/components/MessageLocation.jsx) renders the preview, persistent coordinate fallback and Maps action in both themes.
+
+The optional location argument follows `ChatPage` -> `useChatSession` -> `MessageHistoryService` -> the existing `SendMessage` hub method. Live and history rendering uses `MessageDto.location`. The backend requires `AddMessageLocation` before this version runs. See [location setup, contracts and verification](../docs/location-sharing.md); no new frontend environment variables or packages are needed.
+
 ## Blocking and presence integration
 
 The chat header exposes Block User / Unblock User; the profile menu opens Blocked users. A user's own outgoing block replaces the entire composer with an Unblock User control. A recipient-owned block does not disable the sender's composer or expose a blocking banner. Persisted null delivery/read timestamps keep suppressed messages at one tick after refresh and unblock.
@@ -71,7 +77,7 @@ After installing a new version, restart the backend/Vite processes and refresh e
 
 Run `npm.cmd run test` from `frontend`. [vitest.config.js](vitest.config.js) selects `tests/**/*.test.{js,jsx}` and uses jsdom. [tests/userBlocking.test.jsx](tests/userBlocking.test.jsx) covers composer replacement, restored input, persistent single ticks, submission guards, confirmation, profile management, request failures/duplicate clicks, stale responses and neutral/normal presence rendering.
 
-The latest frontend run passed 9 tests, with lint and production build also passing. API calls are mocked; these checks do not establish actual SignalR reconnect, SQL concurrency, OTP or browser layout behavior. The backend test project was removed at the project owner's request. Use the backend build and the manual two-account checklist for the remaining verification.
+The location implementation run on 25 November 2026 passed 26 tests, with lint and production build also passing (a bundle-size warning remains). The 9 existing blocking tests were unchanged. [tests/locationSharing.test.jsx](tests/locationSharing.test.jsx) adds 13 UI/lifecycle tests, and [tests/locationTransport.test.js](tests/locationTransport.test.js) adds 4 mocked send/live/reconnect/history compatibility tests. API calls, geolocation and SignalR are mocked; these checks do not establish actual network reconnect, SQL concurrency, OTP or browser layout behavior. The backend test project remains absent; a standalone file-based backend check is documented in the [location guide](../docs/location-sharing.md#verification). Use the manual two-account checklists for remaining acceptance.
 
 ## Integration baseline
 

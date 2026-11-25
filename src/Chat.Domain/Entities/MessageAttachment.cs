@@ -1,6 +1,6 @@
 namespace Chat.Domain.Entities;
 
-public enum MessageType { Text, Image, Document, Mixed }
+public enum MessageType { Text, Image, Document, Mixed, Location = 4 }
 public sealed class MessageAttachment
 {
     public Guid Id { get; set; } = Guid.NewGuid();

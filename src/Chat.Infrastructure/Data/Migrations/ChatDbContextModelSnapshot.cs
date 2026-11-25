@@ -71,6 +71,12 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
+                    b.Property<double?>("Latitude")
+                        .HasColumnType("float");
+
+                    b.Property<double?>("Longitude")
+                        .HasColumnType("float");
+
                     b.Property<DateTime?>("ReadAt")
                         .HasColumnType("datetime2");
 
@@ -101,6 +107,8 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.ToTable("Messages", t =>
                         {
+                            t.HasCheckConstraint("CK_Messages_Location", "([Latitude] IS NULL AND [Longitude] IS NULL AND [Type] <> 4) OR ([Latitude] IS NOT NULL AND [Longitude] IS NOT NULL AND [Latitude] BETWEEN -90 AND 90 AND [Longitude] BETWEEN -180 AND 180 AND [Type] = 4)");
+
                             t.HasCheckConstraint("CK_Messages_SuppressedReceipts", "[IsDeliverySuppressed] = 0 OR ([DeliveredAt] IS NULL AND [ReadAt] IS NULL)");
                         });
                 });

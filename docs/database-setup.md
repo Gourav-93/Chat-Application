@@ -26,14 +26,17 @@ The migration directory contains this sequence. Each migration also has generate
 - [20261123180036_AddChatPrivacyAndArchive.cs](../src/Chat.Infrastructure/Data/Migrations/20261123180036_AddChatPrivacyAndArchive.cs)
 - [20261124071343_AddMessageAttachments.cs](../src/Chat.Infrastructure/Data/Migrations/20261124071343_AddMessageAttachments.cs)
 - [20261125063713_AddUserBlocking.cs](../src/Chat.Infrastructure/Data/Migrations/20261125063713_AddUserBlocking.cs)
+- [20261125111351_AddMessageLocation.cs](../src/Chat.Infrastructure/Data/Migrations/20261125111351_AddMessageLocation.cs)
 
 The initial migration creates Users, Conversations, Messages, OtpVerifications, and PendingRegistrations. It includes active-session/browser fields, message receipt timestamps, unique mobile indexes, and the unique participant-pair index. User and pending-registration IDs are GUIDs; conversation, message, and OTP-record IDs are integers in this checkout. Later additive migrations add privacy/archive settings, attachment metadata, and directional `UserBlocks` plus `Messages.IsDeliverySuppressed`. Existing messages default to unsuppressed, preserving their visibility.
 
-Earlier development migrations were squashed into the initial migration. Historical documents describe their original tests and names. The four migrations above define the currently distributed sequence; preserve them and the current model snapshot.
+Earlier development migrations were squashed into the initial migration. Historical documents describe their original tests and names. The five migrations above define the currently distributed sequence; preserve them and the current model snapshot.
+
+`AddMessageLocation` adds nullable `Messages.Latitude` and `Messages.Longitude` columns and a coordinate/type check constraint. Existing message data is preserved. It was reviewed but not applied during implementation; see [location migration and setup](location-sharing.md#migration-and-teammate-setup).
 
 ## Fresh and existing databases
 
-Apply the checked-in sequence through `AddUserBlocking` before starting the updated backend. See [privacy setup](chat-privacy.md), [attachment setup](img-doc-setup-documention.md) and [blocking teammate updates](user-blocking.md#i-local-team-update-commands). The Online/Last seen visibility fix needs no migration beyond `AddUserBlocking`. Do not rewrite InitialCreate, generate duplicate feature migrations or apply migrations automatically on startup.
+After target authorization, apply the checked-in sequence through `AddMessageLocation` before starting the updated backend. See [privacy setup](chat-privacy.md), [attachment setup](img-doc-setup-documention.md), [blocking teammate updates](user-blocking.md#i-local-team-update-commands) and [location setup](location-sharing.md#migration-and-teammate-setup). The Online/Last seen visibility fix needs no migration beyond `AddUserBlocking`; location sharing requires the later migration. Do not rewrite InitialCreate, generate duplicate feature migrations or apply migrations automatically on startup.
 
 For a fresh personal development database, configure the target and apply the existing migration through the root setup. EF can create the database if the SQL identity has sufficient permission.
 

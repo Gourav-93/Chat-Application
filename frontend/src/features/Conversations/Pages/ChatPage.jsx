@@ -197,15 +197,15 @@ function ChatDashboard({ privacy }) {
     draftsRef.current = { ...draftsRef.current, [conversationId]: next };
     setDrafts(draftsRef.current);
   };
-  const sendDraft = async (attachmentIds = [], clientMessageId = null, caption = null) => {
+  const sendDraft = async (attachmentIds = [], clientMessageId = null, caption = null, location = null) => {
     if (blocks.loading || blocks.busy || blocks.isBlocked(selection.conversation?.otherUserId)) return false;
     const submitted = draftsRef.current[conversationId];
     const text = caption ?? submitted?.text ?? "";
-    if ((!text.trim() && !attachmentIds.length) || session.sending?.pending ||
+    if ((!text.trim() && !attachmentIds.length && !location) || session.sending?.pending ||
         submittedRef.current) return false;
     const operation = { conversationId, draft: submitted };
     submittedRef.current = operation;
-    const success = await session.send(conversationId, text, attachmentIds, clientMessageId);
+    const success = await session.send(conversationId, text, attachmentIds, clientMessageId, location);
     if (success && submitted && draftsRef.current[conversationId] === submitted && submitted.text === text) {
       // Do not erase text typed during the request or another conversation's draft.
       draftsRef.current = { ...draftsRef.current,

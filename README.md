@@ -4,6 +4,8 @@ Sandesh is a real-time, one-to-one chat application with mobile OTP sign-in, per
 
 ## Features and status
 
+- Current location sharing through **+ > Location > permission > preview > Send**, with recipient map cards and Open in Maps. This shares one captured position, not live tracking, and works independently of upload restrictions. Apply the additive `AddMessageLocation` migration after target authorization; see [location setup and verification](docs/location-sharing.md).
+
 - Mobile OTP sign-in and first-time profile completion.
 - Persistent JWT login, one active session per account, session takeover confirmation, and logout.
 - Multiple browser tabs under the same active session.
@@ -84,6 +86,7 @@ docs/
   database-setup.md
   chat-privacy.md
   user-blocking.md           Block/unblock setup, presence privacy, APIs and verification
+  location-sharing.md        Location flow, message contract, migration and verification
   img-doc-setup-documention.md  Attachment setup, API contract and verification
   deployment.md             Canonical configuration reference and deployment
   system-overview.md
@@ -116,7 +119,7 @@ git branch --show-current
 git status --short
 ```
 
-Select the team's approved branch or release containing the attachment and user-blocking changes before setup. Check that it includes `20261125063713_AddUserBlocking` and the configuration files shown above. A local, uncommitted implementation becomes available to teammates only after normal team integration.
+Select the team's approved branch or release containing the attachment, user-blocking and location changes before setup. Check that it includes `20261125111351_AddMessageLocation` and the configuration files shown above. A local, uncommitted implementation becomes available to teammates only after normal team integration.
 
 For a ZIP, select the approved branch/tag on GitHub, choose **Code > Download ZIP**, extract it, and open a terminal in the extracted directory containing `Two-Way-Com.csproj`. Skip Git commands when using a ZIP. The archive contains source and templates; create User Secrets on your own machine and install dependencies separately.
 
@@ -262,6 +265,7 @@ The expected migration sequence for this feature is:
 20261123180036_AddChatPrivacyAndArchive
 20261124071343_AddMessageAttachments
 20261125063713_AddUserBlocking
+20261125111351_AddMessageLocation
 ```
 
 After reviewing the target and pending migrations, apply them manually:
@@ -331,6 +335,8 @@ The hub URL is consumed by a SignalR client. The health endpoint confirms proces
 7. In an existing conversation, select `+`, choose Image or Document, select a supported file and send it with or without a caption. Check that the recipient receives the attachment, can view/download it and can retrieve it after refresh.
 8. Verify the attachment metadata in the actual local runtime database and the original binary file under `private-uploads/`. Use dedicated test data only.
 
+9. After applying `AddMessageLocation` to the approved database, select **+ > Location**, allow browser permission, inspect the preview and send. Verify the recipient's Maps action and history after refresh. See the [location acceptance checklist](docs/location-sharing.md#verification) for permission failures, offline delivery and existing-feature regression checks.
+
 ### Existing teammates after pulling updates
 
 Stop the running backend and frontend, confirm the approved branch and review any local changes:
@@ -343,7 +349,7 @@ dotnet restore Two-Way-Com.csproj
 dotnet build Two-Way-Com.csproj
 ```
 
-Preserve existing JWT, OTP, privacy, database and attachment secrets. Teammates who have not configured attachments should follow [Configure image and document sharing](#configure-image-and-document-sharing) once. Follow [Create or update your development database](#3-create-or-update-your-development-database) to load and inspect your own local connection and apply the checked-in migrations, including `AddUserBlocking`. Do this before starting the updated backend; a source pull does not update the database.
+Preserve existing JWT, OTP, privacy, database and attachment secrets. Teammates who have not configured attachments should follow [Configure image and document sharing](#configure-image-and-document-sharing) once. Follow [Create or update your development database](#3-create-or-update-your-development-database) to load and inspect your own local connection and, after target authorization, apply the checked-in migrations through `AddMessageLocation` (including `AddUserBlocking`). Do this before starting the updated backend; a source pull does not update the database. Location requires no new secrets; see [location teammate setup](docs/location-sharing.md#migration-and-teammate-setup).
 
 Then install the updated frontend lockfile and check the client:
 
@@ -391,6 +397,9 @@ Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/
 
 | Symptom | What to check |
 | --- | --- |
+| `Invalid column name 'Latitude'` or `'Longitude'` | Apply `AddMessageLocation` to the authorized runtime database using its explicit connection, then restart the updated backend. |
+| Location is denied or unavailable | Use HTTPS or localhost, allow browser/device location access, and check any hosting Permissions-Policy. Retry from the composer. |
+| Map preview is blank | Check OpenStreetMap connectivity and any iframe CSP restrictions. Coordinates and Open in Maps remain available. |
 | Startup reports missing JWT, OTP, or database configuration | Run local User Secrets setup from this project under the same OS user. Check conflicting environment overrides. |
 | `dotnet ef` is unavailable | Install the matching global tool and reopen the terminal if PATH needs refreshing. |
 | SQL login, certificate, or connection failure | Confirm the instance is running, the database target is correct, and your identity has access. Use the local certificate exception only for the intended development instance. |
@@ -427,7 +436,7 @@ npm.cmd run test
 npm.cmd run build
 ```
 
-The checked-in frontend suite last passed 9 tests and uses jsdom with mocked APIs, requiring no running server, SQL database or OTP. The backend test project was removed at the project owner's request; use the backend build and manual two-account checks below. SQL Server concurrency and broader backend integration verification remain pending. See [blocking verification](docs/user-blocking.md#h-testing-report) for scope.
+The checked-in frontend suite passed 26 tests during location implementation on 25 November 2026, including the 9 unchanged blocking tests. It uses jsdom with mocked APIs/geolocation/transport and requires no running server, SQL database or OTP. The backend test project was removed at the project owner's request; the new standalone `dotnet run --file tests/LocationSharingChecks.cs --configuration Release` check passed 20 assertions without a database connection or new test project. SQL Server concurrency, location persistence round trips and real-browser integration verification remain pending. See [blocking verification](docs/user-blocking.md#h-testing-report) and [location verification](docs/location-sharing.md#verification) for scope.
 
 Browser, SQL and SMS verification should use dedicated test accounts. With two accounts in separate browser profiles, verify that blocking replaces the blocker's composer, leaves the blocked sender's messages at one tick, hides the blocker's Online/Last seen from that sender, and restores normal new-message/presence behavior after unblock. Older suppressed messages must remain hidden. Broader browser and deployment verification remains pending.
 
@@ -450,6 +459,7 @@ Get-ChildItem .\private-uploads -Force
 Verify authorized downloads, rejection of unauthorized users and invalid files, captions, pending cancellation, offline delivery, refresh and backend restart persistence with dedicated test accounts. Local manual testing has been reported by the feature developer; broader regression, production and browser coverage should not be inferred from successful builds.
 
 - [Documentation index](docs/README.md)
+- [Current location sharing and migration](docs/location-sharing.md)
 - [Database setup and migration safety](docs/database-setup.md)
 - [Chat Privacy and Archive](docs/chat-privacy.md)
 - [User blocking and teammate setup](docs/user-blocking.md)

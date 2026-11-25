@@ -28,15 +28,18 @@ public class ChatService : IChatService
         var text = dto.Text?.Trim() ?? string.Empty;
         var ids = dto.AttachmentIds ?? [];
         var limits = _attachments.Value;
+        var location = dto.Location;
+        if (location != null && !location.IsValid())
+            throw new ArgumentException("Location must contain valid latitude and longitude.");
 
         if (text.Length > 5000 ||
-            (text.Length == 0 && ids.Count == 0) ||
+            (text.Length == 0 && ids.Count == 0 && location == null) ||
             ids.Distinct().Count() != ids.Count)
         {
             throw new ArgumentException("Invalid message or attachment count.");
         }
 
-        if (ids.Count > 0 &&
+        if ((ids.Count > 0 || location != null) &&
             (!dto.ClientMessageId.HasValue || dto.ClientMessageId == Guid.Empty))
         {
             throw new ArgumentException("Message operation ID is missing.");
@@ -96,6 +99,8 @@ public class ChatService : IChatService
             {
                 if (previous.ConversationId != dto.ConversationId ||
                     previous.Text != text ||
+                    previous.Latitude != location?.Latitude ||
+                    previous.Longitude != location?.Longitude ||
                     !previous.Attachments.Select(a => a.Id).Order()
                         .SequenceEqual(ids.Order()))
                 {
@@ -154,13 +159,15 @@ public class ChatService : IChatService
 
         var message = new Message
         {
+            Latitude = location?.Latitude,
+            Longitude = location?.Longitude,
             ConversationId = dto.ConversationId,
             SenderId = senderId,
             IsDeliverySuppressed = relationship.Incoming,
             Text = text,
             SentAt = now,
             ClientMessageId = dto.ClientMessageId,
-            Type = messageType
+            Type = location != null ? MessageType.Location : messageType
         };
 
         _context.Messages.Add(message);
@@ -201,6 +208,8 @@ public class ChatService : IChatService
             ? conversation.UserBId
             : conversation.UserAId,
         Text = message.Text,
+        Location = message.Latitude.HasValue && message.Longitude.HasValue
+            ? new LocationDto { Latitude = message.Latitude, Longitude = message.Longitude } : null,
         Type = (int)message.Type,
         SentAt = DateTime.SpecifyKind(message.SentAt, DateTimeKind.Utc),
         DeliveredAt = message.DeliveredAt.HasValue
@@ -263,6 +272,8 @@ public class ChatService : IChatService
                        ? conversation.UserBId
                        : conversation.UserAId,
                 Text = m.Text,
+                Location = m.Latitude.HasValue && m.Longitude.HasValue
+                    ? new LocationDto { Latitude = m.Latitude, Longitude = m.Longitude } : null,
                 Type = (int)m.Type,
                 Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
                 SentAt = m.SentAt,
@@ -434,6 +445,8 @@ public class ChatService : IChatService
                 ReceiverId = recipientId,
 
                 Text = m.Text,
+                Location = m.Latitude.HasValue && m.Longitude.HasValue
+                    ? new LocationDto { Latitude = m.Latitude, Longitude = m.Longitude } : null,
                 Type = (int)m.Type,
                 Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
                 SentAt = m.SentAt,
