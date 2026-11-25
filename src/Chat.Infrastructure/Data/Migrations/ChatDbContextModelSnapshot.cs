@@ -66,6 +66,11 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("DeliveredAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<bool>("IsDeliverySuppressed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<DateTime?>("ReadAt")
                         .HasColumnType("datetime2");
 
@@ -94,7 +99,10 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .IsUnique()
                         .HasFilter("[ClientMessageId] IS NOT NULL");
 
-                    b.ToTable("Messages");
+                    b.ToTable("Messages", t =>
+                        {
+                            t.HasCheckConstraint("CK_Messages_SuppressedReceipts", "[IsDeliverySuppressed] = 0 OR ([DeliveredAt] IS NULL AND [ReadAt] IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Chat.Domain.Entities.MessageAttachment", b =>
@@ -259,6 +267,27 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("Chat.Domain.Entities.UserBlock", b =>
+                {
+                    b.Property<Guid>("BlockerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BlockedUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("BlockedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("BlockerId", "BlockedUserId");
+
+                    b.HasIndex("BlockedUserId");
+
+                    b.ToTable("UserBlocks", t =>
+                        {
+                            t.HasCheckConstraint("CK_UserBlocks_NoSelfBlock", "[BlockerId] <> [BlockedUserId]");
+                        });
+                });
+
             modelBuilder.Entity("Chat.Domain.Entities.UserConversationSettings", b =>
                 {
                     b.Property<Guid>("UserId")
@@ -415,6 +444,21 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Message");
+                });
+
+            modelBuilder.Entity("Chat.Domain.Entities.UserBlock", b =>
+                {
+                    b.HasOne("Chat.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("BlockedUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Chat.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("BlockerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Chat.Domain.Entities.UserConversationSettings", b =>

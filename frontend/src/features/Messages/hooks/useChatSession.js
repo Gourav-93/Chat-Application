@@ -202,6 +202,12 @@ export default function useChatSession() {
       void flushDelivery();
     };
     owner.service = createMessageHistoryService(token, expiresAt, {
+      onPresenceInvalidated: () => update((previous) => ({
+        ...previous, presence: new Map(), presenceRevision: (previous.presenceRevision || 0) + 1,
+      })),
+      onUserBlocksChanged: () => update((previous) => ({
+        ...previous, blockRevision: previous.blockRevision + 1,
+      })),
       onConversationsInvalidated: () => update((previous) => ({
         ...previous, revision: previous.revision + 1,
       })),
@@ -316,7 +322,7 @@ export default function useChatSession() {
     Promise.resolve().then(() => {
       if (!active) return;
       setState({ owner, messages: new Map(), receipts: new Map(), presence: new Map(),
-        receiptError: "", revision: 0, status: "connecting", error: "", failure: null, expired: false });
+        receiptError: "", revision: 0, blockRevision: 0, status: "connecting", error: "", failure: null, expired: false });
       checkExpiry();
       startConnection();
     });
@@ -386,6 +392,8 @@ export default function useChatSession() {
     error: current ? state.error : "",
     failure: current ? state.failure : null,
     revision: current ? state.revision : 0,
+    blockRevision: current ? state.blockRevision : 0,
+    presenceRevision: current ? state.presenceRevision || 0 : 0,
     messages: current && !requiresSignIn ? state.messages : EMPTY_MESSAGES,
     sending: sending?.owner === owner ? sending : null,
   };

@@ -235,7 +235,7 @@ SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAcce
         );
         }
 
-        // Notify the receiver
+        // The dispatcher checks both block directions before notifying the receiver.
         await _privateEvents.SendAsync(receiverId, conversationId, "UserTyping", new
             {
                 ConversationId = conversationId,
@@ -329,7 +329,9 @@ SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAcce
         using var lease = await _privacyAccess.EnterAsync(currentUserId, Context.ConnectionAborted);
         var conversationId = await _privacy.FindConversationAsync(currentUserId, targetUserId);
         await RequirePrivacyAsync(conversationId);
-        return await _presenceService.GetUserStatusAsync(targetUserId);
+        var status = await _presenceService.GetUserStatusAsync(targetUserId);
+        return await _privateEvents.CanSeePresenceAsync(currentUserId, targetUserId)
+            ? status : new UserStatusDto { UserId = targetUserId, IsOnline = null, LastSeenAt = null };
     }
 
     public async Task AuthorizePrivacy(string token)

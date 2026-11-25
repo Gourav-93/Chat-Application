@@ -9,12 +9,17 @@ namespace Chat.Application.Services;
 public class ChatService : IChatService
 {
     private readonly ChatDbContext _context;
+    private readonly IUserBlockService _blocks;
+    private readonly IUserPairLock _pairLock;
 
     private readonly Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> _attachments;
-    public ChatService(ChatDbContext context, Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> attachments)
+    public ChatService(ChatDbContext context, Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> attachments,
+        IUserBlockService blocks, IUserPairLock pairLock)
     {
         _context = context;
         _attachments = attachments;
+        _blocks = blocks;
+        _pairLock = pairLock;
     }
 
     public async Task<MessageDto> SendMessageAsync(
@@ -46,14 +51,22 @@ public class ChatService : IChatService
             throw new UnauthorizedAccessException("Invalid conversation.");
         }
 
-        // Ordinary text messages without an operation ID need only one insert.
-        // Do not acquire the attachment/idempotency user lock for these messages.
+        var recipientId = conversation.UserAId == senderId ? conversation.UserBId : conversation.UserAId;
+        // Acceptance and directional block mutations share a database transaction lock.
+        // Always acquire pair before sender/attachment locks to keep lock ordering stable.
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        await _pairLock.AcquireAsync(senderId, recipientId);
+        var relationship = await _blocks.GetRelationshipAsync(senderId, recipientId);
+        if (relationship.Outgoing)
+            throw new PrivacyException(409, "contact_blocked", "Unblock this contact before sending messages.");
+
         if (ids.Count == 0 && !dto.ClientMessageId.HasValue)
         {
             var textMessage = new Message
             {
                 ConversationId = dto.ConversationId,
                 SenderId = senderId,
+                IsDeliverySuppressed = relationship.Incoming,
                 Text = text,
                 Type = MessageType.Text,
                 SentAt = DateTime.UtcNow
@@ -61,14 +74,13 @@ public class ChatService : IChatService
 
             _context.Messages.Add(textMessage);
             await _context.SaveChangesAsync();
+            await tx.CommitAsync();
 
             return await MapAsync(textMessage, conversation);
         }
 
         // Serialize idempotent operations from the same sender, including
         // attachment claims. Keep this lock compatible with AttachmentService.
-        await using var tx = await _context.Database.BeginTransactionAsync();
-
         await _context.Users
             .Where(u => u.Id == senderId)
             .ExecuteUpdateAsync(s => s.SetProperty(u => u.UserName, u => u.UserName));
@@ -144,6 +156,7 @@ public class ChatService : IChatService
         {
             ConversationId = dto.ConversationId,
             SenderId = senderId,
+            IsDeliverySuppressed = relationship.Incoming,
             Text = text,
             SentAt = now,
             ClientMessageId = dto.ClientMessageId,
@@ -234,7 +247,8 @@ public class ChatService : IChatService
 
         // Fetch latest messages first
         var messages = await _context.Messages
-            .Where(m => m.ConversationId == conversationId)
+            .Where(m => m.ConversationId == conversationId &&
+                (!m.IsDeliverySuppressed || m.SenderId == userId))
             .OrderByDescending(m => m.SentAt)
             .ThenByDescending(m => m.Id)
             .Skip((int)skipCount)
@@ -295,7 +309,7 @@ public class ChatService : IChatService
     {
         var message = await _context.Messages
             .Include(m => m.Conversation)
-            .FirstOrDefaultAsync(m => m.Id == messageId);
+            .FirstOrDefaultAsync(m => m.Id == messageId && !m.IsDeliverySuppressed);
 
         if (message == null)
             throw new KeyNotFoundException("Message not found.");
@@ -362,6 +376,7 @@ public class ChatService : IChatService
             .Where(m =>
                 m.ConversationId == conversationId &&
                 m.SenderId != recipientId &&
+                !m.IsDeliverySuppressed &&
                 m.ReadAt == null)
             .ToListAsync();
 
@@ -402,6 +417,7 @@ public class ChatService : IChatService
         var messages = await _context.Messages
             .Where(m =>
                 m.DeliveredAt == null &&
+                !m.IsDeliverySuppressed &&
                 !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.IsLocked) &&
                 m.SenderId != recipientId &&
                 (m.Conversation.UserAId == recipientId ||

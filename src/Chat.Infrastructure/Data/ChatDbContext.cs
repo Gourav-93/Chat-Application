@@ -12,6 +12,7 @@ public class ChatDbContext : DbContext
     }
 
     public DbSet<User> Users { get; set; } // DataBase me User table 
+    public DbSet<UserBlock> UserBlocks { get; set; }
     public DbSet<Conversation> Conversations { get; set; } // DataBase me Conversation table
     public DbSet<MessageAttachment> MessageAttachments {get;set;}
     public DbSet<Message> Messages { get; set; } // DataBase me Message table
@@ -27,6 +28,17 @@ public class ChatDbContext : DbContext
 
         // Call the base implementation of OnModelCreating.
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<UserBlock>(entity =>
+        {
+            entity.HasKey(b => new { b.BlockerId, b.BlockedUserId });
+            entity.HasIndex(b => b.BlockedUserId);
+            entity.HasOne<User>().WithMany().HasForeignKey(b => b.BlockerId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<User>().WithMany().HasForeignKey(b => b.BlockedUserId).OnDelete(DeleteBehavior.Restrict);
+            entity.ToTable(t => t.HasCheckConstraint("CK_UserBlocks_NoSelfBlock", "[BlockerId] <> [BlockedUserId]"));
+        });
+        modelBuilder.Entity<Message>().Property(m => m.IsDeliverySuppressed).HasDefaultValue(false);
+        modelBuilder.Entity<Message>().ToTable(t => t.HasCheckConstraint(
+            "CK_Messages_SuppressedReceipts", "[IsDeliverySuppressed] = 0 OR ([DeliveredAt] IS NULL AND [ReadAt] IS NULL)"));
         modelBuilder.Entity<Message>().HasIndex(m=>m.SenderId);
         modelBuilder.Entity<Message>().Property(m=>m.Type).HasDefaultValue(MessageType.Text);
         modelBuilder.Entity<Message>().HasIndex(m=>new {m.SenderId,m.ClientMessageId}).IsUnique().HasFilter("[ClientMessageId] IS NOT NULL");

@@ -272,7 +272,7 @@ public sealed class AttachmentService(
                          c => c.Id == a.ConversationId &&
                               (c.UserAId == user ||
                                c.UserBId == user)) &&
-                     (a.MessageId != null ||
+                     ((a.MessageId != null && (!a.Message!.IsDeliverySuppressed || a.Message.SenderId == user)) ||
                       (a.UploadedBy == user &&
                        a.ExpiresAt > now)),
                 ct);

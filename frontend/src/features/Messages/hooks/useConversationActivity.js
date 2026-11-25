@@ -40,7 +40,7 @@ export default function useConversationActivity(selection, session, history, ena
   const connected = Boolean(owner && status === "connected" && !requiresSignIn);
   const presence = connected && recipientId
     ? session.presence.get(recipientId.toLowerCase()) : null;
-  const recipientOffline = presence?.isOnline === false;
+  const recipientOffline = presence?.isOnline === false || presence?.isOnline === null;
   const [typingView, setTypingView] = useState(null);
   const typingControllerRef = useRef(null);
   const [visible, setVisible] = useState(() =>
@@ -83,7 +83,7 @@ export default function useConversationActivity(selection, session, history, ena
       },
     );
     return () => { active = false; };
-  }, [connected, owner, recipientId, selectionKey, attempt]);
+  }, [connected, owner, recipientId, selectionKey, attempt, session.presenceRevision]);
 
   // Receipt-only rerenders must not repeatedly issue MarkRead.
   const incomingKey = history.messages
@@ -269,6 +269,7 @@ export default function useConversationActivity(selection, session, history, ena
   let label = "Activity unavailable";
   if (connected) {
     if (!presence) label = lookupError ? "Activity unavailable" : "Checking activity...";
+    else if (presence.isOnline === null) label = null;
     else if (presence.isOnline) label = "Online";
     else {
       const lastSeen = formatLastSeen(presence.lastSeenAt);

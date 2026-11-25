@@ -3,6 +3,8 @@ namespace Chat.Domain.Entities;
 
 public class Message
 {
+    // Immutable after acceptance. Never clear this when a contact is unblocked.
+    public bool IsDeliverySuppressed { get; set; }
     public MessageType Type {get;set;}
     public Guid? ClientMessageId {get;set;}
     public ICollection<MessageAttachment> Attachments {get;set;}=new List<MessageAttachment>();
