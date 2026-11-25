@@ -33,6 +33,10 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
+        env:
+          # Testing server only: show the Invite button (backend is Development mode there).
+          VITE_ENABLE_INVITATION_PREVIEW: "true"
+          VITE_FORCE_INVITATION_PREVIEW: "true"
         run: |
           npm ci
           npm run build
