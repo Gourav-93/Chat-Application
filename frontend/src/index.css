@@ -1,5 +1,32 @@
-/* File: index.css. Imports Tailwind and defines global styles and chat dashboard scroll containment. */
+/* File: index.css. Imports Tailwind and defines global styles, chat scroll containment, and local flag rendering. */
 @import "tailwindcss";
+
+/* Google Fonts regional indicators include the Sark flag. */
+@font-face {
+  font-family: "Chat Flag Emoji";
+  src: url("./NotoColorEmoji-RegionalIndicators-v50.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+1F1E6-1F1FF;
+}
+
+/* The existing Twemoji subset supplies subdivision flags. */
+@font-face {
+  font-family: "Chat Flag Emoji";
+  src: url("country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+1F3F4, U+E0062-E0063, U+E0065, U+E0067,
+    U+E006C, U+E006E, U+E0073-E0074, U+E0077, U+E007F;
+}
+
+.chat-flag-text {
+  font-family: "Chat Flag Emoji", Inter, system-ui, Arial, sans-serif;
+}
+
+.chat-emoji-picker {
+  --epr-emoji-font-family: "Chat Flag Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+    "Segoe UI", "Apple Color Emoji", "Twemoji Mozilla", "Noto Color Emoji",
+    "EmojiOne Color", "Android Emoji";
+}
 
 :root {
   font-family: Inter, system-ui, Arial, sans-serif;

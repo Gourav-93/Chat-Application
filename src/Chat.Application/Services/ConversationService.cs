@@ -155,10 +155,15 @@ public class ConversationService : IConversationService
                     ? c.UserB.MobileNumber
                     : c.UserA.MobileNumber,
 
+                // Use stored byte length to preserve Unicode emoji previews.
                 LastMessage = c.Messages
                     .OrderByDescending(m => m.SentAt)
                     .ThenByDescending(m => m.Id)
-                    .Select(m => m.Text != "" ? m.Text : m.Type == Chat.Domain.Entities.MessageType.Image ? "Photo" : "Attachment")
+                    .Select(m => EF.Functions.DataLength(m.Text) > 0
+                        ? m.Text
+                        : m.Type == MessageType.Image
+                            ? "Photo"
+                            : "Attachment")
                     .FirstOrDefault(),
 
                 LastMessageAt = c.Messages
