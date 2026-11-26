@@ -10,6 +10,7 @@ Start with the [root README](../README.md) to configure and run Sandesh from a c
 | [Database field protection](database-protection.md) | Encryption/HMAC keys, staged migrations, explicit backfill/verifier, teammate setup, file inventory and test results. |
 
 | [Current location sharing](location-sharing.md) | Composer flow, browser requirements, structured message contract, additive migration, teammate setup and verification scope. |
+| [Message editing, chat clearing and location sharing](message-editing-and-chat-clearing.md) | Current behavior and local migration procedure for editing text messages, per-user history/media clearing, and one-time location sharing. |
 | [Database setup](database-setup.md) | SQL Server identity, shared connection source, the current migration baseline, and existing-database safety. |
 | [Chat Privacy and Archive](chat-privacy.md) | Privacy pepper, manual migration, PIN security, APIs, recovery proposal, and verification. |
 | [User blocking](user-blocking.md) | Teammate update commands, blocking migration, permanent message suppression, Online/Last seen privacy, APIs and two-account verification. |
@@ -23,6 +24,8 @@ Start with the [root README](../README.md) to configure and run Sandesh from a c
 ## Documentation ownership
 
 The Location Sharing guide owns the location message contract, map-provider behavior, `AddMessageLocation` migration procedure and feature verification. Its migration has been generated but not applied during implementation; database and real-browser acceptance remain pending.
+
+The Message Editing, Chat Clearing and Location Sharing guide summarizes the three message features and records the latest additive migration sequence. The specialized [Location Sharing guide](location-sharing.md) remains the detailed reference for location permissions and provider-specific behavior.
 
 The root README owns the complete local setup sequence and the verified development database name. The deployment guide owns the configuration key/default table. The system overview owns the high-level API and event reference. Specialized guides link to those sources and provide additional detail.
 

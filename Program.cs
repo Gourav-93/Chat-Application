@@ -319,9 +319,8 @@ if (app.Services.GetRequiredService<IOptions<SwaggerOptions>>().Value.Enabled)
 if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
+    app.UseHttpsRedirection();
 }
-
-app.UseHttpsRedirection();
 app.UseRouting();
 app.UseCors("ReactClient");
 app.UseAuthentication();

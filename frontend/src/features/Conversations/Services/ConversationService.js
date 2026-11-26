@@ -18,6 +18,17 @@ export async function getConversationSections(signal) {
   return data;
 }
 
+export async function clearConversation(conversationId, kind, signal) {
+  if (!Number.isInteger(conversationId) || !["messages", "media"].includes(kind)) {
+    throw new Error("Invalid conversation clear request.");
+  }
+  const { data } = await api.post(`/conversations/${conversationId}/clear-${kind}`, null, { signal });
+  if (data?.conversationId !== conversationId || data?.mediaOnly !== (kind === "media")) {
+    throw new Error("The server returned an unexpected clear response.");
+  }
+  return data;
+}
+
 export async function getConversations(signal, section = "normal", pageNumber = 1) {
   const response = await api.get("/conversations", { signal, params: { section, pageNumber, pageSize: 30 } });
   const conversations = response.data;
