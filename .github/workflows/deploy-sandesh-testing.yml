@@ -33,10 +33,6 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
-        env:
-          # Testing server only: show the Invite button (backend is Development mode there).
-          VITE_ENABLE_INVITATION_PREVIEW: "true"
-          VITE_FORCE_INVITATION_PREVIEW: "true"
         run: |
           npm ci
           npm run build
@@ -51,7 +47,6 @@ jobs:
           export Jwt__Key=$(openssl rand -hex 32)
           export Otp__HashingKey=$(openssl rand -hex 32)
           export Privacy__PepperKeys__v1=$(openssl rand -hex 32)
-          dotnet restore Two-Way-Com.csproj
           dotnet tool install --global dotnet-ef --version "10.*"
           dotnet ef migrations script --idempotent -o migrate.sql
 
