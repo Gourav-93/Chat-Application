@@ -5,7 +5,8 @@ public class OtpVerification
 {
     public int Id { get; set; }
 
-    public string MobileNumber { get; set; } = string.Empty;
+    public string? MobileNumber { get; set; }
+    public string? MobileNumberHash { get; set; }
 
     public string OtpHash { get; set; } = string.Empty;
 

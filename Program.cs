@@ -19,7 +19,17 @@ using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Explicit CLI only: no web host, background workers, migrations or automatic backfill.
+if (args.Contains("--sensitive-data"))
+{
+    Environment.ExitCode = await SensitiveDataMaintenance.RunAsync(builder, args);
+    return;
+}
+
 builder.Services.AddSandeshConfiguration(builder.Configuration, builder.Environment);
+builder.Services.AddSingleton<IDataEncryptionService, DataEncryptionService>();
+builder.Services.AddSingleton<IDataHashingService, DataHashingService>();
+builder.Services.AddSingleton<ProtectedFields>();
 
 // 2. MVC, Swagger and health checking.
 builder.Services.AddControllers();
@@ -309,9 +319,8 @@ if (app.Services.GetRequiredService<IOptions<SwaggerOptions>>().Value.Enabled)
 if (!app.Environment.IsDevelopment())
 {
     app.UseHsts();
+    app.UseHttpsRedirection();
 }
-
-app.UseHttpsRedirection();
 app.UseRouting();
 app.UseCors("ReactClient");
 app.UseAuthentication();
