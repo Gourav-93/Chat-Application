@@ -52,6 +52,7 @@ import ProfileMenu from "../Components/ProfileMenu";
 import ConversationList from "../Components/ConversationList";
 import NewChatDialog from "../Components/NewChatDialog";
 import {
+  clearConversation,
   disableSecretCode,
   getChatLockSettings,
   getConversations,
@@ -65,6 +66,8 @@ import ChatPanel from "../../Messages/components/ChatPanel";
 import useMessageHistory from "../../Messages/hooks/useMessageHistory";
 import useChatSession from "../../Messages/hooks/useChatSession";
 import useConversationActivity from "../../Messages/hooks/useConversationActivity";
+import useUserBlocks from "../Hooks/useUserBlocks";
+import UserBlockingDialog from "../Components/UserBlockingDialog";
 
 const isGatewayFailure = (status) =>
   status === 502 || status === 503 || status === 504;
@@ -176,6 +179,34 @@ function ServerUnavailable({ colors, className }) {
       </div>
     </section>
   );
+}
+
+function ClearConversationDialog({ kind, isDark, busy, error, onCancel, onConfirm }) {
+  const cancelRef = useRef(null);
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    (busy ? dialogRef.current : cancelRef.current)?.focus();
+    const onKey = (event) => { if (event.key === "Escape" && !busy) onCancel(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+  const media = kind === "media";
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="presentation">
+    <div ref={dialogRef} role="dialog" tabIndex={-1} aria-modal="true" aria-labelledby="clear-dialog-title"
+      onKeyDown={(event) => {
+        if (event.key !== "Tab") return;
+        const controls = [...dialogRef.current.querySelectorAll("button:not(:disabled)")];
+        if (!controls.length) { event.preventDefault(); dialogRef.current.focus(); return; }
+        if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls.at(-1)?.focus(); }
+        else if (!event.shiftKey && document.activeElement === controls.at(-1)) { event.preventDefault(); controls[0]?.focus(); }
+      }}
+      className={`w-full max-w-sm rounded-2xl border p-5 shadow-2xl ${isDark ? "border-[#293854] bg-[#111d31] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+      <h2 id="clear-dialog-title" className="text-lg font-semibold">{media ? "Clear media?" : "Clear messages?"}</h2>
+      <p className="mt-3 text-sm leading-6 opacity-80">{media ? "Existing shared images and files will be removed from your view only. Text messages will stay visible. The other participant keeps their attachments." : "Existing messages will be removed from your view only. The conversation and the other participant’s messages are not affected."}</p>
+      {error && <p role="alert" className="mt-3 text-sm text-red-500">{error}</p>}
+      <div className="mt-5 flex justify-end gap-2"><button ref={cancelRef} type="button" disabled={busy} onClick={onCancel} className="min-h-11 rounded-xl px-4 text-sm hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500">Cancel</button><button type="button" disabled={busy} onClick={onConfirm} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-wait disabled:opacity-60">{busy ? "Clearing…" : media ? "Clear media" : "Clear messages"}</button></div>
+    </div>
+  </div>;
 }
 
 export default function ChatPage() {
@@ -386,6 +417,7 @@ function ChatDashboard({
   openChatLockSettings,
   settingsOpen,
 }) {
+  const [blockDialog, setBlockDialog] = useState(null);
   const [pinConfigured, setPinConfigured] = useState(null);
   const [section, setSection] = useState(
     getPrivacyToken() ? "locked" : "normal",
@@ -426,6 +458,7 @@ function ChatDashboard({
   }, [privacy.reason, chatLockSettings]);
   const [actionBusy, setActionBusy] = useState(false);
   const [pendingConversationId, setPendingConversationId] = useState(null);
+  const [clearDialog, setClearDialog] = useState(null);
   const actionRequestRef = useRef(null);
   const themeContext = useContext(ThemeContext);
   const isDark = themeContext?.isDark ?? true;
@@ -449,6 +482,7 @@ function ChatDashboard({
 
   // Messaging and history share exactly one session-owned transport.
   const session = useChatSession();
+  const blocks = useUserBlocks(session.userId, selection.conversation?.otherUserId, session.blockRevision, session.status);
   const { owner, failure, status, requiresSignIn } = session;
   useLayoutEffect(() => {
     if (status === "connected" || status === "disconnected")
@@ -528,13 +562,13 @@ function ChatDashboard({
     };
   }, [refreshKey]);
   const history = useMessageHistory(selection, session);
-  // Modal workflows pause selected-chat typing and read acknowledgements.
-  const activity = useConversationActivity(
-    selection,
-    session,
-    history,
-    !newChatOpen && !pinDialog && !settingsOpen,
-  );
+ // Modal workflows pause selected-chat typing and read acknowledgements.
+const activity = useConversationActivity(
+  selection,
+  session,
+  history,
+  !newChatOpen && !pinDialog && !blockDialog && !settingsOpen,
+);
   const { onTypingInput, stopTyping, isTyping } = activity;
   const [drafts, setDrafts] = useState({});
 
@@ -549,33 +583,16 @@ function ChatDashboard({
     draftsRef.current = { ...draftsRef.current, [conversationId]: next };
     setDrafts(draftsRef.current);
   };
-  const sendDraft = async (
-    attachmentIds = [],
-    clientMessageId = null,
-    caption = null,
-  ) => {
+  const sendDraft = async (attachmentIds = [], clientMessageId = null, caption = null, location = null) => {
+    if (blocks.loading || blocks.busy || blocks.isBlocked(selection.conversation?.otherUserId)) return false;
     const submitted = draftsRef.current[conversationId];
     const text = caption ?? submitted?.text ?? "";
-    if (
-      (!text.trim() && !attachmentIds.length) ||
-      session.sending?.pending ||
-      submittedRef.current
-    )
-      return false;
+    if ((!text.trim() && !attachmentIds.length && !location) || session.sending?.pending ||
+        submittedRef.current) return false;
     const operation = { conversationId, draft: submitted };
     submittedRef.current = operation;
-    const success = await session.send(
-      conversationId,
-      text,
-      attachmentIds,
-      clientMessageId,
-    );
-    if (
-      success &&
-      submitted &&
-      draftsRef.current[conversationId] === submitted &&
-      submitted.text === text
-    ) {
+    const success = await session.send(conversationId, text, attachmentIds, clientMessageId, location);
+    if (success && submitted && draftsRef.current[conversationId] === submitted && submitted.text === text) {
       // Do not erase text typed during the request or another conversation's draft.
       draftsRef.current = {
         ...draftsRef.current,
@@ -872,6 +889,11 @@ function ChatDashboard({
   }
 
   async function conversationAction(action, conversation) {
+    if (action === "block") { if (!blocks.busy) setBlockDialog({ contact: conversation }); return; }
+    if (action === "clear-messages" || action === "clear-media") {
+      if (!actionRequestRef.current) setClearDialog({ kind: action === "clear-media" ? "media" : "messages", conversation, returnFocus: document.activeElement });
+      return;
+    }
     if (actionRequestRef.current || pinDialog) return;
     if (action === "lock") {
       await openPinDialog("lock", conversation);
@@ -957,6 +979,30 @@ function ChatDashboard({
         setPendingConversationId(null);
         restoreActionFocus(returnFocus, conversation.conversationId);
       }
+    }
+  }
+
+  async function confirmClear() {
+    if (!clearDialog || actionRequestRef.current) return;
+    const dialog = clearDialog;
+    const controller = new AbortController();
+    actionRequestRef.current = controller;
+    setActionBusy(true); setPendingConversationId(dialog.conversation.conversationId); setActionMessage(null);
+    try {
+      await clearConversation(dialog.conversation.conversationId, dialog.kind, controller.signal);
+      if (controller.signal.aborted) return;
+      session.clearCachedVisibility(dialog.conversation.conversationId, dialog.kind === "media");
+      setClearDialog(null);
+      window.requestAnimationFrame(() => dialog.returnFocus?.focus?.({ preventScroll: true }));
+      setActionMessage({ text: dialog.kind === "media" ? "Media cleared from your view" : "Messages cleared from your view", error: false });
+      setSelection((previous) => previous.conversation?.conversationId === dialog.conversation.conversationId
+        ? { ...previous, generation: previous.generation + 1 } : previous);
+      refreshConversations();
+    } catch (error) {
+      if (!controller.signal.aborted) setActionMessage({ text: error?.response?.data?.message || "Unable to clear this chat. Try again.", error: true });
+    } finally {
+      if (actionRequestRef.current === controller) actionRequestRef.current = null;
+      if (!controller.signal.aborted) { setActionBusy(false); setPendingConversationId(null); }
     }
   }
 
@@ -1068,6 +1114,7 @@ function ChatDashboard({
             </button>
 
             <ProfileMenu
+              onBlockedUsers={() => setBlockDialog({ contact: null })}
               pinConfigured={pinConfigured}
               actionBusy={actionBusy}
               onManagePrivacyPin={() => openPinDialog("manage")}
@@ -1160,10 +1207,8 @@ function ChatDashboard({
           className="hidden min-w-0 flex-1 px-6 md:flex"
         />
       ) : selection.conversation ? (
-        <ChatPanel
-          selection={selection}
-          history={history}
-          onBack={handleBack}
+        <ChatPanel selection={selection} history={history} onBack={handleBack}
+          blocks={blocks}
           onConversationAction={conversationAction}
           actionBusy={actionBusy}
           pendingConversationId={pendingConversationId}
@@ -1227,11 +1272,12 @@ function ChatDashboard({
           purpose={pinDialog.mode === "unlock" ? unlockPinPurpose : undefined}
         />
       )}
-      <div
-        role="status"
-        aria-atomic="true"
-        className="pointer-events-none fixed inset-x-3 bottom-3 z-50 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm"
-      >
+      {blockDialog && <UserBlockingDialog contact={blockDialog.contact} blocks={blocks} onClose={() => setBlockDialog(null)} />}
+      {clearDialog && <ClearConversationDialog kind={clearDialog.kind} isDark={isDark} busy={actionBusy}
+        error={actionMessage?.error ? actionMessage.text : ""}
+        onCancel={() => { if (!actionBusy) { const focus = clearDialog.returnFocus; setClearDialog(null); setActionMessage(null); window.requestAnimationFrame(() => focus?.focus?.({ preventScroll: true })); } }}
+        onConfirm={confirmClear} />}
+      <div role="status" aria-atomic="true" className="pointer-events-none fixed inset-x-3 bottom-3 z-50 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm">
         {(showOutageToast || actionMessage) && (
           <div
             className={`pointer-events-auto flex items-center gap-2 rounded-xl border py-2 pl-4 pr-1 text-sm shadow-lg ${colors.border} ${colors.sidebar}`}

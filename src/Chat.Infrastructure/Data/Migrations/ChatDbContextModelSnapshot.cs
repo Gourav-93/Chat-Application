@@ -67,6 +67,20 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("DeliveredAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateTime?>("EditedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeliverySuppressed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<double?>("Latitude")
+                        .HasColumnType("float");
+
+                    b.Property<double?>("Longitude")
+                        .HasColumnType("float");
+
                     b.Property<DateTime?>("ReadAt")
                         .HasColumnType("datetime2");
 
@@ -76,8 +90,7 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime>("SentAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("Text")
-                        .IsRequired()
+                    b.Property<string>("TextCiphertext")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("Type")
@@ -95,7 +108,12 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .IsUnique()
                         .HasFilter("[ClientMessageId] IS NOT NULL");
 
-                    b.ToTable("Messages");
+                    b.ToTable("Messages", t =>
+                        {
+                            t.HasCheckConstraint("CK_Messages_Location", "([Latitude] IS NULL AND [Longitude] IS NULL AND [Type] <> 4) OR ([Latitude] IS NOT NULL AND [Longitude] IS NOT NULL AND [Latitude] BETWEEN -90 AND 90 AND [Longitude] BETWEEN -180 AND 180 AND [Type] = 4)");
+
+                            t.HasCheckConstraint("CK_Messages_SuppressedReceipts", "[IsDeliverySuppressed] = 0 OR ([DeliveredAt] IS NULL AND [ReadAt] IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Chat.Domain.Entities.MessageAttachment", b =>
@@ -178,9 +196,10 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<bool>("IsUsed")
                         .HasColumnType("bit");
 
-                    b.Property<string>("MobileNumber")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
+                    b.Property<string>("MobileNumberHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
 
                     b.Property<string>("OtpHash")
                         .IsRequired()
@@ -188,7 +207,7 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MobileNumber");
+                    b.HasIndex("MobileNumberHash");
 
                     b.ToTable("OtpVerifications");
                 });
@@ -205,10 +224,13 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("MobileNumber")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("nvarchar(16)");
+                    b.Property<string>("MobileNumberCiphertext")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MobileNumberHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()
@@ -217,8 +239,9 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MobileNumber")
-                        .IsUnique();
+                    b.HasIndex("MobileNumberHash")
+                        .IsUnique()
+                        .HasFilter("[MobileNumberHash] IS NOT NULL");
 
                     b.ToTable("PendingRegistrations");
                 });
@@ -241,23 +264,48 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("LastSeenAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("MobileNumber")
-                        .HasColumnType("nvarchar(450)");
+                    b.Property<string>("MobileNumberCiphertext")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MobileNumberHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
 
                     b.Property<DateTime?>("SessionExpiresAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("UserName")
-                        .IsRequired()
+                    b.Property<string>("UserNameCiphertext")
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MobileNumber")
+                    b.HasIndex("MobileNumberHash")
                         .IsUnique()
-                        .HasFilter("[MobileNumber] IS NOT NULL");
+                        .HasFilter("[MobileNumberHash] IS NOT NULL");
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("Chat.Domain.Entities.UserBlock", b =>
+                {
+                    b.Property<Guid>("BlockerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BlockedUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("BlockedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("BlockerId", "BlockedUserId");
+
+                    b.HasIndex("BlockedUserId");
+
+                    b.ToTable("UserBlocks", t =>
+                        {
+                            t.HasCheckConstraint("CK_UserBlocks_NoSelfBlock", "[BlockerId] <> [BlockedUserId]");
+                        });
                 });
 
             modelBuilder.Entity("Chat.Domain.Entities.UserConversationSettings", b =>
@@ -273,6 +321,18 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.Property<bool>("IsLocked")
                         .HasColumnType("bit");
+
+                    b.Property<DateTime?>("MediaClearedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("MediaClearedThroughMessageId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("MessagesClearedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("MessagesClearedThroughMessageId")
+                        .HasColumnType("int");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
@@ -455,6 +515,21 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Message");
+                });
+
+            modelBuilder.Entity("Chat.Domain.Entities.UserBlock", b =>
+                {
+                    b.HasOne("Chat.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("BlockedUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Chat.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("BlockerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Chat.Domain.Entities.UserConversationSettings", b =>

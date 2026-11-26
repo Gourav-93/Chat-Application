@@ -2,11 +2,13 @@
 
 Follow the [root local setup](../README.md#local-setup) for the command sequence. That sequence contains the verified development database name, local connection example, EF tooling installation, and existing-migration update command.
 
+This release adds staged [database field protection](database-protection.md). Pin ordinary updates to `20261126061034_AddSensitiveDataProtection`, configure its keys, and run the explicit backfill/verifier. Do not use unqualified update-to-latest commands in older feature guides: `20261126061256_RemovePlaintextSensitiveData` is a separate later operation requiring successful verification and deployment approval.
+
 ## One connection source
 
 `ConnectionStrings:DefaultConnection` is the canonical key. `ConnectionStrings__DefaultConnection` is its environment-variable form. Development reads the configured connection from .NET User Secrets, subject to native environment/command-line overrides. Staging and Production require the hosting environment to provide the connection value.
 
-`Program.cs` binds this section to `DatabaseOptions` and passes it to `UseSqlServer` when registering `ChatDbContext`. The project has one context and one web project. EF tooling discovers the same startup registration. Use the project and context arguments shown in the root setup so runtime and EF select the same source. An explicit EF `--connection` override would select another target; review any such override before using it.
+`Program.cs` binds this section to `DatabaseOptions` and passes it to `UseSqlServer` when registering `ChatDbContext`. The project has one context and one web project. EF tooling uses `ChatDbContextDesignFactory`, which deliberately selects the `Sandesh_DesignOnly` LocalDB placeholder without loading runtime secrets. Consequently, database-accessing EF commands must pass the verified local runtime connection explicitly with `--connection`, as shown in the root setup. Model/migration generation does not require connecting to a database.
 
 The development name is a local convention confirmed from the existing configuration. A production database name belongs to that deployment and must be provisioned by its owner. The root `.env.example` deliberately retains a database placeholder.
 
@@ -20,19 +22,25 @@ Use encryption for SQL connections. The root LocalDB example explicitly permits 
 
 ## Current migration baseline
 
-The migration directory contains these three files.
+The migration directory contains this sequence. Each migration also has generated Designer metadata; `ChatDbContextModelSnapshot.cs` represents the current complete model.
 
 - [20261120130000_InitialCreate.cs](../src/Chat.Infrastructure/Data/Migrations/20261120130000_InitialCreate.cs)
-- [20261120130000_InitialCreate.Designer.cs](../src/Chat.Infrastructure/Data/Migrations/20261120130000_InitialCreate.Designer.cs)
-- [ChatDbContextModelSnapshot.cs](../src/Chat.Infrastructure/Data/Migrations/ChatDbContextModelSnapshot.cs)
+- [20261123180036_AddChatPrivacyAndArchive.cs](../src/Chat.Infrastructure/Data/Migrations/20261123180036_AddChatPrivacyAndArchive.cs)
+- [20261124071343_AddMessageAttachments.cs](../src/Chat.Infrastructure/Data/Migrations/20261124071343_AddMessageAttachments.cs)
+- [20261125063713_AddUserBlocking.cs](../src/Chat.Infrastructure/Data/Migrations/20261125063713_AddUserBlocking.cs)
+- [20261125111351_AddMessageLocation.cs](../src/Chat.Infrastructure/Data/Migrations/20261125111351_AddMessageLocation.cs)
+- [20261126061034_AddSensitiveDataProtection.cs](../src/Chat.Infrastructure/Data/Migrations/20261126061034_AddSensitiveDataProtection.cs)
+- [20261126061256_RemovePlaintextSensitiveData.cs](../src/Chat.Infrastructure/Data/Migrations/20261126061256_RemovePlaintextSensitiveData.cs) — deferred contract migration
 
-The migration creates Users, Conversations, Messages, OtpVerifications, and PendingRegistrations. It includes active-session/browser fields, message receipt timestamps, unique mobile indexes, and the unique participant-pair index. User and pending-registration IDs are GUIDs; conversation, message, and OTP-record IDs are integers in this checkout.
+The initial migration creates Users, Conversations, Messages, OtpVerifications, and PendingRegistrations. It includes active-session/browser fields, message receipt timestamps, unique mobile indexes, and the unique participant-pair index. User and pending-registration IDs are GUIDs; conversation, message, and OTP-record IDs are integers in this checkout. Later additive migrations add privacy/archive settings, attachment metadata, and directional `UserBlocks` plus `Messages.IsDeliverySuppressed`. Existing messages default to unsuppressed, preserving their visibility.
 
-Earlier development migrations were squashed into this initial migration. Historical documents describe their original tests and names. The files above define the currently distributed baseline.
+Earlier development migrations were squashed into the initial migration. Historical documents describe their original tests and names. Preserve all seven checked-in migrations and the current model snapshot; the five migrations preceding field protection were not modified by this implementation.
+
+`AddMessageLocation` adds nullable `Messages.Latitude` and `Messages.Longitude` columns and a coordinate/type check constraint. Existing message data is preserved. It was reviewed but not applied during implementation; see [location migration and setup](location-sharing.md#migration-and-teammate-setup).
 
 ## Fresh and existing databases
 
-Chat Lock and Archive add `AddChatPrivacyAndArchive` after the baseline. See [privacy setup and manual migration](chat-privacy.md). Do not rewrite InitialCreate or apply migrations automatically.
+After target authorization, follow the [field protection deployment sequence](database-protection.md#manual-powershell-sequence) through expansion and explicit backfill/verification before starting this release. Existing privacy, attachment, blocking and location migrations remain prerequisites and are included by the pinned expansion target. Do not rewrite InitialCreate, generate duplicate feature migrations or apply migrations automatically on startup.
 
 For a fresh personal development database, configure the target and apply the existing migration through the root setup. EF can create the database if the SQL identity has sufficient permission.
 

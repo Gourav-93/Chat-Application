@@ -7,11 +7,23 @@
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getPrivacySnapshot, subscribePrivacy } from "../../../shared/lib/privacyAccess";
 import { AuthContext } from "../../../app/AuthContext";
-import { createMessageHistoryService, mergeMessageReceipts } from "../services/MessageHistoryService";
+import { createMessageHistoryService, mergeMessageContent, mergeMessageReceipts } from "../services/MessageHistoryService";
 
 const EMPTY_MESSAGES = new Map();
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
+
+function applyVisibility(previous, { conversationId, mediaOnly }) {
+  const messages = new Map(previous.messages);
+  for (const [id, message] of messages) {
+    if (message.conversationId !== conversationId) continue;
+    if (!mediaOnly || (!message.text && !message.location)) messages.delete(id);
+    else messages.set(id, { ...message, attachments: [] });
+  }
+  return { ...previous, messages,
+    visibility: { conversationId, mediaOnly, version: (previous.visibility?.version || 0) + 1 },
+    revision: previous.revision + 1 };
+}
 
 export default function useChatSession() {
   const privacy = useSyncExternalStore(subscribePrivacy, getPrivacySnapshot);
@@ -202,9 +214,16 @@ export default function useChatSession() {
       void flushDelivery();
     };
     owner.service = createMessageHistoryService(token, expiresAt, {
+      onPresenceInvalidated: () => update((previous) => ({
+        ...previous, presence: new Map(), presenceRevision: (previous.presenceRevision || 0) + 1,
+      })),
+      onUserBlocksChanged: () => update((previous) => ({
+        ...previous, blockRevision: previous.blockRevision + 1,
+      })),
       onConversationsInvalidated: () => update((previous) => ({
         ...previous, revision: previous.revision + 1,
       })),
+      onVisibilityChanged: (event) => update((previous) => applyVisibility(previous, event)),
       onSessionReplaced: (message) => {
         if (!active) return;
         stopRecovery();
@@ -285,7 +304,7 @@ export default function useChatSession() {
           if (message.senderId.toLowerCase() !== id &&
               message.receiverId.toLowerCase() !== id) continue;
           if (JSON.stringify(messages.get(message.id)) === JSON.stringify(message)) continue;
-          messages.set(message.id, { ...message,
+          messages.set(message.id, { ...mergeMessageContent(messages.get(message.id), message),
             ...mergeMessageReceipts(messages.get(message.id), message) });
           changed = true;
         }
@@ -316,7 +335,7 @@ export default function useChatSession() {
     Promise.resolve().then(() => {
       if (!active) return;
       setState({ owner, messages: new Map(), receipts: new Map(), presence: new Map(),
-        receiptError: "", revision: 0, status: "connecting", error: "", failure: null, expired: false });
+        receiptError: "", revision: 0, blockRevision: 0, status: "connecting", error: "", failure: null, expired: false });
       checkExpiry();
       startConnection();
     });
@@ -335,13 +354,13 @@ export default function useChatSession() {
     state.owner.userId === userId && state.owner.expiresAt === expiresAt;
   const owner = current ? state.owner : null;
   const requiresSignIn = !validSession || Boolean(current && state.expired);
-  const send = useCallback(async (conversationId, text, attachmentIds = [], clientMessageId = null) => {
+  const send = useCallback(async (conversationId, text, attachmentIds = [], clientMessageId = null, location = null) => {
     if (!owner || requiresSignIn || sendRef.current) return false;
     const operation = { owner, conversationId };
     sendRef.current = operation;
     setSending({ ...operation, pending: true, error: "" });
     try {
-      await owner.service.send(conversationId, text, attachmentIds, clientMessageId);
+      await owner.service.send(conversationId, text, attachmentIds, clientMessageId, location);
       if (sendRef.current !== operation) return false;
       setSending({ ...operation, pending: false, error: "" });
       setState((previous) => previous?.owner === owner
@@ -362,8 +381,26 @@ export default function useChatSession() {
     if (owner && !requiresSignIn) owner.start();
   }, [owner, requiresSignIn]);
 
+  const editMessage = useCallback(async (messageId, text) => {
+    if (!owner || requiresSignIn) throw new Error("Your session is unavailable.");
+    const edited = await owner.service.editMessage(messageId, text);
+    if (edited) setState((previous) => {
+      if (previous?.owner !== owner) return previous;
+      const messages = new Map(previous.messages);
+      messages.set(edited.id, { ...mergeMessageContent(messages.get(edited.id), edited),
+        ...mergeMessageReceipts(messages.get(edited.id), edited) });
+      return { ...previous, messages, revision: previous.revision + 1 };
+    });
+  }, [owner, requiresSignIn]);
+
   const retryReceipts = useCallback(() => {
     if (owner && !requiresSignIn) owner.retryDeliveries();
+  }, [owner, requiresSignIn]);
+
+  const clearCachedVisibility = useCallback((conversationId, mediaOnly) => {
+    if (!owner || requiresSignIn) return;
+    setState((previous) => previous?.owner === owner
+      ? applyVisibility(previous, { conversationId, mediaOnly }) : previous);
   }, [owner, requiresSignIn]);
 
   // A selection guard is required so pending typing cannot target an old chat.
@@ -378,7 +415,7 @@ export default function useChatSession() {
   }, [owner, requiresSignIn]);
 
   return {
-    owner, userId, requiresSignIn, send, start, retryReceipts, setTyping, subscribeTyping,
+    owner, userId, requiresSignIn, send, editMessage, start, retryReceipts, setTyping, subscribeTyping, clearCachedVisibility,
     receipts: current && !requiresSignIn ? state.receipts : EMPTY_MESSAGES,
     presence: current && !requiresSignIn && state.status === "connected" ? state.presence : EMPTY_MESSAGES,
     receiptError: current ? state.receiptError : "",
@@ -386,7 +423,10 @@ export default function useChatSession() {
     error: current ? state.error : "",
     failure: current ? state.failure : null,
     revision: current ? state.revision : 0,
+    blockRevision: current ? state.blockRevision : 0,
+    presenceRevision: current ? state.presenceRevision || 0 : 0,
     messages: current && !requiresSignIn ? state.messages : EMPTY_MESSAGES,
+    visibility: current ? state.visibility : null,
     sending: sending?.owner === owner ? sending : null,
   };
 }

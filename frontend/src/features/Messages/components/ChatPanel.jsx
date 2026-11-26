@@ -8,13 +8,14 @@
  * 4. Preserve scroll position and keyboard focus during older-message pagination.
  */
 
-import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef } from "react";
-import { ArrowLeft, Check, CheckCheck, LoaderCircle, MessageCircleMore, UserRound } from "lucide-react";
+import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Check, CheckCheck, LoaderCircle, MessageCircleMore, Pencil, UserRound } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
 import emojiRegex from "emoji-regex";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
 import MessageComposer from "./MessageComposer";
 import MessageAttachments from "./MessageAttachments";
+import MessageLocation from "./MessageLocation";
 import { ChatActions } from "../../Conversations/Components/ConversationList";
 
 const OLDER_HISTORY_THRESHOLD = 120;
@@ -71,6 +72,7 @@ export default function ChatPanel({
   onTypingInput, stopTyping, isTyping = false,
   onConversationAction,
   actionBusy = false, pendingConversationId,
+  blocks,
 }) {
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
@@ -85,6 +87,15 @@ export default function ChatPanel({
   const retryButtonRef = useRef(null);
   const followBottomRef = useRef(true);
   const lastMessageRef = useRef(null);
+  const [editing, setEditing] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [editError, setEditError] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const conversation = selection?.conversation;
   const selectionKey = conversation
@@ -94,13 +105,14 @@ export default function ChatPanel({
   const displayName = getDisplayName(conversation?.otherUserName, mobile);
   const showMobile = Boolean(mobile && mobile !== displayName);
   const messages = history.messages;
-  const emojiOnlyByMessage = useMemo(() => messages.map(({ text, attachments }) =>
-    !attachments?.length && isEmojiOnly(text ?? ""),
+  const emojiOnlyByMessage = useMemo(() => messages.map(({ text, attachments, location }) =>
+    !location && !attachments?.length && isEmojiOnly(text ?? ""),
   ), [messages]);
   const busy = history.isLoading || history.isLoadingOlder;
   const muted = isDark ? "text-slate-400" : "text-slate-500";
   const activityAvailable = session.status === "connected" && !session.requiresSignIn;
-  const showTyping = activityAvailable && isTyping;
+  const blocked = blocks?.isBlocked(conversation?.otherUserId) ?? false;
+  const showTyping = activityAvailable && isTyping && !blocked;
   let recipientActivity = activityAvailable ? activity.label : "Activity unavailable";
   if (recipientActivity === "typing...") {
     const presence = session.presence.get(conversation?.otherUserId?.toLowerCase());
@@ -109,6 +121,38 @@ export default function ChatPanel({
   const activityError = activity.error || session.receiptError;
   const canLoadOlder = Boolean(selectionKey && history.hasMore && !busy &&
     !history.error && !history.requiresSignIn);
+
+  const activeEdit = editing?.selectionKey === selectionKey && !blocked && !session.requiresSignIn
+    ? editing.message : null;
+
+  const beginEdit = (message) => {
+    setEditing({ message, selectionKey });
+    setEditText(message.text);
+    setEditError("");
+  };
+  const cancelEdit = () => {
+    if (editBusy) return;
+    setEditing(null);
+    setEditError("");
+  };
+  const saveEdit = async () => {
+    if (!activeEdit || editBusy) return;
+    const text = editText.trim();
+    if (!text || text.length > 5000) {
+      setEditError("Message must contain 1 to 5,000 characters.");
+      return;
+    }
+    setEditBusy(true);
+    setEditError("");
+    try {
+      await session.editMessage(activeEdit.id, text);
+      setEditing(null);
+    } catch (error) {
+      setEditError(error?.message || "Unable to edit this message. You can retry.");
+    } finally {
+      setEditBusy(false);
+    }
+  };
 
   useEffect(() => {
     paginationFocusRef.current = null;
@@ -311,7 +355,9 @@ export default function ChatPanel({
           </p>
         </div>
         {typeof onBack === "function" && (
-          <ChatActions key={selectionKey} onClose={onBack} conversation={conversation} onAction={onConversationAction} actionBusy={actionBusy} pendingConversationId={pendingConversationId} />
+          <ChatActions key={selectionKey} onClose={onBack} conversation={conversation} onAction={onConversationAction} actionBusy={actionBusy} pendingConversationId={pendingConversationId}
+            isBlocked={blocked} blockBusy={blocks?.busy || blocks?.loading}
+            onBlock={() => blocked ? blocks.setBlocked(conversation, false) : onConversationAction("block", conversation)} />
         )}
       </header>
       {session.error && !session.failure?.retryable && !history.requiresSignIn && (
@@ -462,12 +508,22 @@ export default function ChatPanel({
                           "rounded-bl-md border border-slate-200 bg-white text-slate-900")}>
                       <span className="sr-only">{own ? "You" : displayName}: </span>
                       <MessageAttachments attachments={message.attachments} />
+                      <MessageLocation location={message.location} />
                       {message.text && <p className={"chat-flag-text whitespace-pre-wrap [overflow-wrap:anywhere] " +
                         (emojiOnly ? "text-3xl leading-tight sm:text-4xl" : "text-sm leading-5")}>
                         {message.text}
                       </p>}
                     </div>
-                    <div className={"mt-1 flex items-center justify-end gap-1 px-1 text-[11px] " + muted}>
+                    <div className={"mt-1 flex min-w-0 flex-wrap items-center justify-end gap-1 px-1 text-[11px] " + muted}>
+                      {message.editedAt && <span className="mr-auto">Edited</span>}
+                      {own && message.type === 0 && !message.attachments?.length &&
+                        currentTime <= Date.parse(message.sentAt) + 15 * 60 * 1000 && (
+                        <button type="button" onClick={() => beginEdit(message)}
+                          className="mr-1 inline-flex min-h-8 items-center gap-1 rounded px-1.5 text-[11px] font-medium hover:text-blue-400 focus-visible:outline-2 focus-visible:outline-blue-500"
+                          aria-label="Edit message">
+                          <Pencil size={12} aria-hidden="true" /> Edit
+                        </button>
+                      )}
                       {timestamp ? (
                         <time dateTime={timestamp.iso} title={timestamp.full} aria-label={timestamp.full}>
                           {timestamp.label}
@@ -506,11 +562,19 @@ export default function ChatPanel({
           </>
         )}
       </div>
-      <MessageComposer key={conversation.conversationId} conversationId={conversation.conversationId} value={draft} onChange={onDraftChange} onSend={onSend}
+      {blocked ? <div className="shrink-0 border-t border-slate-500/20 p-4 text-center">
+        <p className={`mb-2 text-sm ${muted}`}>You blocked this contact.</p>
+        <button type="button" disabled={blocks.busy} onClick={() => blocks.setBlocked(conversation, false)}
+          className="min-h-11 rounded-xl bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50">Unblock User</button>
+      </div> : <MessageComposer key={conversation.conversationId} conversationId={conversation.conversationId}
+        value={activeEdit ? editText : draft}
+        onChange={activeEdit ? (text) => { setEditText(text); setEditError(""); } : onDraftChange}
+        onSend={onSend} editing={activeEdit} onSaveEdit={saveEdit} onCancelEdit={cancelEdit}
         onTypingInput={onTypingInput} stopTyping={stopTyping}
-        pending={Boolean(session.sending?.pending)}
-        disabled={session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}
-        error={session.sending?.conversationId === conversation.conversationId ? session.sending.error : ""} />
+        pending={activeEdit ? editBusy : Boolean(session.sending?.pending)}
+        disabled={blocks?.loading || blocks?.busy || session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}
+        error={activeEdit ? editError : session.sending?.conversationId === conversation.conversationId ? session.sending.error : ""} />}
+      {blocks?.error && <p role="alert" className="px-4 py-2 text-sm">{blocks.error} <button type="button" className="min-h-11 underline" onClick={blocks.retry}>Retry</button></p>}
     </section>
   );
 }

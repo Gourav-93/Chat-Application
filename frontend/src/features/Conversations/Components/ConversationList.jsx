@@ -37,13 +37,7 @@ import { getDisplayName } from "../../../shared/lib/displayIdentity";
 
 // Shared by the list and chat header. Native popovers escape scroll clipping
 // while remaining inside the dashboard's privacy-activity boundary.
-export function ChatActions({
-  conversation,
-  onAction,
-  onClose,
-  actionBusy = false,
-  pendingConversationId,
-}) {
+export function ChatActions({ conversation, onAction, onClose, onBlock, isBlocked = false, blockBusy = false, actionBusy = false, pendingConversationId }) {
   const { isDark = true } = useContext(ThemeContext) || {};
   const [open, setOpen] = useState(false);
   const triggerRef = useRef(null);
@@ -144,36 +138,13 @@ export function ChatActions({
             close();
           }
         }}
-        className={`fixed m-0 w-48 overflow-y-auto rounded-xl border p-1 shadow-xl ${isDark ? "border-[#293854] bg-[#111d31] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}
-      >
-        <button
-          type="button"
-          disabled={actionBusy}
-          onClick={() => act("archive")}
-          className={itemClass}
-        >
-          {conversation.isArchived ? "Unarchive chat" : "Archive chat"}
-        </button>
-        <button
-          type="button"
-          disabled={actionBusy}
-          onClick={() => act(conversation.isLocked ? "unlock" : "lock")}
-          className={itemClass}
-        >
-          {conversation.isLocked ? "Remove chat lock" : "Lock chat"}
-        </button>
-        {onClose && (
-          <button
-            type="button"
-            onClick={() => {
-              close();
-              onClose();
-            }}
-            className={itemClass}
-          >
-            Close chat
-          </button>
-        )}
+        className={`fixed m-0 w-48 overflow-y-auto rounded-xl border p-1 shadow-xl ${isDark ? "border-[#293854] bg-[#111d31] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>
+        <button type="button" disabled={actionBusy} onClick={() => act("archive")} className={itemClass}>{conversation.isArchived ? "Unarchive chat" : "Archive chat"}</button>
+        <button type="button" disabled={actionBusy} onClick={() => act(conversation.isLocked ? "unlock" : "lock")} className={itemClass}>{conversation.isLocked ? "Remove chat lock" : "Lock chat"}</button>
+        {onBlock && <button type="button" disabled={actionBusy || blockBusy} onClick={() => { close(); onBlock(); }} className={itemClass}>{isBlocked ? "Unblock User" : "Block User"}</button>}
+        <button type="button" disabled={actionBusy} onClick={() => act("clear-messages")} className={itemClass}>Clear messages</button>
+        <button type="button" disabled={actionBusy} onClick={() => act("clear-media")} className={itemClass}>Clear media</button>
+        {onClose && <button type="button" onClick={() => { close(); onClose(); }} className={itemClass}>Close chat</button>}
       </div>
     </div>
   );

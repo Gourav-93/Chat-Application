@@ -1,6 +1,7 @@
 namespace Chat.Application.DTOs;
 public class MessageDto
 {
+  public LocationDto? Location { get; set; }
   public int Type {get;set;}
   public List<AttachmentDto> Attachments {get;set;}=[];
   public int Id {get; set;}
@@ -13,4 +14,5 @@ public class MessageDto
   public DateTime SentAt {get; set;}
   public DateTime? DeliveredAt { get; set; }
   public DateTime? ReadAt { get; set; }
+  public DateTime? EditedAt { get; set; }
 }

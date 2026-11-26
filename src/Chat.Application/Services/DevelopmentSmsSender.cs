@@ -15,7 +15,7 @@ public sealed class DevelopmentSmsSender(IHostEnvironment environment) : ISmsSen
         Console.ForegroundColor = ConsoleColor.Green;
 
         Console.WriteLine("\n========== DEVELOPMENT OTP ==========");
-        Console.WriteLine($"Mobile Number : {mobileNumber}");
+        Console.WriteLine("Mobile Number : [redacted]");
         Console.WriteLine($"OTP           : {otp}");
         Console.WriteLine($"Generated At  : {DateTime.UtcNow}");
         Console.WriteLine("=====================================\n");

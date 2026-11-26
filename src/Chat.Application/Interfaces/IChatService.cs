@@ -9,6 +9,8 @@ public interface IChatService
         SendMessageDto dto,
         Guid senderId);
 
+    Task<MessageDto> EditMessageAsync(int messageId, string? text, Guid senderId);
+
     Task<IReadOnlyList<MessageDto>> GetMessageAsync(
         int conversationId,
         Guid userId,
@@ -30,5 +32,7 @@ public interface IChatService
 
     Task<IReadOnlyList<MessageDto>> GetUndeliveredMessagesAsync(
     Guid recipientId);
+
+    Task ClearConversationAsync(int conversationId, Guid userId, bool mediaOnly);
 
 }

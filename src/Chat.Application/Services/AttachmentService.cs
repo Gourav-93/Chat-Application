@@ -43,6 +43,20 @@ public sealed class AttachmentService(
             FileSize = a.FileSize
         };
 
+    public static async Task<AttachmentDto> MapAvailableAsync(
+        MessageAttachment attachment, IFileStorageService storage)
+    {
+        var dto = Map(attachment);
+        try
+        {
+            dto.IsAvailable = !attachment.Deleting &&
+                await storage.ExistsAsync(attachment.StorageKey, CancellationToken.None);
+        }
+        catch (IOException) { /* Storage outages must not prevent reading chat history. */ }
+        catch (UnauthorizedAccessException) { /* Leave availability unknown for transient access failures. */ }
+        return dto;
+    }
+
     public async Task<AttachmentDto> UploadAsync(
         Guid user,
         int conversation,
@@ -194,8 +208,8 @@ public sealed class AttachmentService(
                 .Where(u => u.Id == user)
                 .ExecuteUpdateAsync(
                     s => s.SetProperty(
-                        u => u.UserName,
-                        u => u.UserName),
+                        u => u.IsMobileVerified,
+                        u => u.IsMobileVerified),
                     ct);
 
             // Recheck membership before saving metadata.
@@ -272,8 +286,11 @@ public sealed class AttachmentService(
                          c => c.Id == a.ConversationId &&
                               (c.UserAId == user ||
                                c.UserBId == user)) &&
-                     (a.MessageId != null ||
-                      (a.UploadedBy == user &&
+                     ((a.MessageId != null && (!a.Message!.IsDeliverySuppressed || a.Message.SenderId == user) &&
+                       !db.UserConversationSettings.Any(s => s.UserId == user && s.ConversationId == a.ConversationId &&
+                         ((s.MediaClearedAt != null && (a.Message.SentAt < s.MediaClearedAt || (a.Message.SentAt == s.MediaClearedAt && a.Message.Id <= s.MediaClearedThroughMessageId))) ||
+                          (s.MessagesClearedAt != null && (a.Message.SentAt < s.MessagesClearedAt || (a.Message.SentAt == s.MessagesClearedAt && a.Message.Id <= s.MessagesClearedThroughMessageId)))))) ||
+                      (a.MessageId == null && a.UploadedBy == user &&
                        a.ExpiresAt > now)),
                 ct);
 

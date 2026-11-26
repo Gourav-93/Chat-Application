@@ -84,6 +84,16 @@ export function mergeMessageReceipts(previous, incoming) {
   };
 }
 
+export function mergeMessageContent(previous, incoming) {
+  const previousEdit = Date.parse(previous?.editedAt || "");
+  const incomingEdit = Date.parse(incoming?.editedAt || "");
+  const newer = Number.isFinite(previousEdit) &&
+    (!Number.isFinite(incomingEdit) || previousEdit > incomingEdit)
+    ? previous : incoming;
+  return { ...previous, ...incoming, text: newer?.text ?? incoming?.text,
+    editedAt: newer?.editedAt ?? incoming?.editedAt ?? null };
+}
+
 export function createMessageHistoryService(
   token,
   expiresAt,
@@ -92,9 +102,12 @@ export function createMessageHistoryService(
     onState,
     onReceipt,
     onPresence,
+    onPresenceInvalidated,
     onTyping,
     onSessionReplaced,
     onConversationsInvalidated,
+    onVisibilityChanged,
+    onUserBlocksChanged,
   } = {},
 ) {
   if (
@@ -152,12 +165,16 @@ export function createMessageHistoryService(
     record.retired = true;
     record.connection.off("MessageHistory", record.handler);
     record.connection.off("ReceiveMessage", record.receiveHandler);
+    record.connection.off("MessageEdited", record.editedHandler);
+    record.connection.off("ConversationVisibilityChanged", record.visibilityHandler);
     record.connection.off("ConversationUnreadChanged", record.unreadHandler);
     record.connection.off("PendingMessages", record.pendingHandler);
     record.connection.off("PrivacyStateChanged", record.privacyHandler);
+    record.connection.off("UserBlockStateChanged", record.blockHandler);
     record.connection.off("PrivateMessageAvailable", record.privateMessageHandler);
     record.connection.off("MessageStatusUpdated", record.receiptHandler);
     record.connection.off("UserOnline", record.onlineHandler);
+    record.connection.off("PresenceRefresh", record.presenceRefreshHandler);
     record.connection.off("UserOffline", record.offlineHandler);
     record.connection.off("UserTyping", record.typingHandler);
     record.connection.off("SessionReplaced", record.replacedHandler);
@@ -358,6 +375,10 @@ export function createMessageHistoryService(
         onMessages?.(messages);
       };
       record.receiveHandler = (message) => receive([message]);
+      record.editedHandler = (message) => {
+        receive([message]);
+        invalidateConversations(record);
+      };
       record.pendingHandler = receive;
       record.presenceVersions = new Map();
       const liveRecord = () =>
@@ -384,7 +405,7 @@ export function createMessageHistoryService(
           !liveRecord() ||
           !data ||
           typeof data.userId !== "string" ||
-          data.isOnline !== isOnline
+          (data.isOnline !== isOnline && !(isOnline === false && data.isOnline === null))
         )
           return;
         const id = data.userId.toLowerCase();
@@ -392,7 +413,7 @@ export function createMessageHistoryService(
           id,
           (record.presenceVersions.get(id) || 0) + 1,
         );
-        onPresence?.({ ...data, isOnline });
+        onPresence?.({ ...data, isOnline: data.isOnline });
       };
       record.onlineHandler = (data) => presence(data, true);
       record.offlineHandler = (data) => presence(data, false);
@@ -436,8 +457,21 @@ export function createMessageHistoryService(
       connection.on("UserTyping", record.typingHandler);
       connection.on("MessageStatusUpdated", record.receiptHandler);
       connection.on("UserOnline", record.onlineHandler);
+      record.presenceRefreshHandler = () => {
+        if (!liveRecord()) return;
+        for (const [id, version] of record.presenceVersions) record.presenceVersions.set(id, version + 1);
+        onPresenceInvalidated?.();
+      };
+      connection.on("PresenceRefresh", record.presenceRefreshHandler);
       connection.on("UserOffline", record.offlineHandler);
       connection.on("ReceiveMessage", record.receiveHandler);
+      connection.on("MessageEdited", record.editedHandler);
+      record.visibilityHandler = (event) => {
+        if (!liveRecord() || !Number.isSafeInteger(event?.conversationId)) return;
+        onVisibilityChanged?.(event);
+        invalidateConversations(record);
+      };
+      connection.on("ConversationVisibilityChanged", record.visibilityHandler);
       connection.on("PendingMessages", record.pendingHandler);
       record.privacyHandler = (event) => {
         if (!liveRecord()) return;
@@ -445,6 +479,8 @@ export function createMessageHistoryService(
         else invalidateConversations(record);
       };
       connection.on("PrivacyStateChanged", record.privacyHandler);
+      record.blockHandler = () => { if (liveRecord()) onUserBlocksChanged?.(); };
+      connection.on("UserBlockStateChanged", record.blockHandler);
       record.privateMessageHandler = (event) => {
         if (!liveRecord() || typeof event?.acknowledgement !== "string") return;
         // This capability acknowledges transport delivery only and reveals no chat identity.
@@ -793,6 +829,7 @@ export function createMessageHistoryService(
       const record = current;
       const id = userId.toLowerCase();
       const version = record?.presenceVersions.get(id) || 0;
+      if (record) record.presenceVersions.set(id, version);
       const response = await command("GetUserStatus", [userId], isCurrent);
       const status = response.result;
       // A newer push event wins over a late presence snapshot.
@@ -806,7 +843,7 @@ export function createMessageHistoryService(
         status &&
         typeof status.userId === "string" &&
         status.userId.toLowerCase() === id &&
-        typeof status.isOnline === "boolean"
+        (typeof status.isOnline === "boolean" || status.isOnline === null)
       ) {
         onPresence?.(status);
       } else {
@@ -826,13 +863,13 @@ export function createMessageHistoryService(
       return connect();
     },
 
-    async send(conversationId, value, attachmentIds = [], clientMessageId = null) {
+    async send(conversationId, value, attachmentIds = [], clientMessageId = null, location = null) {
       checkSession();
       const text = value.trim();
       if (
         !Number.isInteger(conversationId) ||
         conversationId < 1 ||
-        (!text && !attachmentIds.length) ||
+        (!text && !attachmentIds.length && !location) ||
         text.length > 5000
       ) {
         throw new Error("Enter a message containing 1 to 5,000 characters.");
@@ -857,6 +894,7 @@ export function createMessageHistoryService(
           text,
           attachmentIds,
           clientMessageId,
+          ...(location ? { location } : {}),
         });
       });
       const timeout = new Promise((_, reject) => {
@@ -879,6 +917,27 @@ export function createMessageHistoryService(
         );
       } finally {
         window.clearTimeout(timer);
+        finishForegroundWork();
+      }
+    },
+
+    async editMessage(messageId, value) {
+      checkSession();
+      const text = value.trim();
+      if (!Number.isInteger(messageId) || messageId < 1 || text.length < 1 || text.length > 5000)
+        throw new Error("Message must contain 1 to 5,000 characters.");
+      const record = current;
+      if (!record || record.retired || record.connection.state !== HubConnectionState.Connected)
+        throw new Error("Chat is disconnected. Connect before editing.");
+      foregroundWork++;
+      try {
+        const message = await record.connection.invoke("EditMessage", messageId, { text });
+        checkSession();
+        if (record.retired || current !== record) throw new Error("Connection changed.");
+        return message;
+      } catch (error) {
+        throw new Error(error?.message || "Unable to edit this message.", { cause: error });
+      } finally {
         finishForegroundWork();
       }
     },

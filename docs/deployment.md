@@ -16,6 +16,9 @@ This table is the documentation source of truth for setting names and defaults. 
 
 | Configuration / environment variable | Default and requirements |
 | --- | --- |
+| `DataProtection__EncryptionKeys__v1`, `DataProtection__CurrentEncryptionKeyVersion` | Mandatory base64 32-byte encryption key ring; current version defaults to v1 and must exist. Preserve older versions for existing rows. |
+| `DataProtection__LookupHashKey` | Mandatory independent base64 32-byte lookup key, distinct from encryption keys. Never replace it in place for an existing protected database. |
+| `DataProtection__LegacyColumnsPresent` | true during expansion/backfill; false only after the separately approved plaintext-removal migration. See [ordered deployment](database-protection.md). |
 | `ASPNETCORE_ENVIRONMENT` | Native environment selection. Local launch profiles select Development. Set Staging or Production on deployment. |
 | `ConnectionStrings__DefaultConnection` | Mandatory SQL Server string with Server and Database. Development uses the key/name documented in the root README. Staging/Production require this environment variable and a deployment-specific database. |
 | `Jwt__Key` | Mandatory non-placeholder HS256 signing secret of at least 32 UTF-8 bytes. Staging/Production require this environment variable. |
@@ -81,6 +84,8 @@ Serve `frontend/dist` from an HTTPS static server. Route `/api/*`, `/hubs/chat` 
 
 ## Staging and production procedure
 
+For releases containing location sharing, obtain approval and apply `AddMessageLocation` to the verified runtime database before starting the updated backend. Serve the frontend over HTTPS, permit geolocation in any hosting Permissions-Policy, and permit the OpenStreetMap iframe in any applicable Content-Security-Policy. No location API key or attachment feature flag is required. See [location deployment requirements](location-sharing.md#browser-and-deployment-requirements) and the pending real-browser/database checklist before release.
+
 1. Provision separate database identities, database names, JWT settings and OTP hashing secrets for each environment. Have the database owner review the existing migration baseline and backup/recovery plan through the [database guide](database-setup.md).
 2. From the repository root, restore and publish the backend.
 
@@ -90,7 +95,7 @@ Serve `frontend/dist` from an HTTPS static server. Route `/api/*`, `/hubs/chat` 
    ```
 
    The framework-dependent output is `bin/Release/net10.0/publish`. Install the matching ASP.NET Core runtime or Hosting Bundle on the host. Build and deploy the frontend separately using the process above.
-3. Inject the reviewed settings from the configuration reference, including `ASPNETCORE_ENVIRONMENT=Staging` or `Production`, the three required secret variables, issuer, audience and public hostnames. Ensure the host sets both environment variables consistently if it supplies `DOTNET_ENVIRONMENT` as well.
+3. Inject the reviewed settings from the configuration reference, including `ASPNETCORE_ENVIRONMENT=Staging` or `Production`, the existing JWT/OTP/database settings, the new database encryption key ring/lookup key, issuer, audience and public hostnames. Follow the [database protection deployment order](database-protection.md#manual-powershell-sequence) before starting this release. Ensure the host sets both environment variables consistently if it supplies `DOTNET_ENVIRONMENT` as well.
 4. For direct hosting, run `dotnet Two-Way-Com.dll` from the published directory under a supervised service identity. Use native Kestrel HTTPS/certificate settings for a public listener. The loopback HTTP listener in the root environment template is an internal-listener example for a correctly configured TLS-terminating host.
 5. For Windows/IIS, install the .NET 10 Hosting Bundle and WebSocket support, configure an HTTPS binding, deploy generated `web.config` with the backend files, and use one application worker. IIS integration handles forwarding from its trusted module. [Microsoft IIS guidance](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/iis/?view=aspnetcore-10.0)
 6. For another reverse proxy, configure explicit trusted forwarded headers before TLS offload and verify original request scheme/client address. This implementation relies on host-appropriate configuration for those scenarios. [Microsoft proxy guidance](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0)

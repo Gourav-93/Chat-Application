@@ -19,16 +19,23 @@ namespace Chat.Api.Controllers;
 public class ConversationsController : ControllerBase
 {
     private readonly IConversationService _conversationService;
+    private readonly IChatService _chatService;
     private readonly PrivacyService _privacy;
     private readonly IHubContext<ChatHub> _hub;
+    private readonly PrivacyRealtime _privateEvents;
+    private readonly ILogger<ConversationsController> _logger;
     private string? PrivacyToken => Request.Headers["X-Privacy-Token"].FirstOrDefault();
 
     public ConversationsController(
-        IConversationService conversationService, PrivacyService privacy, IHubContext<ChatHub> hub)
+        IConversationService conversationService, IChatService chatService, PrivacyService privacy, IHubContext<ChatHub> hub,
+        ILogger<ConversationsController> logger, PrivacyRealtime privateEvents)
     {
         _conversationService = conversationService;
+        _chatService = chatService;
         _privacy = privacy;
         _hub = hub;
+        _logger = logger;
+        _privateEvents = privateEvents;
     }
 
     // ==========================================
@@ -122,6 +129,33 @@ public class ConversationsController : ControllerBase
         var flags = await _conversationService.GetSectionAvailabilityAsync(userId);
         return Ok(new { flags.HasArchivedChats, flags.HasLockedChats });
     }
+
+    [HttpPost("{id:int}/clear-messages")]
+    public Task<IActionResult> ClearMessages(int id) => Clear(id, false);
+
+    [HttpPost("{id:int}/clear-media")]
+    public Task<IActionResult> ClearMedia(int id) => Clear(id, true);
+
+    private async Task<IActionResult> Clear(int id, bool mediaOnly)
+    {
+        var (userId, sessionId) = PrivacyService.Identity(User);
+        await _privacy.RequireConversationAsync(userId, sessionId, id, PrivacyToken);
+        try
+        {
+            await _chatService.ClearConversationAsync(id, userId, mediaOnly);
+            try
+            {
+                await _privateEvents.SendWhileUserGateHeldAsync(userId, id, "ConversationVisibilityChanged", new { conversationId = id, mediaOnly });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Conversation {ConversationId} was cleared but realtime notification failed", id);
+            }
+            return Ok(new { conversationId = id, mediaOnly });
+        }
+        catch (UnauthorizedAccessException) { return NotFound(new { message = "Conversation unavailable." }); }
+    }
+
 
     [HttpPut("{id:int}/lock")]
     [EnableRateLimiting("privacy-pin")]

@@ -34,14 +34,14 @@ public sealed class PrivacyService(ChatDbContext db, PrivacyPinHasher hasher,
         .Select(c => c.Id).SingleAsync();
 
     public Task<List<int>> PendingLockedIdsAsync(Guid userId) => db.Messages.AsNoTracking()
-        .Where(m => m.SenderId != userId && m.DeliveredAt == null &&
+        .Where(m => !m.IsDeliverySuppressed && m.SenderId != userId && m.DeliveredAt == null &&
             (m.Conversation.UserAId == userId || m.Conversation.UserBId == userId) &&
             db.UserConversationSettings.Any(s => s.UserId == userId && s.ConversationId == m.ConversationId && s.IsLocked))
         .OrderBy(m => m.Id).Select(m => m.Id).Take(Options.MaximumDeliveryAcknowledgements).ToListAsync();
 
     public async Task<int> MessageConversationAsync(int messageId, Guid userId)
     {
-        var id = await db.Messages.Where(m => m.Id == messageId &&
+        var id = await db.Messages.Where(m => m.Id == messageId && (!m.IsDeliverySuppressed || m.SenderId == userId) &&
             (m.Conversation.UserAId == userId || m.Conversation.UserBId == userId))
             .Select(m => (int?)m.ConversationId).SingleOrDefaultAsync();
         return id ?? throw new PrivacyException(404, "conversation_unavailable", "Conversation unavailable.");

@@ -6,6 +6,8 @@ Start with the [root README](../README.md#local-setup) for backend configuration
 
 The application uses React, JavaScript/JSX, Vite, React Router, Tailwind CSS, Axios, SignalR, and Lucide React. Declared dependencies are in [package.json](package.json); exact resolved versions are in [package-lock.json](package-lock.json).
 
+Use stable Node 22.22.2+ within 22.x or a compatible newer LTS release, including the minimum required by jsdom. Existing teammates should run `npm.cmd ci` after pulling the updated lockfile and keep their existing ignored environment files. Backend setup must include `AddUserBlocking` and the later `AddMessageLocation`; see [blocking teammate updates](../docs/user-blocking.md#i-local-team-update-commands) and [location setup](../docs/location-sharing.md#migration-and-teammate-setup).
+
 Run these commands from `frontend`. On platforms other than Windows, use `npm`.
 
 | Command | Purpose |
@@ -13,6 +15,7 @@ Run these commands from `frontend`. On platforms other than Windows, use `npm`.
 | `npm.cmd ci` | Install dependencies from the lockfile. |
 | `npm.cmd run dev` | Start the development server. |
 | `npm.cmd run lint` | Run ESLint and React rules. |
+| `npm.cmd run test` | Run Vitest component/hook tests in jsdom; no backend, SQL database or OTP is required. |
 | `npm.cmd run build` | Create the production assets in `dist`. |
 | `npm.cmd run build -- --mode staging` | Build using staging-mode public configuration. |
 | `npm.cmd run preview` | Preview the already-built static frontend locally. |
@@ -43,6 +46,8 @@ The local development template enables `VITE_ENABLE_INVITATION_PREVIEW`. Existin
 | [src/features/Conversations/Pages/ChatPage.jsx](src/features/Conversations/Pages/ChatPage.jsx) | Dashboard, selection, drafts, and integration of messaging hooks. |
 | [src/features/Conversations/Components/ConversationList.jsx](src/features/Conversations/Components/ConversationList.jsx) | Searchable summaries, unread display, request status, and selection. |
 | [src/features/Conversations/Components/NewChatDialog.jsx](src/features/Conversations/Components/NewChatDialog.jsx) | Verified mobile lookup and conversation creation/reuse. |
+| [src/features/Conversations/Hooks/useUserBlocks.js](src/features/Conversations/Hooks/useUserBlocks.js) | Loads own outgoing blocks, guards duplicate mutations and rejects stale responses. |
+| [src/features/Conversations/Components/UserBlockingDialog.jsx](src/features/Conversations/Components/UserBlockingDialog.jsx) | Block confirmation and profile blocked-users management. |
 | [src/features/Messages/components/ChatPanel.jsx](src/features/Messages/components/ChatPanel.jsx) | History, receipt display, pagination, header, and composer integration. |
 | [src/features/Messages/components/MessageComposer.jsx](src/features/Messages/components/MessageComposer.jsx) | Draft input, send controls, and typing callbacks. |
 | [src/features/Messages/hooks/useChatSession.js](src/features/Messages/hooks/useChatSession.js) | Shared transport ownership, message buffers, delivery acknowledgements, and events. |
@@ -52,23 +57,37 @@ The local development template enables `VITE_ENABLE_INVITATION_PREVIEW`. Existin
 
 The existing directory capitalization varies between feature folders. Follow the actual import paths when working on case-sensitive systems. The [system overview](../docs/system-overview.md) owns the API and SignalR contract reference.
 
+## Location sharing integration
+
+`MessageComposer` adds Location beside Image and Document. The menu remains usable independently of attachment capabilities; existing file options retain their enabled/disabled restrictions. [useLocationSelection.js](src/features/Messages/hooks/useLocationSelection.js) requests geolocation only after selection, handles errors/retry, and ignores stale callbacks. [MessageLocation.jsx](src/features/Messages/components/MessageLocation.jsx) renders the preview, persistent coordinate fallback and Maps action in both themes.
+
+The optional location argument follows `ChatPage` -> `useChatSession` -> `MessageHistoryService` -> the existing `SendMessage` hub method. Live and history rendering uses `MessageDto.location`. The backend requires `AddMessageLocation` before this version runs. See [location setup, contracts and verification](../docs/location-sharing.md); no new frontend environment variables or packages are needed.
+
+## Blocking and presence integration
+
+The chat header exposes Block User / Unblock User; the profile menu opens Blocked users. A user's own outgoing block replaces the entire composer with an Unblock User control. A recipient-owned block does not disable the sender's composer or expose a blocking banner. Persisted null delivery/read timestamps keep suppressed messages at one tick after refresh and unblock.
+
+When Gourav blocks Shree, Shree sees neither Gourav's Online nor Last seen. `GetUserStatus` and live presence events return neutral `isOnline: null` and `lastSeenAt: null` for that viewer; render no presence label for this state. `false` still means an ordinary offline contact, whose permitted last-seen timestamp can be displayed. The opposite direction remains unchanged unless Shree independently blocks Gourav.
+
+`UserBlockStateChanged` invalidates only the owner's outgoing block list. An empty `PresenceRefresh` event clears cached presence and refetches the selected contact after a relationship changes. It contains no contact ID or block state and renders no notification. Presence event versions reject older in-flight snapshots. Block/unblock uses the existing connection and leaves message history and selection intact.
+
+After installing a new version, restart the backend/Vite processes and refresh existing tabs once to load the code. Subsequent block/unblock and presence changes synchronize without another refresh. Use the [two-account checklist](../docs/user-blocking.md#two-account-acceptance-checklist) to verify actual browser behavior.
+
+## Automated regression tests
+
+Run `npm.cmd run test` from `frontend`. [vitest.config.js](vitest.config.js) selects `tests/**/*.test.{js,jsx}` and uses jsdom. [tests/userBlocking.test.jsx](tests/userBlocking.test.jsx) covers composer replacement, restored input, persistent single ticks, submission guards, confirmation, profile management, request failures/duplicate clicks, stale responses and neutral/normal presence rendering.
+
+The location implementation run on 25 November 2026 passed 26 tests, with lint and production build also passing (a bundle-size warning remains). The 9 existing blocking tests were unchanged. [tests/locationSharing.test.jsx](tests/locationSharing.test.jsx) adds 13 UI/lifecycle tests, and [tests/locationTransport.test.js](tests/locationTransport.test.js) adds 4 mocked send/live/reconnect/history compatibility tests. API calls, geolocation and SignalR are mocked; these checks do not establish actual network reconnect, SQL concurrency, OTP or browser layout behavior. The backend test project remains absent; a standalone file-based backend check is documented in the [location guide](../docs/location-sharing.md#verification). Use the manual two-account checklists for remaining acceptance.
+
 ## Integration baseline
 
-From the repository root, the opt-in test command is:
-
-```powershell
-node --test frontend/tests/chat-lock.integration.test.js
-```
-
-From `frontend`, the equivalent path is `node --test tests/chat-lock.integration.test.js`. The file documents its environment variables, timeouts, event capture, and cleanup. Missing fixture configuration produces explicit skips. Configured runs persist identifiable messages, so use dedicated accounts and a reviewed test database.
-
-**Compatibility issue requiring review:** this test currently validates GUID conversation IDs following a reported external-backend result. This checkout's entity, migration, DTOs, hub methods, and production frontend expect integer conversation IDs. Match the test to the intended backend version before running live scenarios. The baseline's filename describes its future use; its implemented scenarios exercise existing messaging and connection lifecycle. Scenario C's disconnected-client assertion checks lifecycle. Authorization isolation requires additional connected-client tests when that feature is implemented.
+Earlier documentation referenced `frontend/tests/chat-lock.integration.test.js`; that file is absent in this checkout. Use the checked-in Vitest suite above and the documented manual two-account checklist. Conversation IDs are integers in the current entities, migrations, DTOs and hub contract. Any future live integration fixture must match this contract and use dedicated accounts on an approved local test database.
 
 ## Verification status and known limitations
 
 Lint and production build checks are repeatable through the scripts above. Historical browser observations are recorded in the [OTP/session guide](../docs/otp-only-auth.md#historical-verification). Full browser regression remains open for OTP expiry/cooldown, JWT expiry, pagination, hidden-tab reads, typing, presence, mobile layouts, accessibility, and network failures.
 
-The transport currently offers manual start/retry. A possible typing/presence subscription gap after rapid reconnect transitions was previously reported as unconfirmed. Read/delivery events missed while offline can leave sender ticks stale until a later status refresh. Reconnect reconciliation needs dedicated verification.
+The session hook coordinates automatic recovery and retry alongside explicit activity retries. Rapid reconnect, missed receipt events and browser network transitions still need dedicated end-to-end verification. The presence privacy fix has component/service regression coverage; full two-browser verification remains a separate check.
 
 ## Development practices
 
