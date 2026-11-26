@@ -5,16 +5,27 @@
  * 1. Display a generic avatar, the authenticated name, and a secondary mobile number.
  * 2. Invoke the existing authentication logout action.
  * 3. Support themes, responsive sizing, and accessible dismissal.
+ * 4. Offer PIN management and PIN-authorized Chat Lock settings recovery.
  */
 
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import { LoaderCircle, LockKeyhole, LogOut, UserRound } from "lucide-react";
+import {
+  LoaderCircle,
+  LockKeyhole,
+  LogOut,
+  RotateCcw,
+  UserRound,
+} from "lucide-react";
 import { AuthContext } from "../../../app/AuthContext";
 import { ThemeContext } from "../../../app/ThemeContext";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
- 
 
-export default function ProfileMenu({ pinConfigured, onManagePrivacyPin, actionBusy = false }) {
+export default function ProfileMenu({
+  pinConfigured,
+  onManagePrivacyPin,
+  onResetChatLockSettings,
+  actionBusy = false,
+}) {
   const auth = useContext(AuthContext);
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
@@ -25,7 +36,8 @@ export default function ProfileMenu({ pinConfigured, onManagePrivacyPin, actionB
   const panelId = useId();
   const nameId = useId();
 
-  const userName = typeof auth?.user?.userName === "string" ? auth.user.userName.trim() : "";
+  const userName =
+    typeof auth?.user?.userName === "string" ? auth.user.userName.trim() : "";
   const mobileNumber =
     typeof auth?.user?.mobileNumber === "string"
       ? auth.user.mobileNumber.trim()
@@ -106,17 +118,23 @@ export default function ProfileMenu({ pinConfigured, onManagePrivacyPin, actionB
               (isDark ? "border-[#293854]" : "border-slate-200")
             }
           >
-            <p className={
-              "mb-1 text-xs " +
-              (isDark ? "text-slate-400" : "text-slate-500")
-            }>
+            <p
+              className={
+                "mb-1 text-xs " + (isDark ? "text-slate-400" : "text-slate-500")
+              }
+            >
               Signed in as
             </p>
             <h2 id={nameId} className="break-words text-sm font-semibold">
               {getDisplayName(userName, mobileNumber)}
             </h2>
             {mobileNumber && (
-              <p className={"mt-1 break-words text-xs " + (isDark ? "text-slate-400" : "text-slate-500")}>
+              <p
+                className={
+                  "mt-1 break-words text-xs " +
+                  (isDark ? "text-slate-400" : "text-slate-500")
+                }
+              >
                 {mobileNumber}
               </p>
             )}
@@ -135,14 +153,52 @@ export default function ProfileMenu({ pinConfigured, onManagePrivacyPin, actionB
               }}
               className={
                 "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 aria-disabled:opacity-50 " +
-                (isDark ? "text-slate-200 hover:bg-white/5" : "text-slate-700 hover:bg-slate-100")
+                (isDark
+                  ? "text-slate-200 hover:bg-white/5"
+                  : "text-slate-700 hover:bg-slate-100")
               }
             >
-              {actionBusy ? <LoaderCircle size={18} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <LockKeyhole size={18} aria-hidden="true" />}
-              {pinConfigured === true ? "Change privacy PIN" : pinConfigured === false ? "Set privacy PIN" : "Privacy PIN"}
+              {actionBusy ? (
+                <LoaderCircle
+                  size={18}
+                  className="animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : (
+                <LockKeyhole size={18} aria-hidden="true" />
+              )}
+              {pinConfigured === true
+                ? "Change privacy PIN"
+                : pinConfigured === false
+                  ? "Set privacy PIN"
+                  : "Privacy PIN"}
             </button>
+            {pinConfigured === true && (
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                aria-disabled={actionBusy}
+                onClick={() => {
+                  if (actionBusy) return;
+                  triggerRef.current?.focus();
+                  setIsOpen(false);
+                  onResetChatLockSettings?.(triggerRef.current);
+                }}
+                className={
+                  "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 aria-disabled:opacity-50 " +
+                  (isDark
+                    ? "text-slate-200 hover:bg-white/5"
+                    : "text-slate-700 hover:bg-slate-100")
+                }
+              >
+                <RotateCcw size={18} className="shrink-0" aria-hidden="true" />
+                Reset chat lock settings
+              </button>
+            )}
           </div>
-          <div className={`border-t p-2 ${isDark ? "border-[#293854]" : "border-slate-200"}`}>
+          <div
+            className={`border-t p-2 ${isDark ? "border-[#293854]" : "border-slate-200"}`}
+          >
             <button
               type="button"
               disabled={typeof auth?.logout !== "function"}

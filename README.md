@@ -2,6 +2,8 @@
 
 Sandesh is a real-time, one-to-one chat application with mobile OTP sign-in, persistent message history, private image and document sharing, and a responsive React interface. The backend is one ASP.NET Core project, and the frontend is a separate Vite application.
 
+Sandesh also supports per-user hiding of the Locked Chats folder and temporary access through an exact Secret Code match while hiding is enabled.
+
 ## Features and status
 
 - Mobile OTP sign-in and first-time profile completion.
@@ -12,6 +14,8 @@ Sandesh is a real-time, one-to-one chat application with mobile OTP sign-in, per
 - Live messages, paginated history, unread counts, delivery/read receipts, typing, presence, and last seen.
 - Responsive chat navigation, dark/light themes, and a profile menu.
 - Per-user PIN-protected Locked Chats and independent Archive, shown as chat-list folders only when nonempty. Locked Chats relock on section exit or five minutes of inactivity; direct interactions renew access while incoming messages do not. Configure the privacy pepper and manually apply the additive migration before use; see [Chat Privacy setup and verification](docs/chat-privacy.md).
+- A nonempty Locked Chats folder can be hidden per user. While hiding is enabled, an exact Secret Code match reveals the folder and issues a temporary privacy grant. With hiding disabled, the existing Privacy PIN opens Locked Chats.
+- PIN authorization is required for Secret Code settings changes and recovery. Disabling the code turns off hiding and preserves individual conversation locks, archive state, messages, and attachments. The feature requires the additive `AddSecretCodeToUserPrivacySettings` migration. Secret Code verification has no dedicated throttling or lockout. See [Hide Locked Chats and Secret Code](docs/hide-locked-chats.md).
 
 - Image and document sharing through the message composer's `+` menu, with separate Image and Document file pickers, optional captions, and authorized downloads. The current frontend testing implementation selects one file per message; the backend supports multiple attachments.
 - Private REST uploads/downloads, file size and content validation, attachment ownership, Locked Chat authorization, pending upload cancellation and expiry cleanup. SignalR carries attachment metadata rather than file bytes.
@@ -82,6 +86,7 @@ docs/
   README.md                 Documentation index
   database-setup.md
   chat-privacy.md
+  hide-locked-chats.md      Secret Code setup, migration, APIs, and verification
   image-document-sharing.md  Attachment setup, API contract and verification
   deployment.md             Canonical configuration reference and deployment
   system-overview.md
@@ -115,6 +120,8 @@ git status --short
 ```
 
 Select the team's approved branch or release before setup. The earlier baseline documentation was reviewed on `stabilization/v1`; select the team-approved branch containing the attachment feature for this setup. Check that the selected version includes the configuration files shown above.
+
+To use Hide Locked Chats, select a team-approved branch or release that includes the Secret Code implementation and its checked-in migration. This applies to both a clone and a ZIP download.
 
 For a ZIP, select the approved branch/tag on GitHub, choose **Code > Download ZIP**, extract it, and open a terminal in the extracted directory containing `Two-Way-Com.csproj`. Skip Git commands when using a ZIP. The archive contains source and templates; create User Secrets on your own machine and install dependencies separately.
 
@@ -172,6 +179,8 @@ dotnet user-secrets set "Privacy:PepperKeys:v1" ([Convert]::ToBase64String($priv
 The default `Privacy:CurrentPepperVersion` is `v1`. Keep an existing pepper: replacing it prevents verification of PINs created with that key. If startup reports `Privacy requires a valid pepper key ring`, check that the selected version has a secret of at least 32 bytes. `.env.example` documents deployment variables; `dotnet run` does not load a `.env` file automatically. See [chat privacy configuration](docs/chat-privacy.md#configuration-and-hashing) for key rotation details.
 
 **After updating an existing checkout:** do not regenerate JWT, OTP, or privacy keys. If the privacy pepper is missing, use the [guarded terminal command for existing installations](docs/chat-privacy.md#existing-installation-after-updating). It preserves an existing `v1` User Secret and creates one only when absent. Restart the backend after configuring a missing secret.
+
+Hide Locked Chats and Secret Code reuse the existing privacy pepper. They require no additional Secret Code-specific User Secrets or backend packages. Keep the existing JWT, OTP, privacy pepper keys, and database configuration when updating. Saved Privacy PINs and Secret Codes depend on the pepper version recorded with each verifier. See [Secret Code configuration and hashing](docs/hide-locked-chats.md#configuration-and-hashing).
 
 Choose the SQL Server instance you installed. The following connection example targets Windows LocalDB with integrated authentication. Replace the Server portion for SQL Server Express or another approved development instance, then run from the repository root.
 
@@ -250,7 +259,10 @@ The expected migration sequence for this feature is:
 20261120130000_InitialCreate
 20261123180036_AddChatPrivacyAndArchive
 20261124071343_AddMessageAttachments
+20261125105245_AddSecretCodeToUserPrivacySettings
 ```
+
+The Secret Code migration adds 11 columns to `UserPrivacySettings` and preserves existing records. Existing accounts start with hiding disabled and no configured Secret Code. See [Secret Code migration instructions](docs/hide-locked-chats.md#additive-migration-manual-execution) and [database schema details](docs/database-setup.md#secret-code-and-hide-locked-chats-migration).
 
 After reviewing the target and pending migrations, apply them manually:
 
@@ -316,6 +328,10 @@ The hub URL is consumed by a SignalR client. The health endpoint confirms proces
 
 7. In an existing conversation, select `+`, choose Image or Document, select a supported file and send it with or without a caption. Check that the recipient receives the attachment, can view/download it and can retrieve it after refresh.
 8. Verify the attachment metadata in the actual local runtime database and the original binary file under `private-uploads/`. Use dedicated test data only.
+9. Configure the Privacy PIN on a dedicated test account and use it to lock a test conversation.
+10. Set and confirm a Secret Code and enable Hide Locked Chats. Verify that the folder stays hidden after entering an incorrect code and appears when you enter the exact code in chat search.
+11. Open the revealed folder and verify temporary access. Check that leaving Locked Chats or reaching five minutes of inactivity relocks it.
+12. Use the current Privacy PIN to recover from a forgotten code by disabling Secret Code. Verify that the restored folder still requires the PIN and that the existing chat locks and conversation history are preserved.
 
 ### Existing teammates after pulling the attachment feature
 
@@ -330,6 +346,12 @@ dotnet build Two-Way-Com.csproj
 ```
 
 Follow [Configure image and document sharing](#configure-image-and-document-sharing) to set all 12 attachment User Secrets. Preserve existing JWT, OTP, privacy and database secrets. Follow [Create or update your development database](#3-create-or-update-your-development-database) using your own verified local connection. Then update frontend dependencies and restart both applications using steps 4–6. The [attachment guide](docs/image-document-sharing.md#existing-installation-after-updating) provides the feature-specific update procedure.
+
+### Existing teammates after pulling the Hide Locked Chats feature
+
+Stop the running backend and frontend and obtain the approved update. Restore backend dependencies using [step 1](#1-restore-backend-dependencies-and-ef-tooling). Preserve your existing configuration and secrets, including the privacy pepper described in [step 2](#2-configure-backend-user-secrets).
+
+Use [step 3](#3-create-or-update-your-development-database) to verify your own development database connection, confirm a recoverable backup, review pending migrations, and apply the checked-in migration. If the checkout requires updated frontend dependencies, follow [step 4](#4-configure-and-install-the-frontend). Restart the [backend](#5-start-the-backend) and [frontend](#6-start-the-frontend), then follow [step 7](#7-sign-in-and-test-chat) with dedicated test accounts. The [Secret Code guide](docs/hide-locked-chats.md#existing-installation-after-updating) provides the feature-specific update procedure.
 
 ## Configuration and environments
 
@@ -358,6 +380,8 @@ Staging and Production currently register `UnconfiguredSmsSender`. Successful pu
 
 Production attachment release remains blocked until the company's MySQL provider/schema and migration history, persistent private storage, and approved malware scanner are validated. The current repository uses SQL Server; the company-reported MySQL environment has not been integrated. Keep new attachment uploads disabled outside Development until these requirements and deployment checks are satisfied. Existing attachments require their storage to remain available. Orphan-file reconciliation and per-file cleanup error isolation remain follow-up improvements.
 
+Use the checked-in Secret Code migration only on SQL Server. The company's MySQL environment requires a separate, reviewed migration procedure. Local verification does not establish production compatibility or readiness.
+
 Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/` or `obj/`. Review `git status` and `.gitignore` before pushing. User Secrets and local uploaded files are not transferred by Git pull.
 
 ## Common errors
@@ -376,6 +400,10 @@ Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/
 | OTP request returns 429 | Wait for the configured cooldown or rate-limit window. |
 | Protected API returns 401 or `SessionReplaced` arrives | The token expired, the account session was replaced, or logout revoked it. Sign in again. |
 | Messages, history, or typing fail | Inspect the hub connection, active session, and WebSocket routing. Check the contract version of the running backend. |
+| Secret Code does not reveal Locked Chats | Check that hiding is enabled and a code is configured. Enter the full code, including its case and spacing. A mismatch returns an empty `204`. |
+| Secret Code settings or chat lock removal returns `403` | Removing an existing lock requires a valid PIN-issued privacy grant. Changing Secret Code settings accepts that grant or the current Privacy PIN. |
+| SQL reports missing Secret Code columns | Check whether `20261125105245_AddSecretCodeToUserPrivacySettings` is applied to the actual runtime database. Follow [step 3](#3-create-or-update-your-development-database) to review and apply the checked-in migration. |
+| Secret Code verification returns `503 privacy_unavailable` | Check that the existing key ring includes the pepper version recorded with the credential and that the stored verifier metadata is supported. If a key is missing, restore its original value. See [Secret Code configuration and hashing](docs/hide-locked-chats.md#configuration-and-hashing). |
 
 | EF CLI targets `Sandesh_DesignOnly` or reports missing LocalDB runtime | Use the explicit verified local connection with `--connection` as shown in step 3. |
 | `MessageAttachments` has no rows after sending | Confirm the runtime database matches the queried database; inspect the upload response and configured storage directory. |
@@ -417,9 +445,12 @@ Get-ChildItem .\private-uploads -Force
 
 Verify authorized downloads, rejection of unauthorized users and invalid files, captions, pending cancellation, offline delivery, refresh and backend restart persistence with dedicated test accounts. Local manual testing has been reported by the feature developer; broader regression, production and browser coverage should not be inferred from successful builds.
 
+For Secret Code backend verification, confirm the migration is applied to the intended development database. Use dedicated test accounts to check exact matching, grant expiry and revocation, PIN-authorized settings changes, and recovery. Follow the [Secret Code verification guide](docs/hide-locked-chats.md#verification) for REST and SignalR acceptance checks.
+
 - [Documentation index](docs/README.md)
 - [Database setup and migration safety](docs/database-setup.md)
 - [Chat Privacy and Archive](docs/chat-privacy.md)
+- [Hide Locked Chats and Secret Code](docs/hide-locked-chats.md)
 - [Image and Document Sharing](docs/image-document-sharing.md)
 - [Configuration reference and deployment](docs/deployment.md)
 - [Architecture, features, and contracts](docs/system-overview.md)

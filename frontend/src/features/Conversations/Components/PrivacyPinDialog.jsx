@@ -1,3 +1,4 @@
+// Collects and verifies the existing Privacy PIN for chat access and privacy settings.
 import { useContext, useEffect, useId, useRef, useState } from "react";
 import { LockKeyhole, LoaderCircle, X } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
@@ -13,7 +14,7 @@ function retryDeadline(failure) {
     : Date.parse(retryAfter) || 0;
 }
 
-function errorMessage(failure) {
+function errorMessage(failure, purpose) {
   const code = failure.response?.data?.code;
   const messages = {
     privacy_pin_invalid: "Incorrect PIN. Try again.",
@@ -26,6 +27,11 @@ function errorMessage(failure) {
     privacy_conflict:
       "Privacy settings changed. Close this dialog and try again.",
     privacy_locked_out: "Too many PIN attempts.",
+    privacy_secret_code_required:
+      "Set a Secret Code before hiding Locked Chats.",
+    privacy_secret_code_mismatch: "The Secret Codes do not match.",
+    privacy_secret_code_format:
+      "Enter a non-blank Secret Code of up to 100 characters.",
     privacy_session_limit:
       "Too many open Locked Chats sessions. Close one and try again.",
   };
@@ -35,7 +41,10 @@ function errorMessage(failure) {
   if (failure.response?.status === 401)
     return "Your login has expired. Sign in again.";
   if (failure.response?.status === 403)
-    return "Unable to access Locked Chats. Close this dialog and try again.";
+    return (
+      purpose?.error ??
+      "Unable to access Locked Chats. Close this dialog and try again."
+    );
   if (failure.response?.status >= 500)
     return "Privacy settings are temporarily unavailable. Try again shortly.";
   if (!failure.response)
@@ -49,6 +58,7 @@ export default function PrivacyPinDialog({
   onClose,
   retryAt: initialRetryAt,
   returnFocus,
+  purpose,
 }) {
   const { isDark = true } = useContext(ThemeContext) || {};
   const dialogRef = useRef(null);
@@ -65,17 +75,19 @@ export default function PrivacyPinDialog({
   const [now, setNow] = useState(Date.now);
   const setup = mode === "setup";
   const change = mode === "change";
-  const title = setup
-    ? "Create a privacy PIN"
-    : change
-    ? "Change privacy PIN"
-    : mode === "lock"
-    ? "Lock this chat"
-    : "Open Locked Chats";
+  const title =
+    purpose?.title ??
+    (setup
+      ? "Create a privacy PIN"
+      : change
+        ? "Change privacy PIN"
+        : mode === "lock"
+          ? "Lock this chat"
+          : "Open Locked Chats");
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const waitingToRetry = remaining > 0;
   const countdown = `${Math.floor(remaining / 60)}:${String(
-    remaining % 60
+    remaining % 60,
   ).padStart(2, "0")}`;
   const close = () => {
     if (!requestRef.current) onClose();
@@ -122,7 +134,7 @@ export default function PrivacyPinDialog({
       await onSubmit({ pin, confirmPin, currentPin }, controller.signal);
     } catch (failure) {
       if (controller.signal.aborted) return;
-      setError(errorMessage(failure));
+      setError(errorMessage(failure, purpose));
       setRetryAt(retryDeadline(failure));
       setNow(Date.now());
       setPin("");
@@ -217,13 +229,14 @@ export default function PrivacyPinDialog({
         {title}
       </h2>
       <p id={`${id}-help`} className="mt-2 text-sm leading-6 opacity-70">
-        {setup
-          ? "Choose a 4-digit PIN for Locked Chats. Keep it safe: PIN recovery is not available."
-          : change
-          ? "Enter your current PIN and choose a new one. Locked Chats will close."
-          : mode === "lock"
-          ? "Enter your PIN to move this chat to Locked Chats."
-          : "Enter your PIN. Locked Chats close when you leave the section or after 5 minutes of inactivity."}
+        {purpose?.description ??
+          (setup
+            ? "Choose a 4-digit PIN for Locked Chats. Keep it safe: PIN recovery is not available."
+            : change
+              ? "Enter your current PIN and choose a new one. Locked Chats will close."
+              : mode === "lock"
+                ? "Enter your PIN to move this chat to Locked Chats."
+                : "Enter your PIN. Locked Chats close when you leave the section or after 5 minutes of inactivity.")}
       </p>
       <form
         onSubmit={submit}
@@ -238,7 +251,7 @@ export default function PrivacyPinDialog({
           setup || change ? "New PIN" : "Privacy PIN",
           pin,
           setPin,
-          !change
+          !change,
         )}
         {(setup || change) &&
           input("confirmPin", "Confirm PIN", confirmPin, setConfirmPin)}
@@ -270,13 +283,14 @@ export default function PrivacyPinDialog({
           )}{" "}
           {busy
             ? "Please wait…"
-            : setup
-            ? "Set PIN"
-            : change
-            ? "Change PIN"
-            : mode === "lock"
-            ? "Lock chat"
-            : "Open Locked Chats"}
+            : (purpose?.submitLabel ??
+              (setup
+                ? "Set PIN"
+                : change
+                  ? "Change PIN"
+                  : mode === "lock"
+                    ? "Lock chat"
+                    : "Open Locked Chats"))}
         </button>
       </form>
     </dialog>

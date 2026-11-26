@@ -1,3 +1,4 @@
+// Exposes authenticated privacy settings, credential verification, and grant lifecycle endpoints.
 using Chat.Api.Filters;
 using Chat.Api.Hubs;
 using Chat.Application.DTOs;
@@ -51,6 +52,61 @@ public sealed class PrivacyController(PrivacyService privacy, PrivacyAccessStore
         if (!expiry.HasValue || expiry <= DateTime.UtcNow) return Unauthorized();
         var grant = access.Issue(Identity.UserId, Identity.SessionId, settings.SecurityVersion,
             DateTime.SpecifyKind(expiry.Value, DateTimeKind.Utc));
+        return Ok(new { token = grant.Token, expiresAt = grant.ExpiresAt });
+    }
+
+    [HttpGet("chat-lock-settings")]
+    public async Task<IActionResult> ChatLockSettings() =>
+        Ok(await privacy.GetChatLockSettingsAsync(Identity.UserId));
+
+    [HttpPut("secret-code")]
+    [EnableRateLimiting("privacy-pin")]
+    [RequestSizeLimit(16384)]
+    public async Task<IActionResult> SetSecretCode(SecretCodeSettingsRequest request)
+    {
+        var (userId, sessionId) = Identity;
+        if (await privacy.SetSecretCodeAsync(userId, sessionId, Token, request.CurrentPin,
+            request.SecretCode, request.ConfirmSecretCode, request.HideLockedChats))
+            await NotifyRevokedAsync(string.Empty);
+        return NoContent();
+    }
+
+    [HttpPut("hide-locked-chats")]
+    [EnableRateLimiting("privacy-pin")]
+    [RequestSizeLimit(16384)]
+    public async Task<IActionResult> SetHideLockedChats(HideLockedChatsRequest request)
+    {
+        if (request.Enabled is not bool enabled)
+            throw new PrivacyException(400, "privacy_hide_setting_required", "Choose whether to hide Locked Chats.");
+        var (userId, sessionId) = Identity;
+        if (await privacy.SetHideLockedChatsAsync(userId, sessionId, Token, request.CurrentPin, enabled))
+            await NotifyRevokedAsync(string.Empty);
+        return NoContent();
+    }
+
+    [HttpPost("secret-code/disable")]
+    [EnableRateLimiting("privacy-pin")]
+    [RequestSizeLimit(16384)]
+    public async Task<IActionResult> DisableSecretCode(DisableSecretCodeRequest request)
+    {
+        var (userId, sessionId) = Identity;
+        if (await privacy.DisableSecretCodeAsync(userId, sessionId, Token, request.CurrentPin))
+            await NotifyRevokedAsync(string.Empty);
+        return NoContent();
+    }
+
+    [HttpPost("secret-code/verify")]
+    [RequestSizeLimit(16384)]
+    public async Task<IActionResult> VerifySecretCode(VerifySecretCodeRequest request, CancellationToken cancellationToken)
+    {
+        // Search submits a candidate only to this endpoint. It never becomes a query parameter.
+        var (userId, sessionId) = Identity;
+        var version = await privacy.MatchSecretCodeAsync(userId, request.SecretCode, cancellationToken);
+        if (version is not long securityVersion) return NoContent();
+        var expiry = await db.Users.Where(u => u.Id == userId && u.ActiveSessionId == sessionId)
+            .Select(u => u.SessionExpiresAt).SingleOrDefaultAsync(cancellationToken);
+        if (!expiry.HasValue || expiry <= DateTime.UtcNow) return Unauthorized();
+        var grant = access.IssueSecretCode(userId, sessionId, securityVersion, DateTime.SpecifyKind(expiry.Value, DateTimeKind.Utc));
         return Ok(new { token = grant.Token, expiresAt = grant.ExpiresAt });
     }
 

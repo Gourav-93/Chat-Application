@@ -1,3 +1,4 @@
+// Configures the SQL Server model, including per-user chat privacy and credential storage.
 using Microsoft.EntityFrameworkCore;
 using Chat.Domain.Entities;
 
@@ -8,12 +9,12 @@ public class ChatDbContext : DbContext
     public ChatDbContext(DbContextOptions<ChatDbContext> options)
         : base(options)
     {
-        
+
     }
 
     public DbSet<User> Users { get; set; } // DataBase me User table 
     public DbSet<Conversation> Conversations { get; set; } // DataBase me Conversation table
-    public DbSet<MessageAttachment> MessageAttachments {get;set;}
+    public DbSet<MessageAttachment> MessageAttachments { get; set; }
     public DbSet<Message> Messages { get; set; } // DataBase me Message table
     public DbSet<OtpVerification> OtpVerifications { get; set; } // DataBase me OtpVerification table
     public DbSet<PendingRegistration> PendingRegistrations { get; set; }
@@ -27,20 +28,21 @@ public class ChatDbContext : DbContext
 
         // Call the base implementation of OnModelCreating.
         base.OnModelCreating(modelBuilder);
-        modelBuilder.Entity<Message>().HasIndex(m=>m.SenderId);
-        modelBuilder.Entity<Message>().Property(m=>m.Type).HasDefaultValue(MessageType.Text);
-        modelBuilder.Entity<Message>().HasIndex(m=>new {m.SenderId,m.ClientMessageId}).IsUnique().HasFilter("[ClientMessageId] IS NOT NULL");
-        modelBuilder.Entity<MessageAttachment>(a=>{
-            a.Property(x=>x.FileName).HasMaxLength(180);
-            a.Property(x=>x.StorageKey).HasMaxLength(32);
-            a.Property(x=>x.ContentType).HasMaxLength(100);
-            a.Property(x=>x.Version).IsConcurrencyToken();
-            a.HasIndex(x=>x.StorageKey).IsUnique();
-            a.HasIndex(x=>new {x.UploadedBy,x.MessageId,x.ExpiresAt});
-            a.HasIndex(x=>new {x.MessageId,x.ExpiresAt});
-            a.HasOne(x=>x.Message).WithMany(m=>m.Attachments).HasForeignKey(x=>x.MessageId).OnDelete(DeleteBehavior.Restrict);
-            a.HasOne<Conversation>().WithMany().HasForeignKey(x=>x.ConversationId).OnDelete(DeleteBehavior.Cascade);
-            a.HasOne<User>().WithMany().HasForeignKey(x=>x.UploadedBy).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Message>().HasIndex(m => m.SenderId);
+        modelBuilder.Entity<Message>().Property(m => m.Type).HasDefaultValue(MessageType.Text);
+        modelBuilder.Entity<Message>().HasIndex(m => new { m.SenderId, m.ClientMessageId }).IsUnique().HasFilter("[ClientMessageId] IS NOT NULL");
+        modelBuilder.Entity<MessageAttachment>(a =>
+        {
+            a.Property(x => x.FileName).HasMaxLength(180);
+            a.Property(x => x.StorageKey).HasMaxLength(32);
+            a.Property(x => x.ContentType).HasMaxLength(100);
+            a.Property(x => x.Version).IsConcurrencyToken();
+            a.HasIndex(x => x.StorageKey).IsUnique();
+            a.HasIndex(x => new { x.UploadedBy, x.MessageId, x.ExpiresAt });
+            a.HasIndex(x => new { x.MessageId, x.ExpiresAt });
+            a.HasOne(x => x.Message).WithMany(m => m.Attachments).HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Restrict);
+            a.HasOne<Conversation>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Cascade);
+            a.HasOne<User>().WithMany().HasForeignKey(x => x.UploadedBy).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<UserPrivacySettings>(entity =>
@@ -52,6 +54,11 @@ public class ChatDbContext : DbContext
             entity.Property(p => p.PinSalt).HasMaxLength(32);
             entity.Property(p => p.HashAlgorithm).HasMaxLength(64);
             entity.Property(p => p.PepperKeyVersion).HasMaxLength(64);
+            entity.Property(p => p.HideLockedChats).HasDefaultValue(false);
+            entity.Property(p => p.SecretCodeHash).HasMaxLength(32);
+            entity.Property(p => p.SecretCodeSalt).HasMaxLength(32);
+            entity.Property(p => p.SecretCodeHashAlgorithm).HasMaxLength(64);
+            entity.Property(p => p.SecretCodePepperKeyVersion).HasMaxLength(64);
             entity.Property(p => p.RowVersion).IsRowVersion();
         });
         modelBuilder.Entity<UserConversationSettings>(entity =>
