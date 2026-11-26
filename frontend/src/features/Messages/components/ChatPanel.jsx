@@ -87,11 +87,15 @@ export default function ChatPanel({
   const retryButtonRef = useRef(null);
   const followBottomRef = useRef(true);
   const lastMessageRef = useRef(null);
-  const editInputRef = useRef(null);
   const [editing, setEditing] = useState(null);
   const [editText, setEditText] = useState("");
   const [editError, setEditError] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const conversation = selection?.conversation;
   const selectionKey = conversation
@@ -118,18 +122,11 @@ export default function ChatPanel({
   const canLoadOlder = Boolean(selectionKey && history.hasMore && !busy &&
     !history.error && !history.requiresSignIn);
 
-  useEffect(() => {
-    editInputRef.current?.focus({ preventScroll: true });
-    editInputRef.current?.setSelectionRange(editInputRef.current.value.length, editInputRef.current.value.length);
-  }, [editing]);
-
-  useEffect(() => {
-    setEditing(null);
-    setEditError("");
-  }, [selectionKey]);
+  const activeEdit = editing?.selectionKey === selectionKey && !blocked && !session.requiresSignIn
+    ? editing.message : null;
 
   const beginEdit = (message) => {
-    setEditing(message.id);
+    setEditing({ message, selectionKey });
     setEditText(message.text);
     setEditError("");
   };
@@ -138,8 +135,8 @@ export default function ChatPanel({
     setEditing(null);
     setEditError("");
   };
-  const saveEdit = async (event, message) => {
-    event.preventDefault();
+  const saveEdit = async () => {
+    if (!activeEdit || editBusy) return;
     const text = editText.trim();
     if (!text || text.length > 5000) {
       setEditError("Message must contain 1 to 5,000 characters.");
@@ -148,7 +145,7 @@ export default function ChatPanel({
     setEditBusy(true);
     setEditError("");
     try {
-      await session.editMessage(message.id, text);
+      await session.editMessage(activeEdit.id, text);
       setEditing(null);
     } catch (error) {
       setEditError(error?.message || "Unable to edit this message. You can retry.");
@@ -513,33 +510,14 @@ export default function ChatPanel({
                       <MessageAttachments attachments={message.attachments} />
                       <MessageLocation location={message.location} />
                       {message.text && <p className={"chat-flag-text whitespace-pre-wrap [overflow-wrap:anywhere] " +
-                      {editing === message.id ? (
-                        <form onSubmit={(event) => saveEdit(event, message)} className="min-w-0 max-w-full" aria-busy={editBusy}>
-                          <label className="sr-only" htmlFor={`edit-message-${message.id}`}>Edit message</label>
-                          <textarea id={`edit-message-${message.id}`} ref={editInputRef} rows={Math.min(6, Math.max(2, editText.split("\n").length))}
-                            value={editText} maxLength={5000} disabled={editBusy}
-                            onChange={(event) => { setEditText(event.target.value); setEditError(""); }}
-                            onKeyDown={(event) => { if (event.key === "Escape" && !editBusy) cancelEdit(); }}
-                            aria-invalid={Boolean(editError)} aria-describedby={editError ? `edit-message-error-${message.id}` : undefined}
-                            className="chat-flag-text min-h-18 w-full min-w-0 max-w-full resize-y rounded-lg border border-white/30 bg-black/10 px-2 py-2 text-sm leading-5 text-inherit outline-none focus:border-white/70 focus:ring-2 focus:ring-white/30 disabled:opacity-70" />
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <button type="submit" disabled={editBusy || !editText.trim() || editText.trim().length > 5000}
-                              className="min-h-9 rounded-lg bg-white/20 px-3 text-xs font-semibold hover:bg-white/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50">
-                              {editBusy ? "Saving…" : "Save"}
-                            </button>
-                            <button type="button" disabled={editBusy} onClick={cancelEdit}
-                              className="min-h-9 rounded-lg px-3 text-xs font-semibold hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50">Cancel</button>
-                          </div>
-                          {editError && <p id={`edit-message-error-${message.id}`} role="alert" className="mt-2 max-w-full break-words text-xs leading-5 text-red-200">{editError}</p>}
-                        </form>
-                      ) : message.text && <p className={"chat-flag-text whitespace-pre-wrap [overflow-wrap:anywhere] " +
                         (emojiOnly ? "text-3xl leading-tight sm:text-4xl" : "text-sm leading-5")}>
                         {message.text}
                       </p>}
                     </div>
                     <div className={"mt-1 flex min-w-0 flex-wrap items-center justify-end gap-1 px-1 text-[11px] " + muted}>
                       {message.editedAt && <span className="mr-auto">Edited</span>}
-                      {own && editing !== message.id && message.type === 0 && !message.attachments?.length && (
+                      {own && message.type === 0 && !message.attachments?.length &&
+                        currentTime <= Date.parse(message.sentAt) + 15 * 60 * 1000 && (
                         <button type="button" onClick={() => beginEdit(message)}
                           className="mr-1 inline-flex min-h-8 items-center gap-1 rounded px-1.5 text-[11px] font-medium hover:text-blue-400 focus-visible:outline-2 focus-visible:outline-blue-500"
                           aria-label="Edit message">
@@ -588,11 +566,14 @@ export default function ChatPanel({
         <p className={`mb-2 text-sm ${muted}`}>You blocked this contact.</p>
         <button type="button" disabled={blocks.busy} onClick={() => blocks.setBlocked(conversation, false)}
           className="min-h-11 rounded-xl bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50">Unblock User</button>
-      </div> : <MessageComposer key={conversation.conversationId} conversationId={conversation.conversationId} value={draft} onChange={onDraftChange} onSend={onSend}
+      </div> : <MessageComposer key={conversation.conversationId} conversationId={conversation.conversationId}
+        value={activeEdit ? editText : draft}
+        onChange={activeEdit ? (text) => { setEditText(text); setEditError(""); } : onDraftChange}
+        onSend={onSend} editing={activeEdit} onSaveEdit={saveEdit} onCancelEdit={cancelEdit}
         onTypingInput={onTypingInput} stopTyping={stopTyping}
-        pending={Boolean(session.sending?.pending)}
+        pending={activeEdit ? editBusy : Boolean(session.sending?.pending)}
         disabled={blocks?.loading || blocks?.busy || session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}
-        error={session.sending?.conversationId === conversation.conversationId ? session.sending.error : ""} />}
+        error={activeEdit ? editError : session.sending?.conversationId === conversation.conversationId ? session.sending.error : ""} />}
       {blocks?.error && <p role="alert" className="px-4 py-2 text-sm">{blocks.error} <button type="button" className="min-h-11 underline" onClick={blocks.retry}>Retry</button></p>}
     </section>
   );

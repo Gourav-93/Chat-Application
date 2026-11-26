@@ -106,6 +106,7 @@ export function createMessageHistoryService(
     onTyping,
     onSessionReplaced,
     onConversationsInvalidated,
+    onVisibilityChanged,
     onUserBlocksChanged,
   } = {},
 ) {
@@ -165,6 +166,7 @@ export function createMessageHistoryService(
     record.connection.off("MessageHistory", record.handler);
     record.connection.off("ReceiveMessage", record.receiveHandler);
     record.connection.off("MessageEdited", record.editedHandler);
+    record.connection.off("ConversationVisibilityChanged", record.visibilityHandler);
     record.connection.off("ConversationUnreadChanged", record.unreadHandler);
     record.connection.off("PendingMessages", record.pendingHandler);
     record.connection.off("PrivacyStateChanged", record.privacyHandler);
@@ -373,7 +375,10 @@ export function createMessageHistoryService(
         onMessages?.(messages);
       };
       record.receiveHandler = (message) => receive([message]);
-      record.editedHandler = (message) => receive([message]);
+      record.editedHandler = (message) => {
+        receive([message]);
+        invalidateConversations(record);
+      };
       record.pendingHandler = receive;
       record.presenceVersions = new Map();
       const liveRecord = () =>
@@ -461,6 +466,12 @@ export function createMessageHistoryService(
       connection.on("UserOffline", record.offlineHandler);
       connection.on("ReceiveMessage", record.receiveHandler);
       connection.on("MessageEdited", record.editedHandler);
+      record.visibilityHandler = (event) => {
+        if (!liveRecord() || !Number.isSafeInteger(event?.conversationId)) return;
+        onVisibilityChanged?.(event);
+        invalidateConversations(record);
+      };
+      connection.on("ConversationVisibilityChanged", record.visibilityHandler);
       connection.on("PendingMessages", record.pendingHandler);
       record.privacyHandler = (event) => {
         if (!liveRecord()) return;
