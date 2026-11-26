@@ -1,11 +1,69 @@
 Sandesh emoji rendering notices
 
-Twemoji Country Flags font from TalkJS country-flag-emoji-polyfill 0.1.10.
-https://github.com/talkjs/country-flag-emoji-polyfill
-Flag artwork by Twitter, Inc. and Twemoji contributors, licensed CC BY 4.0.
-https://github.com/twitter/twemoji
-https://creativecommons.org/licenses/by/4.0/
-Sandesh redistributes the published font without modification.
+This file records the licenses, copyright notices, attribution, and sources for
+third-party libraries and fonts that Sandesh uses to select, recognize, and
+display emojis. Sandesh includes these notices to credit the original authors
+and meet the terms for using and redistributing their work.
+
+## 1. emoji-picker-react 5.1.4 (MIT License)
+
+Provides the searchable picker and returns Unicode emoji for message composition.
+Source: https://github.com/ealush/emoji-picker-react
+
+MIT License
+
+Copyright (c) 2022 ealush
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## 2. emoji-regex 11.0.0 (MIT License)
+
+Recognizes Unicode emoji sequences for emoji-only message rendering.
+
+Unicode matching by emoji-regex 11.0.0.
+https://github.com/mathiasbynens/emoji-regex
+
+Copyright Mathias Bynens <https://mathiasbynens.be/>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## 3. country-flag-emoji-polyfill 0.1.10 (MIT License)
+
+Supplies the Twemoji Country Flags font used for flag emoji display in Sandesh.
+Source: https://github.com/talkjs/country-flag-emoji-polyfill
 
 ## License for the Code (MIT)
 
@@ -28,6 +86,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## 4. Twemoji Country Flags font (CC BY 4.0)
+
+Supplies flag glyphs when native flag emoji rendering is limited.
+
+Twemoji Country Flags font from TalkJS country-flag-emoji-polyfill 0.1.10.
+https://github.com/talkjs/country-flag-emoji-polyfill
+Flag artwork by Twitter, Inc. and Twemoji contributors, licensed CC BY 4.0.
+https://github.com/twitter/twemoji
+https://creativecommons.org/licenses/by/4.0/
+Sandesh redistributes the published font without modification.
 
 ## License for the Visual Design
 
@@ -62,29 +131,9 @@ or where your use is permitted by an applicable exception or limitation. No warr
 The license may not give you all of the permissions necessary for your intended use.
 For example, other rights such as publicity, privacy, or moral rights may limit how you use the material.
 
-Unicode matching by emoji-regex 11.0.0.
-https://github.com/mathiasbynens/emoji-regex
+## 5. Google Noto Color Emoji font (SIL Open Font License 1.1)
 
-Copyright Mathias Bynens <https://mathiasbynens.be/>
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+Provides additional regional-indicator flag glyph coverage.
 
 ## Noto Color Emoji regional indicators
 

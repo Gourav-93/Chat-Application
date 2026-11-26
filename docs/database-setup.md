@@ -48,6 +48,30 @@ For an existing database, inspect its schema and `__EFMigrationsHistory` with th
 
 Database deletion, migration-history edits, reverse migrations, and schema recreation require their own reviewed procedure. The normal setup flow applies the existing forward migration after target confirmation. A connection or migration failure should be diagnosed against the chosen instance and history before another attempt.
 
+## Secret Code and Hide Locked Chats migration
+
+`20261125105245_AddSecretCodeToUserPrivacySettings` follows `AddMessageAttachments` in the migration sequence. It adds 11 columns to the existing `UserPrivacySettings` table to support Secret Code credentials and the Hide Locked Chats setting. See the [migration](../src/Chat.Infrastructure/Data/Migrations/20261125105245_AddSecretCodeToUserPrivacySettings.cs) and its [designer](../src/Chat.Infrastructure/Data/Migrations/20261125105245_AddSecretCodeToUserPrivacySettings.Designer.cs).
+
+| Column | SQL Server type | Nullable | Initial value for existing rows |
+| --- | --- | --- | --- |
+| `HideLockedChats` | `bit` | No | `false` (`0`), migration default |
+| `SecretCodeFailedAttempts` | `int` | No | `0`, migration default |
+| `SecretCodeFailureWindowStartedAt` | `datetime2` | Yes | `NULL` |
+| `SecretCodeHash` | `varbinary(32)` | Yes | `NULL` |
+| `SecretCodeHashAlgorithm` | `nvarchar(64)` | Yes | `NULL` |
+| `SecretCodeHashVersion` | `int` | Yes | `NULL` |
+| `SecretCodeIterations` | `int` | Yes | `NULL` |
+| `SecretCodeLockoutUntil` | `datetime2` | Yes | `NULL` |
+| `SecretCodePepperKeyVersion` | `nvarchar(64)` | Yes | `NULL` |
+| `SecretCodeSalt` | `varbinary(32)` | Yes | `NULL` |
+| `SecretCodeWindowFailures` | `int` | No | `0`, migration default |
+
+The migration preserves existing privacy settings, PIN credentials, conversation locks, messages, and attachment records. Hide Locked Chats starts disabled, and existing users have no Secret Code until they set one. The credential columns store only the hash, salt, and associated hashing metadata. The Secret Code failure counters and lockout timestamps are reserved for future use.
+
+Before applying the migration, follow the [root local setup](../README.md#local-setup) to restore the backend dependencies and prepare EF tooling. Use a SQL Server development database you own or have approval to update, with the required schema-update permissions and a recoverable backup. Confirm the effective runtime server and database locally, including any environment or command-line overrides. Pass that verified connection explicitly to EF as shown in the root setup and keep credentials private.
+
+Review the applied and pending migrations on that target first. If the schema or history differs from the expected sequence, stop and review it with the database owner. Apply the existing migration using the root setup's `dotnet ef database update` command, then list migrations again against the same target and confirm that `20261125105245_AddSecretCodeToUserPrivacySettings` is applied. Teammates should use the checked-in migration and designer. Generating a new migration would duplicate the change.
+
 ## Inspection and verification
 
 The root setup uses `dotnet ef migrations list --no-connect` to inspect available migrations independently of database connectivity. The tool intentionally leaves applied/pending status unknown and can print a generic pending-status message. Once the owner approves a real target, migration application writes to that database. These documentation/configuration changes were validated without applying a database update. [EF CLI reference](https://learn.microsoft.com/en-us/ef/core/cli/dotnet)

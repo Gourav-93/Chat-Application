@@ -1,3 +1,4 @@
+// Stores session-bound privacy grants, PIN authorization, and private delivery acknowledgements.
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Security.Claims;
@@ -10,7 +11,10 @@ namespace Chat.Application.Services;
 public sealed class PrivacyAccessStore(IOptions<PrivacyOptions> options, TimeProvider clock)
 {
     private static readonly TimeSpan IdleWindow = TimeSpan.FromMinutes(5);
-    public sealed record Grant(Guid UserId, Guid SessionId, long SecurityVersion, DateTime ExpiresAt);
+    public sealed record Grant(Guid UserId, Guid SessionId, long SecurityVersion, DateTime ExpiresAt)
+    {
+        internal bool PinVerified { get; init; } = true;
+    }
     public sealed record Peer(Guid UserId, Guid SessionId, ClaimsPrincipal Principal);
     private readonly ConcurrentDictionary<string, Grant> _grants = new();
     private readonly ConcurrentDictionary<string, string> _attached = new();
@@ -46,7 +50,14 @@ public sealed class PrivacyAccessStore(IOptions<PrivacyOptions> options, TimePro
         return new Lease(gate);
     }
 
-    public (string Token, DateTime ExpiresAt) Issue(Guid userId, Guid sessionId, long version, DateTime sessionExpiry)
+    public (string Token, DateTime ExpiresAt) Issue(Guid userId, Guid sessionId, long version, DateTime sessionExpiry) =>
+        Issue(userId, sessionId, version, sessionExpiry, pinVerified: true);
+
+    internal (string Token, DateTime ExpiresAt) IssueSecretCode(Guid userId, Guid sessionId, long version, DateTime sessionExpiry) =>
+        Issue(userId, sessionId, version, sessionExpiry, pinVerified: false);
+
+    private (string Token, DateTime ExpiresAt) Issue(Guid userId, Guid sessionId, long version, DateTime sessionExpiry,
+        bool pinVerified)
     {
         var now = clock.GetUtcNow().UtcDateTime;
         foreach (var entry in _grants.Where(p => p.Value.ExpiresAt <= now).ToArray())
@@ -56,7 +67,7 @@ public sealed class PrivacyAccessStore(IOptions<PrivacyOptions> options, TimePro
             throw new PrivacyException(429, "privacy_session_limit", "Too many active privacy sessions. Lock privacy access and try again.", owned[0].Value.ExpiresAt);
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         var expiry = new[] { now.Add(IdleWindow), sessionExpiry }.Min();
-        _grants[Hash(token)] = new Grant(userId, sessionId, version, expiry);
+        _grants[Hash(token)] = new Grant(userId, sessionId, version, expiry) { PinVerified = pinVerified };
         return (token, expiry);
     }
 
@@ -93,9 +104,13 @@ public sealed class PrivacyAccessStore(IOptions<PrivacyOptions> options, TimePro
     public bool Valid(string? token, Guid userId, Guid sessionId, long version) =>
         token is { Length: 64 } && ValidHash(Hash(token), userId, sessionId, version);
 
-    private bool ValidHash(string hash, Guid userId, Guid sessionId, long version) =>
+    internal bool ValidPin(string? token, Guid userId, Guid sessionId, long version) =>
+        token is { Length: 64 } && ValidHash(Hash(token), userId, sessionId, version, requirePin: true);
+
+    private bool ValidHash(string hash, Guid userId, Guid sessionId, long version, bool requirePin = false) =>
         _grants.TryGetValue(hash, out var grant) && grant.UserId == userId && grant.SessionId == sessionId &&
-        grant.SecurityVersion == version && grant.ExpiresAt > clock.GetUtcNow().UtcDateTime;
+        grant.SecurityVersion == version && grant.ExpiresAt > clock.GetUtcNow().UtcDateTime &&
+        (!requirePin || grant.PinVerified);
 
     public void Attach(string connectionId, string token) => _attached[connectionId] = Hash(token);
     public bool ConnectionValid(string connectionId, Guid userId, Guid sessionId, long version) =>

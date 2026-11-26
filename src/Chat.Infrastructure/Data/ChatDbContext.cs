@@ -1,3 +1,4 @@
+// Configures the SQL Server model, including per-user chat privacy and credential storage.
 using Microsoft.EntityFrameworkCore;
 using Chat.Domain.Entities;
 using Chat.Application.Configuration;
@@ -53,7 +54,7 @@ public class ChatDbContext : DbContext
     public DbSet<User> Users { get; set; } // DataBase me User table 
     public DbSet<UserBlock> UserBlocks { get; set; }
     public DbSet<Conversation> Conversations { get; set; } // DataBase me Conversation table
-    public DbSet<MessageAttachment> MessageAttachments {get;set;}
+    public DbSet<MessageAttachment> MessageAttachments { get; set; }
     public DbSet<Message> Messages { get; set; } // DataBase me Message table
     public DbSet<OtpVerification> OtpVerifications { get; set; } // DataBase me OtpVerification table
     public DbSet<PendingRegistration> PendingRegistrations { get; set; }
@@ -106,6 +107,11 @@ public class ChatDbContext : DbContext
             entity.Property(p => p.PinSalt).HasMaxLength(32);
             entity.Property(p => p.HashAlgorithm).HasMaxLength(64);
             entity.Property(p => p.PepperKeyVersion).HasMaxLength(64);
+            entity.Property(p => p.HideLockedChats).HasDefaultValue(false);
+            entity.Property(p => p.SecretCodeHash).HasMaxLength(32);
+            entity.Property(p => p.SecretCodeSalt).HasMaxLength(32);
+            entity.Property(p => p.SecretCodeHashAlgorithm).HasMaxLength(64);
+            entity.Property(p => p.SecretCodePepperKeyVersion).HasMaxLength(64);
             entity.Property(p => p.RowVersion).IsRowVersion();
         });
         modelBuilder.Entity<UserConversationSettings>(entity =>
