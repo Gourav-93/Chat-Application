@@ -142,4 +142,4 @@ A successful build does not replace verification of a teammate's actual SQL Serv
 
 ## Combined feature verification
 
-Hashing/encryption and [message editing/chat clearing](message-editing-and-chat-clearing.md) are supported together. Use the full migration sequence in the [DB update guide](database-protection.md), including both edit/clear migrations before protection expansion. The combined regression project is `tests/Chat.Security.Tests/Chat.Security.Tests.csproj`; it tests encrypted edits and per-user history/media visibility in both schema modes without connecting to the application database.
+Hashing/encryption and [message editing/chat clearing](message-editing-and-chat-clearing.md) are supported together. Use the full migration sequence in the [DB update guide](database-protection.md), including both edit/clear migrations before protection expansion.
