@@ -2,6 +2,8 @@
 
 Sandesh is a real-time, one-to-one chat application with mobile OTP sign-in, persistent message history, private image and document sharing, and a responsive React interface. The backend is one ASP.NET Core project, and the frontend is a separate Vite application.
 
+Database field protection now requires independent encryption/lookup keys and a staged database update before running this release. Follow the [protection deployment and teammate guide](docs/database-protection.md), including backup, expansion, explicit backfill and verification. Plaintext removal is a separate later migration; never apply latest implicitly.
+
 ## Features and status
 
 - Current location sharing through **+ > Location > permission > preview > Send**, with recipient map cards and Open in Maps. This shares one captured position, not live tracking, and works independently of upload restrictions. Apply the additive `AddMessageLocation` migration after target authorization; see [location setup and verification](docs/location-sharing.md).
@@ -266,16 +268,18 @@ The expected migration sequence for this feature is:
 20261124071343_AddMessageAttachments
 20261125063713_AddUserBlocking
 20261125111351_AddMessageLocation
+20261126061034_AddSensitiveDataProtection
+20261126061256_RemovePlaintextSensitiveData (later, separately approved)
 ```
 
 After reviewing the target and pending migrations, apply them manually:
 
 ```powershell
-dotnet ef database update --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
+dotnet ef database update 20261126061034_AddSensitiveDataProtection --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
 dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
 ```
 
-No migration should remain marked `(Pending)`. The update can create the intended development database when the SQL identity has permission. Existing installations must not generate duplicate migrations, delete previous migrations or drop their database. Startup does not automatically migrate the database. See [database setup](docs/database-setup.md) and [attachment migration instructions](docs/img-doc-setup-documention.md#additive-migration-manual-execution). These migrations are SQL Server-specific and must not be applied to company MySQL.
+`RemovePlaintextSensitiveData` should remain pending until the [explicit backfill, verification and later approval](docs/database-protection.md#manual-powershell-sequence) are complete. Configure the new protection keys and complete that sequence before starting the backend, including on a fresh empty database. The update can create the intended development database when the SQL identity has permission. Existing installations must not generate duplicate migrations, delete previous migrations or drop their database. Startup does not automatically migrate the database. These migrations are SQL Server-specific and must not be applied to company MySQL.
 
 `AddUserBlocking` adds `UserBlocks` and `Messages.IsDeliverySuppressed`, defaulting existing messages to `false`. It preserves existing users, history and conversation IDs. The Online/Last seen privacy fix uses that same block table and needs no additional migration once `AddUserBlocking` is applied. After inspecting the target, clear the temporary connection variables with `Remove-Variable connection, entry, target` when finished.
 
@@ -349,7 +353,7 @@ dotnet restore Two-Way-Com.csproj
 dotnet build Two-Way-Com.csproj
 ```
 
-Preserve existing JWT, OTP, privacy, database and attachment secrets. Teammates who have not configured attachments should follow [Configure image and document sharing](#configure-image-and-document-sharing) once. Follow [Create or update your development database](#3-create-or-update-your-development-database) to load and inspect your own local connection and, after target authorization, apply the checked-in migrations through `AddMessageLocation` (including `AddUserBlocking`). Do this before starting the updated backend; a source pull does not update the database. Location requires no new secrets; see [location teammate setup](docs/location-sharing.md#migration-and-teammate-setup).
+Preserve existing JWT, OTP, privacy, database and attachment secrets. Teammates who have not configured attachments should follow [Configure image and document sharing](#configure-image-and-document-sharing) once. Follow the [database protection teammate instructions](docs/database-protection.md#teammate-instructions) for the new keys, expansion target, explicit backfill, verification and matching schema-phase setting. Do this before starting the updated backend; a source pull does not update the database or transfer keys. Location requires no new feature-specific secrets; see [location teammate setup](docs/location-sharing.md#migration-and-teammate-setup).
 
 Then install the updated frontend lockfile and check the client:
 
@@ -473,3 +477,21 @@ Verify authorized downloads, rejection of unauthorized users and invalid files, 
 # CI&CD
 
 Added CI&CD for auto deployment
+
+## Hashing and encryption: teammate database update
+
+Database field protection encrypts user names, recoverable mobile numbers and message text with AES-256-GCM. Mobile searches use indexed HMAC-SHA256 hashes. Authorized application responses continue to show readable values.
+
+- [Feature README: protected fields, data flow, keys and limitations](docs/README.md#database-hashing-and-encryption)
+- [After pulling: complete teammate DB update commands and troubleshooting](docs/database-protection.md)
+
+For an existing personal database, use the step-by-step guide in this order:
+
+1. Pull the approved feature branch, restore/build, stop all backend/database writers, confirm your own SQL Server target and take a backup.
+2. For a never-protected independent DB, generate its encryption and lookup keys once. For an already protected/shared/restored DB, retain or securely obtain that DB's original keys instead. Preserve existing JWT, OTP and privacy configuration.
+3. With `DataProtection:LegacyColumnsPresent=true`, apply only `20261126061034_AddSensitiveDataProtection` using the explicit runtime connection.
+4. Run the explicit `--sensitive-data backfill --maintenance-window` command and then `--sensitive-data verify`. A source pull or schema migration alone does not convert old rows.
+5. After successful verification and backup, apply `20261126061256_RemovePlaintextSensitiveData`, set `DataProtection:LegacyColumnsPresent=false`, and verify again. This reaches the final schema with the old plaintext columns removed.
+6. Start the application and check existing/new login, mobile search, message history and the other feature checks in the guide.
+
+The guide includes exact PowerShell commands, SSMS checks, fresh/partial/final database paths, shared-database coordination and recovery steps. If the final migration is already applied, keep the original keys and use final-mode verification; do not target the older expansion migration. Do not run an unqualified `dotnet ef database update` before backfill, generate duplicate migrations, or regenerate keys for protected rows. Keep database/key backups and private attachment files: database field protection does not encrypt or restore uploaded file bytes.
