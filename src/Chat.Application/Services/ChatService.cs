@@ -3,23 +3,28 @@ using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Chat.Infrastructure.Services;
 
 namespace Chat.Application.Services;
 
 public class ChatService : IChatService
 {
     private readonly ChatDbContext _context;
+    private readonly ProtectedFields _fields;
     private readonly IUserBlockService _blocks;
     private readonly IUserPairLock _pairLock;
+    private readonly IFileStorageService _storage;
 
     private readonly Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> _attachments;
     public ChatService(ChatDbContext context, Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> attachments,
-        IUserBlockService blocks, IUserPairLock pairLock)
+        IUserBlockService blocks, IUserPairLock pairLock, ProtectedFields fields, IFileStorageService storage)
     {
         _context = context;
+        _fields = fields;
         _attachments = attachments;
         _blocks = blocks;
         _pairLock = pairLock;
+        _storage = storage;
     }
 
     public async Task<MessageDto> SendMessageAsync(
@@ -86,7 +91,7 @@ public class ChatService : IChatService
         // attachment claims. Keep this lock compatible with AttachmentService.
         await _context.Users
             .Where(u => u.Id == senderId)
-            .ExecuteUpdateAsync(s => s.SetProperty(u => u.UserName, u => u.UserName));
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.IsMobileVerified, u => u.IsMobileVerified));
 
         if (dto.ClientMessageId.HasValue)
         {
@@ -98,7 +103,7 @@ public class ChatService : IChatService
             if (previous != null)
             {
                 if (previous.ConversationId != dto.ConversationId ||
-                    previous.Text != text ||
+                    _fields.Text(previous) != text ||
                     previous.Latitude != location?.Latitude ||
                     previous.Longitude != location?.Longitude ||
                     !previous.Attachments.Select(a => a.Id).Order()
@@ -194,20 +199,25 @@ public class ChatService : IChatService
         return await MapAsync(message, conversation);
     }
 
-    private async Task<MessageDto> MapAsync(
-        Message message, Conversation conversation) => new()
+    private async Task<MessageDto> MapAsync(Message message, Conversation conversation)
     {
+        var sender = await _context.Users.AsNoTracking().SingleAsync(u => u.Id == message.SenderId);
+        return await MapLoadedAsync(message, conversation.UserAId == message.SenderId ? conversation.UserBId : conversation.UserAId, _fields.UserName(sender));
+    }
+
+    private async Task<MessageDto> MapLoadedAsync(Message message, Guid receiverId, string senderName)
+    {
+        var attachments = new List<AttachmentDto>();
+        foreach (var attachment in message.Attachments)
+            attachments.Add(await AttachmentService.MapAvailableAsync(attachment, _storage));
+        return new()
+        {
         Id = message.Id,
         ConversationId = message.ConversationId,
         SenderId = message.SenderId,
-        SenderName = await _context.Users
-            .Where(u => u.Id == message.SenderId)
-            .Select(u => u.UserName)
-            .SingleAsync() ?? string.Empty,
-        ReceiverId = conversation.UserAId == message.SenderId
-            ? conversation.UserBId
-            : conversation.UserAId,
-        Text = message.Text,
+        SenderName = senderName,
+        ReceiverId = receiverId,
+        Text = _fields.Text(message),
         Location = message.Latitude.HasValue && message.Longitude.HasValue
             ? new LocationDto { Latitude = message.Latitude, Longitude = message.Longitude } : null,
         Type = (int)message.Type,
@@ -218,8 +228,9 @@ public class ChatService : IChatService
         ReadAt = message.ReadAt.HasValue
             ? DateTime.SpecifyKind(message.ReadAt.Value, DateTimeKind.Utc)
             : null,
-        Attachments = message.Attachments.Select(AttachmentService.Map).ToList()
-    };
+        Attachments = attachments
+        };
+    }
 
 
     public async Task<IReadOnlyList<MessageDto>> GetMessageAsync(
@@ -255,34 +266,17 @@ public class ChatService : IChatService
             return Array.Empty<MessageDto>();
 
         // Fetch latest messages first
-        var messages = await _context.Messages
+        var rows = await _context.Messages.AsNoTracking().Include(m => m.Sender).Include(m => m.Attachments)
             .Where(m => m.ConversationId == conversationId &&
                 (!m.IsDeliverySuppressed || m.SenderId == userId))
             .OrderByDescending(m => m.SentAt)
             .ThenByDescending(m => m.Id)
             .Skip((int)skipCount)
             .Take(pageSize)
-            .Select(m => new MessageDto
-            {
-                Id = m.Id,
-                ConversationId = m.ConversationId,
-                SenderId = m.SenderId,
-                SenderName = m.Sender.UserName ?? string.Empty,
-                ReceiverId = m.SenderId == conversation.UserAId
-                       ? conversation.UserBId
-                       : conversation.UserAId,
-                Text = m.Text,
-                Location = m.Latitude.HasValue && m.Longitude.HasValue
-                    ? new LocationDto { Latitude = m.Latitude, Longitude = m.Longitude } : null,
-                Type = (int)m.Type,
-                Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
-                SentAt = m.SentAt,
-
-                // Important: retrieve persisted message statuses
-                DeliveredAt = m.DeliveredAt,
-                ReadAt = m.ReadAt
-            })
             .ToListAsync();
+        var messages = new List<MessageDto>();
+        foreach (var row in rows)
+            messages.Add(await MapLoadedAsync(row, row.SenderId == conversation.UserAId ? conversation.UserBId : conversation.UserAId, _fields.UserName(row.Sender)));
 
         // Return messages in chronological order
         messages.Reverse();
@@ -425,7 +419,7 @@ public class ChatService : IChatService
         Guid recipientId)
     {
         // Find messages that have not yet been delivered to this user.
-        var messages = await _context.Messages
+        var rows = await _context.Messages.AsNoTracking().Include(m => m.Sender).Include(m => m.Attachments)
             .Where(m =>
                 m.DeliveredAt == null &&
                 !m.IsDeliverySuppressed &&
@@ -435,25 +429,10 @@ public class ChatService : IChatService
                  m.Conversation.UserBId == recipientId))
             .OrderBy(m => m.SentAt)
             .ThenBy(m => m.Id)
-            .Select(m => new MessageDto
-            {
-                Id = m.Id,
-                ConversationId = m.ConversationId,
-                SenderId = m.SenderId,
-                SenderName = m.Sender.UserName ?? string.Empty,
-
-                ReceiverId = recipientId,
-
-                Text = m.Text,
-                Location = m.Latitude.HasValue && m.Longitude.HasValue
-                    ? new LocationDto { Latitude = m.Latitude, Longitude = m.Longitude } : null,
-                Type = (int)m.Type,
-                Attachments = m.Attachments.Select(a => new AttachmentDto { Id=a.Id, FileName=a.FileName, ContentType=a.ContentType, FileSize=a.FileSize }).ToList(),
-                SentAt = m.SentAt,
-                DeliveredAt = m.DeliveredAt,
-                ReadAt = m.ReadAt
-            })
             .ToListAsync();
+        var messages = new List<MessageDto>();
+        foreach (var row in rows)
+            messages.Add(await MapLoadedAsync(row, recipientId, _fields.UserName(row.Sender)));
 
         // SQL Server does not preserve DateTime.Kind.
         foreach (var message in messages)

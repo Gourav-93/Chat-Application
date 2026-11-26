@@ -3,10 +3,11 @@ using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Chat.Infrastructure.Services;
 
 namespace Chat.Application.Services;
 
-public sealed class UserBlockService(ChatDbContext db, IUserPairLock pairLock) : IUserBlockService
+public sealed class UserBlockService(ChatDbContext db, IUserPairLock pairLock, ProtectedFields fields) : IUserBlockService
 {
     private async Task ValidateAsync(Guid user, Guid target, CancellationToken ct)
     {
@@ -54,7 +55,8 @@ public sealed class UserBlockService(ChatDbContext db, IUserPairLock pairLock) :
             join user in db.Users on block.BlockedUserId equals user.Id
             where block.BlockerId == currentUserId
             orderby block.BlockedAt descending, block.BlockedUserId
-            select new BlockedUserDto(user.Id, user.UserName, user.MobileNumber, block.BlockedAt)).ToListAsync(ct);
-        return users.Select(u => u with { BlockedAt = DateTime.SpecifyKind(u.BlockedAt, DateTimeKind.Utc) }).ToList();
+            select new { User = user, block.BlockedAt }).ToListAsync(ct);
+        return users.Select(u => new BlockedUserDto(u.User.Id, fields.UserName(u.User), fields.Mobile(u.User),
+            DateTime.SpecifyKind(u.BlockedAt, DateTimeKind.Utc))).ToList();
     }
 }
