@@ -139,70 +139,10 @@ public class ConversationService : IConversationService
                 c.Id,
                 IsLocked = _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsLocked),
                 IsArchived = _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsArchived),
-
-                OtherUserId = c.UserAId == currentUserId
-                    ? c.UserBId
-                    : c.UserAId,
-
-                OtherUserName = c.UserAId == currentUserId
-                    ? c.UserB.UserName
-                    : c.UserA.UserName,
-
-                OtherUserMobileNumber = c.UserAId == currentUserId
-                    ? c.UserB.MobileNumber
-                    : c.UserA.MobileNumber,
-
-                // Use stored byte length to preserve Unicode emoji previews.
-                LastMessage = c.Messages
-                    .Where(m => !m.IsDeliverySuppressed || m.SenderId == currentUserId)
-                    .Where(m => !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MessagesClearedAt != null &&
-                        (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))
-                    .Where(m => m.Text != "" || m.Type == MessageType.Location || m.Attachments.Any() &&
-                        !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MediaClearedAt != null &&
-                            (m.SentAt < s.MediaClearedAt || (m.SentAt == s.MediaClearedAt && m.Id <= s.MediaClearedThroughMessageId))))
-                    .OrderByDescending(m => m.SentAt)
-                    .ThenByDescending(m => m.Id)
-                    .Select(m => EF.Functions.DataLength(m.Text) > 0
-                        ? m.Text
-                        : m.Type == MessageType.Location ? "Location"
-                        : m.Type == MessageType.Image && m.Attachments.Any(a => !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MediaClearedAt != null &&
-                            (m.SentAt < s.MediaClearedAt || (m.SentAt == s.MediaClearedAt && m.Id <= s.MediaClearedThroughMessageId))))
-                            ? "Photo"
-                            : m.Attachments.Any(a => !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MediaClearedAt != null &&
-                                (m.SentAt < s.MediaClearedAt || (m.SentAt == s.MediaClearedAt && m.Id <= s.MediaClearedThroughMessageId)))) ? "Attachment" : null)
-                    .FirstOrDefault(),
-
-                LastMessageAt = c.Messages
-                    .Where(m => !m.IsDeliverySuppressed || m.SenderId == currentUserId)
-                    .Where(m => !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MessagesClearedAt != null &&
-                        (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))
-                    .Where(m => m.Text != "" || m.Type == MessageType.Location || m.Attachments.Any() &&
-                        !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MediaClearedAt != null &&
-                            (m.SentAt < s.MediaClearedAt || (m.SentAt == s.MediaClearedAt && m.Id <= s.MediaClearedThroughMessageId))))
-                    .OrderByDescending(m => m.SentAt)
-                    .ThenByDescending(m => m.Id)
-                    .Select(m => (DateTime?)m.SentAt)
-                    .FirstOrDefault(),
-
-                LastMessageSenderId = c.Messages
-                    .Where(m => !m.IsDeliverySuppressed || m.SenderId == currentUserId)
-                    .Where(m => !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MessagesClearedAt != null &&
-                        (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))
-                    .Where(m => m.Text != "" || m.Type == MessageType.Location || m.Attachments.Any() &&
-                        !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MediaClearedAt != null &&
-                            (m.SentAt < s.MediaClearedAt || (m.SentAt == s.MediaClearedAt && m.Id <= s.MediaClearedThroughMessageId))))
-                    .OrderByDescending(m => m.SentAt)
-                    .ThenByDescending(m => m.Id)
-                    .Select(m => (Guid?)m.SenderId)
-                    .FirstOrDefault(),
-
-                // Counts incoming messages the current user has not read.
-                UnreadCount = c.Messages.Count(m => !m.IsDeliverySuppressed && m.SenderId != currentUserId && m.ReadAt == null &&
-                    (m.Text != "" || m.Type == MessageType.Location || m.Attachments.Any() &&
-                        !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MediaClearedAt != null &&
-                            (m.SentAt < s.MediaClearedAt || (m.SentAt == s.MediaClearedAt && m.Id <= s.MediaClearedThroughMessageId)))) &&
-                    !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MessagesClearedAt != null &&
-                        (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))
+                OtherUser = c.UserAId == currentUserId ? c.UserB : c.UserA,
+                Last = c.Messages.Where(m => !m.IsDeliverySuppressed || m.SenderId == currentUserId)
+                    .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id).FirstOrDefault(),
+                UnreadCount = c.Messages.Count(m => !m.IsDeliverySuppressed && m.SenderId != currentUserId && m.ReadAt == null)
             })
             .OrderByDescending(c => c.Last == null ? DateTime.MinValue : c.Last.SentAt)
             .ThenByDescending(c => c.Id)

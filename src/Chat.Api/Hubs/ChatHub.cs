@@ -18,15 +18,13 @@ public partial class ChatHub : Hub
     private readonly PrivacyService _privacy;
     private readonly PrivacyAccessStore _privacyAccess;
     private readonly PrivacyRealtime _privateEvents;
-    private readonly ILogger<ChatHub> _logger;
 
     public ChatHub(
         IChatService chatService,
         IPresenceService presenceService,
         IConversationService conversationService,
         ActiveSessionValidator activeSessions,
-SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAccessStore privacyAccess, PrivacyRealtime privateEvents,
-ILogger<ChatHub> logger)
+SessionConnectionManager sessionConnections, PrivacyService privacy, PrivacyAccessStore privacyAccess, PrivacyRealtime privateEvents)
     {
         _chatService = chatService;
         _presenceService = presenceService;
@@ -36,7 +34,6 @@ ILogger<ChatHub> logger)
         _privacy = privacy;
         _privacyAccess = privacyAccess;
         _privateEvents = privateEvents;
-        _logger = logger;
     }
     public override async Task OnConnectedAsync()
     {
@@ -70,7 +67,6 @@ ILogger<ChatHub> logger)
             return;
         }
         _privacyAccess.Register(Context.ConnectionId, new PrivacyAccessStore.Peer(currentUserId, sessionId, Context.User!));
-        await Groups.AddToGroupAsync(Context.ConnectionId, $"user-{currentUserId}");
 
         // Register this SignalR connection.
         bool isFirstConnection = await _presenceService.UserConnectedAsync(
@@ -131,37 +127,6 @@ ILogger<ChatHub> logger)
         }
         await _privateEvents.SendAsync(message.SenderId, message.ConversationId, "ReceiveMessage", message);
         await _privateEvents.SendAsync(message.ReceiverId, message.ConversationId, "ReceiveMessage", message);
-    }
-
-    public async Task<MessageDto> EditMessage(int messageId, EditMessageDto dto)
-    {
-        if (!Guid.TryParse(Context.UserIdentifier, out var senderId))
-            throw new HubException("User identity not found.");
-        try
-        {
-            MessageDto message;
-            using (await _privacyAccess.EnterAsync(senderId, Context.ConnectionAborted))
-            {
-                var conversationId = await _privacy.MessageConversationAsync(messageId, senderId);
-                await RequirePrivacyAsync(conversationId);
-                message = await _chatService.EditMessageAsync(messageId, dto.Text, senderId);
-            }
-            try
-            {
-                await _privateEvents.SendAsync(message.SenderId, message.ConversationId, "MessageEdited", message);
-                await _privateEvents.SendAsync(message.ReceiverId, message.ConversationId, "MessageEdited", message);
-            }
-            catch (Exception ex)
-            {
-                // The edit is committed; a broadcast failure must not invite a duplicate save.
-                _logger.LogError(ex, "Message {MessageId} was edited but realtime delivery failed", message.Id);
-            }
-            return message;
-        }
-        catch (ArgumentException ex) { throw new HubException(ex.Message); }
-        catch (UnauthorizedAccessException ex) { throw new HubException(ex.Message); }
-        catch (KeyNotFoundException ex) { throw new HubException(ex.Message); }
-        catch (InvalidOperationException ex) { throw new HubException(ex.Message); }
     }
 
 

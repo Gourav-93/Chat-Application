@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import api from "../../../shared/lib/api";
 
-// export default function useUserBlocks(userId, targetUserId, revision, connectionStatus) {
-export default function useUserBlocks(userId, revision) {
+export default function useUserBlocks(userId, targetUserId, revision, connectionStatus) {
   const [snapshot, setSnapshot] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -11,44 +10,21 @@ export default function useUserBlocks(userId, revision) {
   const operationRef = useRef(null);
   const retry = useCallback(() => setRefresh((value) => value + 1), []);
 
-  // useEffect(() => {
-  //   const controller = new AbortController();
-  //   const request = ++requestRef.current;
-  //   api.get("/users/blocked", { signal: controller.signal }).then(({ data }) => {
-  //     if (!controller.signal.aborted && request === requestRef.current) {
-  //       setSnapshot({ userId, users: data });
-  //       setError("");
-  //     }
-  //   }).catch(() => {
-  //     if (!controller.signal.aborted && request === requestRef.current)
-  //       setError("Unable to load blocked contacts. Try again.");
-  //   });
-  //   return () => controller.abort();
-  // }, [userId, targetUserId, revision, connectionStatus, refresh]);
-
-
-   useEffect(() => {
-    if (!userId) return undefined;
-
+  useEffect(() => {
     const controller = new AbortController();
     const request = ++requestRef.current;
-
-    api.get("/users/blocked", { signal: controller.signal })
-      .then(({ data }) => {
-        if (controller.signal.aborted || request !== requestRef.current) return;
-
+    api.get("/users/blocked", { signal: controller.signal }).then(({ data }) => {
+      if (!controller.signal.aborted && request === requestRef.current) {
         setSnapshot({ userId, users: data });
         setError("");
-      })
-      .catch(() => {
-        if (controller.signal.aborted || request !== requestRef.current) return;
-
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted && request === requestRef.current)
         setError("Unable to load blocked contacts. Try again.");
-      });
-
+    });
     return () => controller.abort();
-  }, [userId, revision, refresh]);
-  
+  }, [userId, targetUserId, revision, connectionStatus, refresh]);
+
   useEffect(() => () => operationRef.current?.abort(), []);
 
   const setBlocked = async (target, blocked) => {
