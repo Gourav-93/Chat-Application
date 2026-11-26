@@ -33,6 +33,10 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
+        env:
+          # Testing server only: show the Invite button (backend is Development mode there).
+          VITE_ENABLE_INVITATION_PREVIEW: "true"
+          VITE_FORCE_INVITATION_PREVIEW: "true"
         run: |
           npm ci
           npm run build
@@ -47,8 +51,11 @@ jobs:
           export Jwt__Key=$(openssl rand -hex 32)
           export Otp__HashingKey=$(openssl rand -hex 32)
           export Privacy__PepperKeys__v1=$(openssl rand -hex 32)
+          dotnet restore Two-Way-Com.csproj
           dotnet tool install --global dotnet-ef --version "10.*"
+          # Full script (all migrations) + script up to the protection "expansion" migration.
           dotnet ef migrations script --idempotent -o migrate.sql
+          dotnet ef migrations script 0 20261126061034_AddSensitiveDataProtection --idempotent -o migrate_expand.sql
 
       - name: Publish backend (self-contained linux-x64)
         run: |
@@ -61,6 +68,7 @@ jobs:
           cp -r publish release/publish
           cp -r frontend/dist release/dist
           cp migrate.sql release/migrate.sql
+          cp migrate_expand.sql release/migrate_expand.sql
           tar -czf release.tar.gz -C release .
 
       - name: Upload and deploy
