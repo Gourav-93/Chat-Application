@@ -1,53 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Chat.Domain.Entities;
-using Chat.Application.Configuration;
-using Chat.Infrastructure.Services;
-using Microsoft.Extensions.Options;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace Chat.Infrastructure.Data;
 
 public class ChatDbContext : DbContext
 {
-    private readonly ProtectedFields? _protection;
-    public bool LegacyColumnsPresent { get; }
-    public ChatDbContext(DbContextOptions<ChatDbContext> options,
-        IOptions<DataProtectionOptions>? protectionOptions = null, ProtectedFields? protection = null)
+    public ChatDbContext(DbContextOptions<ChatDbContext> options)
         : base(options)
     {
-        LegacyColumnsPresent = protectionOptions?.Value.LegacyColumnsPresent ?? false;
-        _protection = protection;
-    }
-
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
-        optionsBuilder.ReplaceService<IModelCacheKeyFactory, ProtectionModelCacheKeyFactory>();
-
-    private void ProtectChanges()
-    {
-        ChangeTracker.DetectChanges();
-        foreach (var entry in ChangeTracker.Entries().Where(e => e.State is EntityState.Added or EntityState.Modified).ToList())
-        {
-            if (entry.Entity is not (User or Message or PendingRegistration or OtpVerification)) continue;
-            var protection = _protection ?? throw new InvalidOperationException("Database field protection is not configured.");
-            switch (entry.Entity)
-            {
-                case User user: protection.Protect(user); break;
-                case Message message: protection.Protect(message); break;
-                case PendingRegistration pending: protection.Protect(pending); break;
-                case OtpVerification otp: protection.Protect(otp); break;
-            }
-        }
-        ChangeTracker.DetectChanges();
-    }
-    public override int SaveChanges(bool acceptAllChangesOnSuccess)
-    {
-        ProtectChanges();
-        return base.SaveChanges(acceptAllChangesOnSuccess);
-    }
-    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
-    {
-        ProtectChanges();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        
     }
 
     public DbSet<User> Users { get; set; } // DataBase me User table 
@@ -154,32 +115,19 @@ public class ChatDbContext : DbContext
             .HasIndex(c => new { c.UserAId, c.UserBId })
             .IsUnique();
 
-        modelBuilder.Entity<User>().Property(u => u.MobileNumberHash).HasMaxLength(64).IsUnicode(false);
-        modelBuilder.Entity<User>().HasIndex(u => u.MobileNumberHash).IsUnique().HasFilter("[MobileNumberHash] IS NOT NULL");
-        modelBuilder.Entity<PendingRegistration>().Property(p => p.MobileNumberHash).HasMaxLength(64).IsUnicode(false);
-        modelBuilder.Entity<PendingRegistration>().HasIndex(p => p.MobileNumberHash).IsUnique().HasFilter("[MobileNumberHash] IS NOT NULL");
-        modelBuilder.Entity<PendingRegistration>().Property(p => p.TokenHash).HasMaxLength(64);
-        modelBuilder.Entity<OtpVerification>().Property(o => o.MobileNumberHash).HasMaxLength(64).IsUnicode(false);
-        modelBuilder.Entity<OtpVerification>().HasIndex(o => o.MobileNumberHash);
-        if (LegacyColumnsPresent)
-        {
-            modelBuilder.Entity<User>().HasIndex(u => u.MobileNumber).IsUnique().HasFilter("[MobileNumber] IS NOT NULL");
-            modelBuilder.Entity<OtpVerification>().HasIndex(o => o.MobileNumber);
-            modelBuilder.Entity<PendingRegistration>().Property(p => p.MobileNumber).HasMaxLength(16);
-            modelBuilder.Entity<PendingRegistration>().HasIndex(p => p.MobileNumber).IsUnique().HasFilter("[MobileNumber] IS NOT NULL");
-        }
-        else
-        {
-            modelBuilder.Entity<User>().Ignore(u => u.UserName).Ignore(u => u.MobileNumber);
-            modelBuilder.Entity<Message>().Ignore(m => m.Text);
-            modelBuilder.Entity<OtpVerification>().Ignore(o => o.MobileNumber);
-            modelBuilder.Entity<PendingRegistration>().Ignore(p => p.MobileNumber);
-        }
-    }
-}
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.MobileNumber)
+            .IsUnique()
+            .HasFilter("[MobileNumber] IS NOT NULL");
 
-public sealed class ProtectionModelCacheKeyFactory : IModelCacheKeyFactory
-{
-    public object Create(DbContext context, bool designTime) =>
-        (context.GetType(), ((ChatDbContext)context).LegacyColumnsPresent, designTime);
+        modelBuilder.Entity<OtpVerification>()
+            .HasIndex(o => o.MobileNumber);
+
+        modelBuilder.Entity<PendingRegistration>(entity =>
+        {
+            entity.Property(p => p.MobileNumber).HasMaxLength(16);
+            entity.Property(p => p.TokenHash).HasMaxLength(64);
+            entity.HasIndex(p => p.MobileNumber).IsUnique();
+        });
+    }
 }
