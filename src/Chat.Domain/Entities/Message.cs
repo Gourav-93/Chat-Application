@@ -3,7 +3,6 @@ namespace Chat.Domain.Entities;
 
 public class Message
 {
-    public string? TextCiphertext { get; set; }
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
     // Immutable after acceptance. Never clear this when a contact is unblocked.
@@ -17,7 +16,7 @@ public class Message
 
     public Guid SenderId { get; set; } // Foreign key referencing the user who sent the message
 
-    public string? Text { get; set; } // Legacy plaintext, cleared on protected writes
+    public string Text { get; set; } = string.Empty; // The content of the message
 
     public DateTime SentAt { get; set; } = DateTime.UtcNow; // Timestamp of when the message was sent
 

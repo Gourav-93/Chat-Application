@@ -4,7 +4,6 @@ using Chat.Application.DTOs;
 using Chat.Application.Interfaces;
 using Chat.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
-using Chat.Infrastructure.Services;
 
 namespace Chat.Application.Services;
 
@@ -160,7 +159,7 @@ public class PresenceService : IPresenceService
         return new UserStatusDto
         {
             UserId = userId,
-            UserName = user is null ? string.Empty : scope.ServiceProvider.GetRequiredService<ProtectedFields>().UserName(user),
+            UserName = user?.UserName ?? string.Empty,
             IsOnline = isOnline,
             ConnectionCount = connectionCount,
             LastSeenAt = isOnline ? null : ConvertToIST(user?.LastSeenAt)

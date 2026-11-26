@@ -17,7 +17,6 @@ namespace Chat.Application.Services;
 public class OtpService : IOtpService
 {
     private readonly ChatDbContext _context;
-    private readonly ProtectedFields _fields;
     private readonly ISmsSender _smsSender;
     private readonly byte[] _hashingKey;
     private readonly bool _exposeDevelopmentOtp;
@@ -30,10 +29,9 @@ public class OtpService : IOtpService
         ISmsSender smsSender,
         IOptions<OtpOptions> options,
         IHostEnvironment environment,
-        SingleSessionService singleSession, ProtectedFields fields)
+        SingleSessionService singleSession)
     {
         _context = context;
-        _fields = fields;
         _smsSender = smsSender;
         _singleSession = singleSession;
         _options = options.Value;
@@ -50,7 +48,7 @@ public class OtpService : IOtpService
 
     public async Task<string?> SendOtpAsync(SendOtpRequestDto request)
     {
-        var mobileNumber = _fields.Normalize(request.MobileNumber);
+        var mobileNumber = NormalizeMobileNumber(request.MobileNumber);
         string otp;
 
         await using (var transaction =
@@ -62,8 +60,10 @@ public class OtpService : IOtpService
             var now = DateTime.UtcNow;
             var windowStart = now.AddMinutes(-_options.SendWindowMinutes);
 
-            var recentOtpCount = await _context.OtpsByMobile(_fields, mobileNumber)
-                .CountAsync(o => o.CreatedAt >= windowStart);
+            var recentOtpCount = await _context.OtpVerifications
+                .CountAsync(o =>
+                    o.MobileNumber == mobileNumber &&
+                    o.CreatedAt >= windowStart);
 
             if (recentOtpCount >= _options.MaxSendRequests)
             {
@@ -71,7 +71,8 @@ public class OtpService : IOtpService
                     "Too many OTP requests. Try again later.", 429);
             }
 
-            var latestOtp = await _context.OtpsByMobile(_fields, mobileNumber)
+            var latestOtp = await _context.OtpVerifications
+                .Where(o => o.MobileNumber == mobileNumber)
                 .OrderByDescending(o => o.CreatedAt)
                 .ThenByDescending(o => o.Id)
                 .FirstOrDefaultAsync();
@@ -121,7 +122,7 @@ public class OtpService : IOtpService
 
     public async Task<OtpVerificationResult> VerifyOtpAsync(VerifyOtpRequestDto request)
     {
-        var mobileNumber = _fields.Normalize(request.MobileNumber);
+        var mobileNumber = NormalizeMobileNumber(request.MobileNumber);
 
         // Serialize verification for this normalized mobile across app instances.
         // The database unique index also prevents duplicates from other writers.
@@ -131,8 +132,10 @@ public class OtpService : IOtpService
 
         var windowStart = DateTime.UtcNow.AddMinutes(-_options.VerificationWindowMinutes);
 
-        var recentFailedAttempts = await _context.OtpsByMobile(_fields, mobileNumber)
-            .Where(o => o.CreatedAt >= windowStart)
+        var recentFailedAttempts = await _context.OtpVerifications
+            .Where(o =>
+                o.MobileNumber == mobileNumber &&
+                o.CreatedAt >= windowStart)
             .SumAsync(o => o.Attempts);
 
         if (recentFailedAttempts >= _options.MaxAttempts)
@@ -147,7 +150,8 @@ public class OtpService : IOtpService
             throw new ArgumentException("Invalid OTP format.");
         }
 
-        var otpRecord = await _context.OtpsByMobile(_fields, mobileNumber)
+        var otpRecord = await _context.OtpVerifications
+            .Where(o => o.MobileNumber == mobileNumber)
             .OrderByDescending(o => o.CreatedAt)
             .ThenByDescending(o => o.Id)
             .FirstOrDefaultAsync();
@@ -189,7 +193,8 @@ public class OtpService : IOtpService
         }
 
         // OTP is valid. Check whether the user already exists.
-        var user = await _context.UsersByMobile(_fields, mobileNumber).FirstOrDefaultAsync();
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.MobileNumber == mobileNumber);
 
         string? registrationToken = null;
         DateTime? registrationExpiresAt = null;
@@ -206,7 +211,8 @@ public class OtpService : IOtpService
         }
         else
         {
-            var pending = await _context.PendingByMobile(_fields, mobileNumber).SingleOrDefaultAsync();
+            var pending = await _context.PendingRegistrations
+                .SingleOrDefaultAsync(p => p.MobileNumber == mobileNumber);
             if (pending == null)
             {
                 pending = new PendingRegistration { MobileNumber = mobileNumber };
@@ -243,14 +249,12 @@ public class OtpService : IOtpService
             !Regex.IsMatch(token[33..], "^[0-9A-Fa-f]{64}$"))
             throw new AuthFlowException("Invalid registration token.", 401);
 
-        // Validate the credential before decrypting its mobile, then reload under the mobile lock.
-        var credential = await _context.PendingRegistrations.AsNoTracking()
-            .SingleOrDefaultAsync(p => p.Id == pendingId);
-        if (credential == null || !CryptographicOperations.FixedTimeEquals(
-            Convert.FromHexString(credential.TokenHash), SHA256.HashData(Convert.FromHexString(token[33..]))))
+        // This lookup is not authorization. Reload and validate under the mobile lock.
+        var mobile = await _context.PendingRegistrations.AsNoTracking()
+            .Where(p => p.Id == pendingId).Select(p => p.MobileNumber).SingleOrDefaultAsync();
+        if (mobile == null)
             throw new AuthFlowException("Invalid registration token.", 401);
 
-        var mobile = _fields.PendingMobile(credential);
         await using var transaction = await BeginVerificationTransactionAsync(mobile);
         var pending = await _context.PendingRegistrations.SingleOrDefaultAsync(p => p.Id == pendingId);
         var suppliedHash = SHA256.HashData(Convert.FromHexString(token[33..]));
@@ -263,7 +267,7 @@ public class OtpService : IOtpService
             throw new AuthFlowException("Registration expired. Verify a fresh OTP.", 410);
 
         // Never overwrite an account if another verified flow has already created it.
-        var user = await _context.UsersByMobile(_fields, mobile).SingleOrDefaultAsync();
+        var user = await _context.Users.SingleOrDefaultAsync(u => u.MobileNumber == mobile);
         if (user == null)
         {
             user = new User
@@ -315,7 +319,7 @@ public class OtpService : IOtpService
         var transaction = await _context.Database.BeginTransactionAsync();
         try
         {
-            var resource = $"chat-otp-verify:{_fields.UserHash(mobileNumber)}";
+            var resource = $"chat-otp-verify:{mobileNumber}";
             await _context.Database.ExecuteSqlInterpolatedAsync($@"
 DECLARE @result int;
 EXEC @result = sys.sp_getapplock
@@ -331,4 +335,21 @@ IF @result < 0 THROW 51000, 'Unable to acquire authentication lock.', 1;");
         }
     }
 
+    private static string NormalizeMobileNumber(string mobileNumber)
+    {
+        if (string.IsNullOrWhiteSpace(mobileNumber))
+        {
+            throw new ArgumentException("Mobile number is required.");
+        }
+
+        var normalized = mobileNumber.Trim();
+
+        if (!Regex.IsMatch(normalized, @"^\+91[0-9]{10}$"))
+        {
+            throw new ArgumentException(
+                "Mobile number must be +91 followed by exactly 10 digits.");
+        }
+
+        return normalized;
+    }
 }

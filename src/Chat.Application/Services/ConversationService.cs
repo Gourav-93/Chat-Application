@@ -6,19 +6,16 @@ using Chat.Application.Interfaces;
 using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
-using Chat.Infrastructure.Services;
 
 namespace Chat.Application.Services;
 
 public class ConversationService : IConversationService
 {
     private readonly ChatDbContext _context;
-    private readonly ProtectedFields _fields;
 
-    public ConversationService(ChatDbContext context, ProtectedFields fields)
+    public ConversationService(ChatDbContext context)
     {
         _context = context;
-        _fields = fields;
     }
 
     public async Task<(bool HasArchivedChats, bool HasLockedChats)> GetSectionAvailabilityAsync(Guid currentUserId)
@@ -53,12 +50,18 @@ public class ConversationService : IConversationService
         }
 
 
-        var users = await _context.UsersByMobile(_fields, mobileNumber).AsNoTracking()
-            .Where(u => u.Id != currentUserId && u.IsMobileVerified).ToListAsync();
-        return users.Select(u => new UserSearchResultDto
-        {
-            Id = u.Id, UserName = _fields.UserName(u), MobileNumber = _fields.Mobile(u)
-        }).ToList();
+        return await _context.Users
+            .Where(u =>
+                u.Id != currentUserId &&
+                u.MobileNumber == mobileNumber &&
+                u.IsMobileVerified)
+            .Select(u => new UserSearchResultDto
+            {
+                Id = u.Id,
+                UserName = u.UserName,
+                MobileNumber = u.MobileNumber
+            })
+            .ToListAsync();
 
     }
 
@@ -110,8 +113,8 @@ public class ConversationService : IConversationService
             IsLocked = settings?.IsLocked ?? false,
             IsArchived = settings?.IsArchived ?? false,
             OtherUserId = receiver.Id,
-            OtherUserName = _fields.UserName(receiver),
-            OtherUserMobileNumber = _fields.Mobile(receiver),
+            OtherUserName = receiver.UserName,
+            OtherUserMobileNumber = receiver.MobileNumber,
             CreatedAt = conversation.CreatedAt
         };
     }
@@ -123,7 +126,7 @@ public class ConversationService : IConversationService
     {
         if (section is not ("normal" or "locked" or "archived") || pageNumber < 1 || pageSize is < 1 or > 100 || (long)(pageNumber - 1) * pageSize > int.MaxValue)
             throw new PrivacyException(400, "conversation_query_invalid", "Invalid section or pagination.");
-        var rows = await _context.Conversations
+        var conversations = await _context.Conversations
             .AsNoTracking()
             .Where(c =>
                 c.UserAId == currentUserId ||
@@ -134,9 +137,9 @@ public class ConversationService : IConversationService
                   (section == "archived"
                     ? _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsArchived)
                     : !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsArchived)))
-            .Select(c => new
+            .Select(c => new ConversationHistoryDto
             {
-                c.Id,
+                ConversationId = c.Id,
                 IsLocked = _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsLocked),
                 IsArchived = _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsArchived),
 
@@ -204,25 +207,10 @@ public class ConversationService : IConversationService
                     !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.MessagesClearedAt != null &&
                         (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))
             })
-            .OrderByDescending(c => c.Last == null ? DateTime.MinValue : c.Last.SentAt)
-            .ThenByDescending(c => c.Id)
+            .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
+            .ThenByDescending(c => c.ConversationId)
             .Skip((pageNumber - 1) * pageSize).Take(pageSize)
             .ToListAsync();
-
-        var conversations = rows.Select(row =>
-        {
-            var text = row.Last is null ? null : _fields.Text(row.Last);
-            return new ConversationHistoryDto
-            {
-                ConversationId = row.Id, IsLocked = row.IsLocked, IsArchived = row.IsArchived,
-                OtherUserId = row.OtherUser.Id, OtherUserName = _fields.UserName(row.OtherUser),
-                OtherUserMobileNumber = _fields.Mobile(row.OtherUser), UnreadCount = row.UnreadCount,
-                LastMessageAt = row.Last?.SentAt, LastMessageSenderId = row.Last?.SenderId,
-                LastMessage = row.Last is null ? null : text!.Length > 0 ? text
-                    : row.Last.Type == MessageType.Location ? "Location"
-                    : row.Last.Type == MessageType.Image ? "Photo" : "Attachment"
-            };
-        }).ToList();
 
         // SQL Server does not preserve DateTime.Kind.
         // Our message timestamps are stored in UTC.

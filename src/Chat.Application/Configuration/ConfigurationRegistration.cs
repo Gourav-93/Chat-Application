@@ -21,12 +21,6 @@ public static class ConfigurationRegistration
             }
         }
 
-        services.AddOptions<DataProtectionOptions>()
-            .Bind(configuration.GetSection("DataProtection"))
-            .Validate(DataProtectionOptions.IsValid,
-                "DataProtection requires independent base64 32-byte encryption and lookup keys and a valid current version.")
-            .ValidateOnStart();
-
         services.AddOptions<DatabaseOptions>()
             .Bind(configuration.GetSection("ConnectionStrings"))
             .Validate(DatabaseOptions.IsValid,

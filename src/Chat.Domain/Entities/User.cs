@@ -2,12 +2,9 @@ namespace Chat.Domain.Entities;
 
 public class User
 {
-    public string? UserNameCiphertext { get; set; }
-    public string? MobileNumberCiphertext { get; set; }
-    public string? MobileNumberHash { get; set; }
     public Guid Id { get; set; } // Primary key
 
-    public string? UserName { get; set; } // Legacy plaintext, cleared on protected writes
+    public string UserName { get; set; } = string.Empty; // Display name; mobile number identifies the account
 
     public DateTime? LastSeenAt { get; set; } // Timestamp of the last time the user was seen online
 
