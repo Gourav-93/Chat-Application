@@ -89,7 +89,8 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime>("SentAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("TextCiphertext")
+                    b.Property<string>("Text")
+                        .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("Type")
@@ -195,10 +196,9 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<bool>("IsUsed")
                         .HasColumnType("bit");
 
-                    b.Property<string>("MobileNumberHash")
-                        .HasMaxLength(64)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(64)");
+                    b.Property<string>("MobileNumber")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("OtpHash")
                         .IsRequired()
@@ -206,7 +206,7 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MobileNumberHash");
+                    b.HasIndex("MobileNumber");
 
                     b.ToTable("OtpVerifications");
                 });
@@ -223,13 +223,10 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("MobileNumberCiphertext")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("MobileNumberHash")
-                        .HasMaxLength(64)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(64)");
+                    b.Property<string>("MobileNumber")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()
@@ -238,9 +235,8 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MobileNumberHash")
-                        .IsUnique()
-                        .HasFilter("[MobileNumberHash] IS NOT NULL");
+                    b.HasIndex("MobileNumber")
+                        .IsUnique();
 
                     b.ToTable("PendingRegistrations");
                 });
@@ -263,25 +259,21 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("LastSeenAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("MobileNumberCiphertext")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("MobileNumberHash")
-                        .HasMaxLength(64)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(64)");
+                    b.Property<string>("MobileNumber")
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<DateTime?>("SessionExpiresAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("UserNameCiphertext")
+                    b.Property<string>("UserName")
+                        .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MobileNumberHash")
+                    b.HasIndex("MobileNumber")
                         .IsUnique()
-                        .HasFilter("[MobileNumberHash] IS NOT NULL");
+                        .HasFilter("[MobileNumber] IS NOT NULL");
 
                     b.ToTable("Users");
                 });

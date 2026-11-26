@@ -18,24 +18,69 @@ The current migration sequence is:
 20261125170159_AddPerUserConversationClearCutoffs
 ```
 
-From the repository root, use an explicit connection to the verified local SQL Server database. Do not use a company or production connection, and do not apply these SQL Server migrations to MySQL.
+From the repository root, run these commands in PowerShell. Set `$databaseName` to your **verified local database**. The example uses `SandeshChat_DB`; replace it if your actual database is `RN_Chat_DB` or `RealTimeChat_DB`.
 
 ```powershell
-$connection = "Server=localhost;Database=RealTimeChat_DB;Integrated Security=True;Encrypt=True;TrustServerCertificate=True;"
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-dotnet ef database update --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
+$databaseName = 'SandeshChat_DB'
+$connection = "Server=localhost;Database=$databaseName;Integrated Security=True;Encrypt=True;TrustServerCertificate=True"
 ```
 
-The two migrations introduced for editing and clearing add nullable `Messages.EditedAt` and four nullable per-user cutoff fields to `UserConversationSettings`: `MessagesClearedAt`, `MessagesClearedThroughMessageId`, `MediaClearedAt` and `MediaClearedThroughMessageId`. They preserve existing records. Review pending migrations and back up important local data before applying them.
+List migrations against that database before applying anything:
+
+```powershell
+dotnet ef migrations list `
+  --project Two-Way-Com.csproj `
+  --startup-project Two-Way-Com.csproj `
+  --context ChatDbContext `
+  --connection $connection
+```
+
+A migration marked `(Pending)` has not been applied to this database. After confirming the database name and reviewing the pending migrations, apply them:
+
+```powershell
+dotnet ef database update `
+  --project Two-Way-Com.csproj `
+  --startup-project Two-Way-Com.csproj `
+  --context ChatDbContext `
+  --connection $connection
+```
+
+Verify that the migrations are no longer pending:
+
+```powershell
+dotnet ef migrations list `
+  --project Two-Way-Com.csproj `
+  --startup-project Two-Way-Com.csproj `
+  --context ChatDbContext `
+  --connection $connection
+```
+
+Run the backend against the **same database** in this PowerShell session:
+
+```powershell
+$env:ConnectionStrings__DefaultConnection = $connection
+dotnet run --project Two-Way-Com.csproj --launch-profile http
+```
+
+The environment-variable override applies only to this terminal session; it does not change User Secrets. Set the variables again in a new terminal. Keep `--connection $connection` on EF commands because the design-time configuration may otherwise target LocalDB instead of the database used by the running API.
+
+`AddMessageEditedAt` adds nullable `Messages.EditedAt`. `AddPerUserConversationClearCutoffs` adds four nullable per-user fields to `UserConversationSettings`: `MessagesClearedAt`, `MessagesClearedThroughMessageId`, `MediaClearedAt` and `MediaClearedThroughMessageId`. These migrations preserve existing records.
+
+If an update fails because a column such as `EditedAt` already exists, stop and compare the database schema, `__EFMigrationsHistory` and the migration's `Up` method. Do not drop a column containing data or manually mark the migration as applied. If EF reports all migrations applied but the API reports missing columns, first confirm that EF and the API use the same database.
+
+Back up important local data before applying migrations. Do not use a company or production connection, and do not apply these SQL Server migrations to MySQL.
 
 Location sharing needs no new secret. It requires `AddMessageLocation` to be applied; see the [location migration procedure](location-sharing.md#migration-and-teammate-setup).
 
 ## Edit a message
 
-The sender can edit a text-only message for 15 minutes after it was sent. The message menu opens an edit composer; saving updates the existing message and shows an edited timestamp to both participants. It does not create another message or change the original send time, delivery time or read time. A `MessageEdited` SignalR event updates connected clients, and the changed text and `EditedAt` are included in message history.
+The sender can edit a text-only message for 15 minutes after it was sent. The message menu opens edit mode in the composer at the bottom of the chat, where new messages are normally written. Saving updates the existing message and shows an **Edited** indicator to both participants. Cancel returns the composer to normal message mode.
+
+Editing does not create another message or change the original send time, delivery time or read time. A `MessageEdited` SignalR event updates connected clients, and the changed text and `EditedAt` are included in message history.
 
 Only nonempty text up to 5,000 characters can be saved. Messages with attachments or a location cannot be edited. The sender must still be a conversation participant, the message must be within the edit window and visible to that sender, and an outgoing block prevents editing until the contact is unblocked. Concurrent changes return an error asking the sender to reload.
+
+The 15-minute window is measured from the **original `SentAt`**, even if the message is edited multiple times. The server enforces this deadline using UTC time.
 
 SignalR operation:
 
@@ -52,9 +97,11 @@ Use the conversation actions menu and choose **Clear messages** or **Clear media
 | Action | Effect on your view | Effect on the other participant |
 | --- | --- | --- |
 | Clear messages | Hides messages sent through the cutoff, including their text, locations and attachments. | No change. Their own history is unchanged. |
-| Clear media | Hides attachments on messages sent through the cutoff; message text/captions and locations remain visible. | No change. Their own media remains visible. |
+| Clear media | Hides attachments on messages sent through the cutoff; message text, captions and locations remain visible. | No change. Their own media remains visible. |
 
-Clearing is per user and conversation. It does not delete message rows or stored files, retract content for the other participant, or affect messages sent after the cutoff. The service records both a UTC timestamp and message ID so messages with the same timestamp are handled consistently. A `ConversationVisibilityChanged` event refreshes the caller's connected view; the saved cutoff also applies after reload and to history, pending delivery, receipts and attachment access where relevant. Running the same clear operation again advances the cutoff.
+Clearing is per user and conversation. It does not delete message rows or stored files, retract content for the other participant, or affect messages sent after the cutoff. The service records both a UTC timestamp and message ID so messages with the same timestamp are handled consistently.
+
+A `ConversationVisibilityChanged` event refreshes the caller's connected view. The saved cutoff also applies after reload and to history, pending delivery, receipts and attachment access where relevant. Running the same clear operation again advances the cutoff.
 
 REST endpoints use the authenticated participant and active session. Locked conversations also require the existing privacy token in `X-Privacy-Token`.
 
@@ -83,15 +130,15 @@ The client sends the existing SignalR `SendMessage` operation with an optional l
 }
 ```
 
-Coordinates must be finite and within latitude `-90..90` and longitude `-180..180`. The server stores the coordinates on the message and returns them in live delivery and history. Message type `4` represents a location; existing type values remain unchanged. The recipient gets a map card and an Open in Maps link. Location messages cannot be edited.
+Coordinates must be finite and within latitude `-90..90` and longitude `-180..180`. The server stores the coordinates on the message and returns them in live delivery and history. Message type `4` represents a location; existing type values remain unchanged. The recipient gets a map card and an **Open in Maps** link. Location messages cannot be edited.
 
 Location access requires HTTPS or localhost and browser/device permission. The feature shares sensitive position data with the other conversation participant; review the preview before sending. For exact migration details, map-provider behavior, permissions troubleshooting and the acceptance checklist, use [Current location sharing](location-sharing.md).
 
 ## Manual verification
 
-Use two dedicated local accounts and the verified local database. Apply the pending SQL Server migrations before starting the updated backend. No production or real private data is needed.
+Use two dedicated local accounts and the verified local database. Apply pending SQL Server migrations before starting the updated backend. No production or real private data is needed.
 
-1. Send a text message and edit it within 15 minutes. Confirm the updated text and edited indicator on both accounts and after refreshing history.
+1. Send a text message and edit it within 15 minutes. Confirm the updated text and Edited indicator on both accounts and after refreshing history.
 2. Confirm the edit action is unavailable after 15 minutes and that an attachment or location message cannot be edited.
 3. Clear messages on one account. Confirm prior history disappears only for that account, the other account retains it, and a newly sent message is visible after the cutoff.
 4. Separately clear media. Confirm older attachments are no longer accessible in that account's view while text, captions and locations remain. Confirm the other account still sees its media.

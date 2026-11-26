@@ -13,7 +13,6 @@ using System.Text;
 using Microsoft.AspNetCore.RateLimiting;
 using Chat.Application.Configuration;
 using Microsoft.Extensions.Options;
-using Chat.Infrastructure.Services;
 
 
 namespace Chat.Api.Controllers;
@@ -23,7 +22,6 @@ namespace Chat.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly ChatDbContext _context;
-    private readonly ProtectedFields _fields;
     private readonly JwtOptions _jwt;
     private readonly IOtpService _otpService;
     private readonly SingleSessionService _singleSession;
@@ -36,10 +34,9 @@ public class AuthController : ControllerBase
         IOtpService otpService,
         SingleSessionService singleSession,
         SessionConnectionManager sessionConnections,
-        BrowserSessionService browserSessions, ProtectedFields fields)
+        BrowserSessionService browserSessions)
     {
         _context = context;
-        _fields = fields;
         _jwt = jwt.Value;
         _otpService = otpService;
         _singleSession = singleSession;
@@ -196,7 +193,7 @@ public IActionResult InitializeBrowser()
             ),
             new Claim(
                 ClaimTypes.Name,
-                _fields.UserName(user)
+                user.UserName
             ),
             new Claim(
         "sid",
@@ -228,8 +225,8 @@ public IActionResult InitializeBrowser()
         {
             Token = tokenString,
             UserId = user.Id.ToString(),
-            UserName = _fields.UserName(user),
-            MobileNumber = _fields.Mobile(user),
+            UserName = user.UserName,
+            MobileNumber = user.MobileNumber,
             ExpiresAt = expiresAt
         };
     }

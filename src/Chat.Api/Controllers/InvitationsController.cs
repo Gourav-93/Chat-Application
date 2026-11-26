@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Chat.Infrastructure.Services;
 
 namespace Chat.Api.Controllers;
 
@@ -16,17 +15,15 @@ namespace Chat.Api.Controllers;
 public sealed class InvitationsController : ControllerBase
 {
     private readonly ChatDbContext _db;
-    private readonly ProtectedFields _fields;
     private readonly IHostEnvironment _environment;
     private readonly InvitationOptions _options;
 
     public InvitationsController(
         ChatDbContext db,
         IHostEnvironment environment,
-        IOptions<InvitationOptions> options, ProtectedFields fields)
+        IOptions<InvitationOptions> options)
     {
         _db = db;
-        _fields = fields;
         _environment = environment;
         _options = options.Value;
     }
@@ -57,9 +54,9 @@ public sealed class InvitationsController : ControllerBase
         }
 
         // Include unverified accounts when checking whether a number is registered.
-        var exists = await _db.UsersByMobile(_fields, number)
+        var exists = await _db.Users
             .AsNoTracking()
-            .AnyAsync(cancellationToken);
+            .AnyAsync(u => u.MobileNumber == number, cancellationToken);
 
         if (exists)
         {
@@ -77,7 +74,7 @@ public sealed class InvitationsController : ControllerBase
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine();
         Console.WriteLine("========== DEVELOPMENT INVITATION ==========");
-        Console.WriteLine("Mobile Number : [redacted]");
+        Console.WriteLine($"Mobile Number : {number}");
         Console.WriteLine();
         Console.WriteLine("Message:");
         Console.WriteLine(message);
