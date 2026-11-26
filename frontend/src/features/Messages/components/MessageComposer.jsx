@@ -14,6 +14,7 @@ import useLocationSelection from "../hooks/useLocationSelection";
 
 export default function MessageComposer({
   value, onChange, onSend, pending, disabled, error, onTypingInput, stopTyping, conversationId,
+  editing, onSaveEdit, onCancelEdit,
 }) {
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
@@ -22,6 +23,12 @@ export default function MessageComposer({
   const [emojiOpen, setEmojiOpen] = useState(false);
   const composerRef = useRef(null);
   const textareaRef = useRef(null);
+  useEffect(() => {
+    if (!editing) return;
+    const input = textareaRef.current;
+    input?.focus({ preventScroll: true });
+    input?.setSelectionRange(input.value.length, input.value.length);
+  }, [editing]);
   const emojiTriggerRef = useRef(null);
   const restoringPickerFocusRef = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -125,6 +132,14 @@ export default function MessageComposer({
   const submit = async (event) => {
     event.preventDefault();
     stopTyping?.();
+    if (editing) {
+      if (!disabled && !pending && !busyRef.current && length && !invalid) {
+        busyRef.current = true;
+        try { await onSaveEdit(); }
+        finally { busyRef.current = false; }
+      }
+      return;
+    }
     if (disabled || busy || busyRef.current || invalid || (!length && !selected && !location)) return;
     if (location && !selected) {
       closeEmojiPicker();
@@ -184,8 +199,14 @@ export default function MessageComposer({
       <form onSubmit={submit} aria-busy={busy}
         className={"shrink-0 border-t px-3 py-2 sm:px-4 " +
           (isDark ? "border-[#293854] bg-[#111d31]" : "border-slate-200 bg-white")}>
+        {editing && <div className="mb-2 flex min-w-0 items-center gap-2 rounded-lg border border-blue-500/30 px-3 py-2 text-sm">
+          <div className="min-w-0 flex-1"><span className="font-semibold">Editing message</span>
+            <p className="truncate opacity-75">{editing.text}</p></div>
+          <button type="button" onClick={onCancelEdit} disabled={pending} aria-label="Cancel editing message"
+            className="min-h-11 rounded-lg px-3 hover:bg-blue-500/10 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50">Cancel</button>
+        </div>}
         <label htmlFor={id} className="sr-only">Message</label>
-        {(location || locating || locationSelection.error) && <div className="mb-2 rounded-xl border border-slate-500/30 p-2">
+        {!editing && (location || locating || locationSelection.error) && <div className="mb-2 rounded-xl border border-slate-500/30 p-2">
           <div className="mb-2 flex items-center justify-between gap-2 text-sm">
             <span role="status" className="flex items-center gap-2">{locating && <LoaderCircle size={16} className="animate-spin" />}
               {locating ? "Finding current location..." : "Share current location"}</span>
@@ -197,14 +218,14 @@ export default function MessageComposer({
             <button type="button" disabled={disabled || busy} onClick={requestLocation} className="min-h-11 text-sm underline">Retry location</button></div>}
           {location && <p className="text-xs opacity-75">A single position is shared when you send. This is not live tracking.</p>}
         </div>}
-        {selected && <div className="mb-2 flex items-center gap-2 rounded-lg border border-slate-500/30 p-2 text-sm">
+        {!editing && selected && <div className="mb-2 flex items-center gap-2 rounded-lg border border-slate-500/30 p-2 text-sm">
           <FileText size={18} /><span className="min-w-0 flex-1 truncate">{selected.name}</span>
           <button type="button" disabled={busy} aria-label="Remove selected file" onClick={() => { setSelected(null); retryRef.current = null; setAttachmentError(""); }}><X size={18} /></button>
         </div>}
         <div className="flex items-end gap-2 sm:gap-3">
           <div ref={menuRef} className="relative shrink-0">
             <button type="button" aria-label="Add attachment" aria-expanded={menuOpen}
-              disabled={disabled || busy}
+              disabled={disabled || busy || Boolean(editing)}
               onClick={() => {
                 closeEmojiPicker();
                 setMenuOpen(open => !open);
@@ -229,34 +250,35 @@ export default function MessageComposer({
               : emojiOpen ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100")}>
             <Smile size={21} aria-hidden="true" />
           </button>
-          <textarea id={id} ref={textareaRef} rows={1} value={value} disabled={uploading}
+          <textarea id={id} ref={textareaRef} rows={1} value={value} disabled={uploading || pending}
             onChange={(event) => updateDraft(event.target.value)}
             onBlur={() => {
               if (!restoringPickerFocusRef.current) stopTyping?.();
             }}
             onKeyDown={(event) => {
+              if (event.key === "Escape" && editing && !pending) { event.preventDefault(); onCancelEdit(); }
               if (event.key === "Enter" && !event.shiftKey &&
                   !event.nativeEvent.isComposing && event.keyCode !== 229) submit(event);
             }}
             aria-invalid={invalid}
             aria-describedby={id + "-help" + (error ? " " + id + "-error" : "")}
-            placeholder="Write a message..."
+            placeholder={editing ? "Edit message..." : "Write a message..."}
             className={"chat-flag-text max-h-28 min-h-11 min-w-0 flex-1 field-sizing-content resize-none overflow-y-auto rounded-xl border px-3 py-2.5 text-base leading-[22px] sm:text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 " +
               (isDark ? "border-[#293854] bg-[#080e1c] text-white placeholder:text-slate-500" :
                 "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400")}
           />
-          <button type="submit" disabled={disabled || busy || (!length && !selected && !location) || invalid}
-            aria-label={busy ? "Sending message" : "Send message"}
+          <button type="submit" disabled={disabled || busy || (!length && (editing || (!selected && !location))) || invalid}
+            aria-label={editing ? pending ? "Saving edit" : "Save edit" : busy ? "Sending message" : "Send message"}
             className="flex h-11 min-w-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-sm sm:px-4 font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
             {busy ? <LoaderCircle size={19} className="animate-spin" aria-hidden="true" /> :
               <Send size={19} aria-hidden="true" />}
-            <span className="hidden sm:inline">{busy ? "Sending..." : "Send"}</span>
+            <span className="hidden sm:inline">{editing ? pending ? "Saving..." : "Save edit" : busy ? "Sending..." : "Send"}</span>
           </button>
         </div>
         <p id={id + "-help"} className={invalid ? "mt-2 text-xs " +
           (isDark ? "text-red-300" : "text-red-600") : "sr-only"}>
           {invalid ? "Message must contain no more than 5,000 characters." :
-            "Press Enter to send or Shift+Enter for a new line."}
+            editing ? "Press Enter to save or Shift+Enter for a new line." : "Press Enter to send or Shift+Enter for a new line."}
         </p>
         {attachmentError && <p role="alert" className="mt-2 text-sm text-red-400">{attachmentError}</p>}
         {error && <p id={id + "-error"} role="alert"

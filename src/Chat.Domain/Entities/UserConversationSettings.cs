@@ -7,5 +7,9 @@ public sealed class UserConversationSettings
     public bool IsLocked { get; set; }
     public bool IsArchived { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public DateTime? MessagesClearedAt { get; set; }
+    public int? MessagesClearedThroughMessageId { get; set; }
+    public DateTime? MediaClearedAt { get; set; }
+    public int? MediaClearedThroughMessageId { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }

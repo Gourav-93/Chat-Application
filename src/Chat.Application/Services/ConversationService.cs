@@ -123,6 +123,7 @@ public class ConversationService : IConversationService
     {
         if (section is not ("normal" or "locked" or "archived") || pageNumber < 1 || pageSize is < 1 or > 100 || (long)(pageNumber - 1) * pageSize > int.MaxValue)
             throw new PrivacyException(400, "conversation_query_invalid", "Invalid section or pagination.");
+        var visibleMessages = _context.VisibleMessages(currentUserId);
         var rows = await _context.Conversations
             .AsNoTracking()
             .Where(c =>
@@ -139,10 +140,12 @@ public class ConversationService : IConversationService
                 c.Id,
                 IsLocked = _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsLocked),
                 IsArchived = _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsArchived),
+
                 OtherUser = c.UserAId == currentUserId ? c.UserB : c.UserA,
-                Last = c.Messages.Where(m => !m.IsDeliverySuppressed || m.SenderId == currentUserId)
+                Last = visibleMessages.Where(m => m.ConversationId == c.Id)
                     .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id).FirstOrDefault(),
-                UnreadCount = c.Messages.Count(m => !m.IsDeliverySuppressed && m.SenderId != currentUserId && m.ReadAt == null)
+                UnreadCount = visibleMessages.Count(m => m.ConversationId == c.Id &&
+                    m.SenderId != currentUserId && m.ReadAt == null)
             })
             .OrderByDescending(c => c.Last == null ? DateTime.MinValue : c.Last.SentAt)
             .ThenByDescending(c => c.Id)

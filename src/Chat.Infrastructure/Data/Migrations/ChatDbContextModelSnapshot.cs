@@ -66,6 +66,9 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("DeliveredAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateTime?>("EditedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<bool>("IsDeliverySuppressed")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
@@ -317,6 +320,18 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
 
                     b.Property<bool>("IsLocked")
                         .HasColumnType("bit");
+
+                    b.Property<DateTime?>("MediaClearedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("MediaClearedThroughMessageId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("MessagesClearedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("MessagesClearedThroughMessageId")
+                        .HasColumnType("int");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()

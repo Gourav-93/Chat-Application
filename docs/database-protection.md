@@ -87,6 +87,8 @@ Expected order in the current checkout:
 20261124071343_AddMessageAttachments
 20261125063713_AddUserBlocking
 20261125111351_AddMessageLocation
+20261125120551_AddMessageEditedAt
+20261125170159_AddPerUserConversationClearCutoffs
 20261126061034_AddSensitiveDataProtection
 20261126061256_RemovePlaintextSensitiveData
 ```

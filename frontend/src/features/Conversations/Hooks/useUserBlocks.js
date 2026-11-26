@@ -11,17 +11,24 @@ export default function useUserBlocks(userId, targetUserId, revision, connection
   const retry = useCallback(() => setRefresh((value) => value + 1), []);
 
   useEffect(() => {
+    if (!userId) return undefined;
+
     const controller = new AbortController();
     const request = ++requestRef.current;
-    api.get("/users/blocked", { signal: controller.signal }).then(({ data }) => {
-      if (!controller.signal.aborted && request === requestRef.current) {
+
+    api.get("/users/blocked", { signal: controller.signal })
+      .then(({ data }) => {
+        if (controller.signal.aborted || request !== requestRef.current) return;
+
         setSnapshot({ userId, users: data });
         setError("");
-      }
-    }).catch(() => {
-      if (!controller.signal.aborted && request === requestRef.current)
+      })
+      .catch(() => {
+        if (controller.signal.aborted || request !== requestRef.current) return;
+
         setError("Unable to load blocked contacts. Try again.");
-    });
+      });
+
     return () => controller.abort();
   }, [userId, targetUserId, revision, connectionStatus, refresh]);
 

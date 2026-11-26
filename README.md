@@ -495,3 +495,11 @@ For an existing personal database, use the step-by-step guide in this order:
 6. Start the application and check existing/new login, mobile search, message history and the other feature checks in the guide.
 
 The guide includes exact PowerShell commands, SSMS checks, fresh/partial/final database paths, shared-database coordination and recovery steps. If the final migration is already applied, keep the original keys and use final-mode verification; do not target the older expansion migration. Do not run an unqualified `dotnet ef database update` before backfill, generate duplicate migrations, or regenerate keys for protected rows. Keep database/key backups and private attachment files: database field protection does not encrypt or restore uploaded file bytes.
+
+## Combined encryption and message editing/chat clearing
+
+Both features are included together. Message editing encrypts the replacement text before writing it, and returns `EditedAt` with the decrypted authorized response. History, conversation previews and offline messages apply per-user message/media clearing before returning protected data; another participant's history remains available.
+
+The full migration order also includes `20261125120551_AddMessageEditedAt` and `20261125170159_AddPerUserConversationClearCutoffs` between location sharing and protection expansion. See [message editing and chat clearing](docs/message-editing-and-chat-clearing.md) and the [staged hashing/encryption DB guide](docs/database-protection.md). If protection is already fully applied, retain its original keys and final schema mode; follow the feature guide for applying only missing earlier additive migrations without downgrading.
+
+Combined backend regression tests: `dotnet test tests/Chat.Security.Tests/Chat.Security.Tests.csproj`. They cover encrypted edits, per-user clearing, media captions, attachment access and SQL Server query translation in both schema modes using isolated test databases; they do not apply migrations to your application DB.

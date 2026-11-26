@@ -199,17 +199,86 @@ public class ChatService : IChatService
         return await MapAsync(message, conversation);
     }
 
-    private async Task<MessageDto> MapAsync(Message message, Conversation conversation)
+    public async Task<MessageDto> EditMessageAsync(int messageId, string? value, Guid senderId)
+    {
+        var text = value?.Trim() ?? string.Empty;
+        if (text.Length is < 1 or > 5000)
+            throw new ArgumentException("Message must contain 1 to 5,000 characters.");
+
+        var message = await _context.Messages.Include(m => m.Attachments)
+            .SingleOrDefaultAsync(m => m.Id == messageId);
+        if (message is null)
+            throw new KeyNotFoundException("Message not found.");
+        if (message.SenderId != senderId)
+            throw new UnauthorizedAccessException("You can edit only your own messages.");
+        if (message.Type != MessageType.Text || message.Attachments.Count != 0)
+            throw new ArgumentException("Only text-only messages can be edited.");
+
+        var conversation = await _context.Conversations
+            .SingleOrDefaultAsync(c => c.Id == message.ConversationId);
+        if (conversation is null || (conversation.UserAId != senderId && conversation.UserBId != senderId))
+            throw new UnauthorizedAccessException("Invalid conversation.");
+
+        var recipientId = conversation.UserAId == senderId ? conversation.UserBId : conversation.UserAId;
+        // Keep edit and block mutations in the same transaction and pair-lock order as sends.
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        await _pairLock.AcquireAsync(senderId, recipientId);
+        var relationship = await _blocks.GetRelationshipAsync(senderId, recipientId);
+        if (relationship.Outgoing)
+            throw new PrivacyException(409, "contact_blocked", "Unblock this contact before editing messages.");
+
+        var cleared = await _context.UserConversationSettings.AsNoTracking().AnyAsync(s =>
+            s.UserId == senderId && s.ConversationId == message.ConversationId &&
+            s.MessagesClearedAt != null && (message.SentAt < s.MessagesClearedAt ||
+            (message.SentAt == s.MessagesClearedAt && message.Id <= s.MessagesClearedThroughMessageId)));
+        if (cleared) throw new KeyNotFoundException("Message not found.");
+
+        var now = DateTime.UtcNow;
+        if (message.SentAt < now.AddMinutes(-15))
+            throw new ArgumentException("Messages can be edited for 15 minutes after sending.");
+
+        var expectedText = message.Text;
+        var expectedCiphertext = message.TextCiphertext;
+        var expectedEditedAt = message.EditedAt;
+        message.Text = text;
+        _fields.Protect(message);
+        var ciphertext = message.TextCiphertext;
+        var candidates = _context.Messages
+            .Where(m => m.Id == messageId && m.SenderId == senderId &&
+                m.ConversationId == message.ConversationId && m.Type == MessageType.Text &&
+                !m.Attachments.Any() && m.SentAt >= now.AddMinutes(-15) &&
+                m.TextCiphertext == expectedCiphertext && m.EditedAt == expectedEditedAt);
+        // ExecuteUpdate bypasses SaveChanges protection. Encrypt explicitly and
+        // compare the previous ciphertext to preserve optimistic edit concurrency.
+        var updated = _context.LegacyColumnsPresent
+            ? await candidates.Where(m => m.Text == expectedText).ExecuteUpdateAsync(setters => setters
+                .SetProperty(m => m.Text, (string?)null)
+                .SetProperty(m => m.TextCiphertext, ciphertext)
+                .SetProperty(m => m.EditedAt, now))
+            : await candidates.ExecuteUpdateAsync(setters => setters
+                .SetProperty(m => m.TextCiphertext, ciphertext)
+                .SetProperty(m => m.EditedAt, now));
+        if (updated != 1)
+            throw new InvalidOperationException("This message changed while you were editing it. Reload and try again.");
+
+        await tx.CommitAsync();
+        message.EditedAt = now;
+        return await MapAsync(message, conversation);
+    }
+
+    private async Task<MessageDto> MapAsync(
+        Message message, Conversation conversation)
     {
         var sender = await _context.Users.AsNoTracking().SingleAsync(u => u.Id == message.SenderId);
         return await MapLoadedAsync(message, conversation.UserAId == message.SenderId ? conversation.UserBId : conversation.UserAId, _fields.UserName(sender));
     }
 
-    private async Task<MessageDto> MapLoadedAsync(Message message, Guid receiverId, string senderName)
+    private async Task<MessageDto> MapLoadedAsync(Message message, Guid receiverId, string senderName, bool includeMedia = true)
     {
         var attachments = new List<AttachmentDto>();
-        foreach (var attachment in message.Attachments)
-            attachments.Add(await AttachmentService.MapAvailableAsync(attachment, _storage));
+        if (includeMedia)
+            foreach (var attachment in message.Attachments)
+                attachments.Add(await AttachmentService.MapAvailableAsync(attachment, _storage));
         return new()
         {
         Id = message.Id,
@@ -227,6 +296,9 @@ public class ChatService : IChatService
             : null,
         ReadAt = message.ReadAt.HasValue
             ? DateTime.SpecifyKind(message.ReadAt.Value, DateTimeKind.Utc)
+            : null,
+        EditedAt = message.EditedAt.HasValue
+            ? DateTime.SpecifyKind(message.EditedAt.Value, DateTimeKind.Utc)
             : null,
         Attachments = attachments
         };
@@ -265,18 +337,19 @@ public class ChatService : IChatService
         if (skipCount > int.MaxValue)
             return Array.Empty<MessageDto>();
 
-        // Fetch latest messages first
-        var rows = await _context.Messages.AsNoTracking().Include(m => m.Sender).Include(m => m.Attachments)
-            .Where(m => m.ConversationId == conversationId &&
-                (!m.IsDeliverySuppressed || m.SenderId == userId))
-            .OrderByDescending(m => m.SentAt)
-            .ThenByDescending(m => m.Id)
-            .Skip((int)skipCount)
-            .Take(pageSize)
-            .ToListAsync();
+        // Apply each participant's clear cutoffs before ordering and pagination.
+        var settings = await _context.UserConversationSettings.AsNoTracking()
+            .SingleOrDefaultAsync(s => s.UserId == userId && s.ConversationId == conversationId);
+        var rows = await _context.VisibleMessages(userId).AsNoTracking()
+            .Include(m => m.Sender).Include(m => m.Attachments)
+            .Where(m => m.ConversationId == conversationId)
+            .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
+            .Skip((int)skipCount).Take(pageSize).ToListAsync();
         var messages = new List<MessageDto>();
         foreach (var row in rows)
-            messages.Add(await MapLoadedAsync(row, row.SenderId == conversation.UserAId ? conversation.UserBId : conversation.UserAId, _fields.UserName(row.Sender)));
+            messages.Add(await MapLoadedAsync(row,
+                row.SenderId == conversation.UserAId ? conversation.UserBId : conversation.UserAId,
+                _fields.UserName(row.Sender), IncludeMedia(row, settings)));
 
         // Return messages in chronological order
         messages.Reverse();
@@ -302,6 +375,8 @@ public class ChatService : IChatService
                     message.ReadAt.Value,
                     DateTimeKind.Utc);
             }
+            if (message.EditedAt.HasValue)
+                message.EditedAt = DateTime.SpecifyKind(message.EditedAt.Value, DateTimeKind.Utc);
         }
 
         return messages;
@@ -314,7 +389,9 @@ public class ChatService : IChatService
     {
         var message = await _context.Messages
             .Include(m => m.Conversation)
-            .FirstOrDefaultAsync(m => m.Id == messageId && !m.IsDeliverySuppressed);
+            .FirstOrDefaultAsync(m => m.Id == messageId && !m.IsDeliverySuppressed &&
+                !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.MessagesClearedAt != null &&
+                    (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))));
 
         if (message == null)
             throw new KeyNotFoundException("Message not found.");
@@ -382,7 +459,9 @@ public class ChatService : IChatService
                 m.ConversationId == conversationId &&
                 m.SenderId != recipientId &&
                 !m.IsDeliverySuppressed &&
-                m.ReadAt == null)
+                m.ReadAt == null &&
+                !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.MessagesClearedAt != null &&
+                    (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))
             .ToListAsync();
 
         if (unreadMessages.Count == 0)
@@ -418,21 +497,20 @@ public class ChatService : IChatService
     public async Task<IReadOnlyList<MessageDto>> GetUndeliveredMessagesAsync(
         Guid recipientId)
     {
-        // Find messages that have not yet been delivered to this user.
-        var rows = await _context.Messages.AsNoTracking().Include(m => m.Sender).Include(m => m.Attachments)
-            .Where(m =>
-                m.DeliveredAt == null &&
-                !m.IsDeliverySuppressed &&
-                !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.IsLocked) &&
-                m.SenderId != recipientId &&
-                (m.Conversation.UserAId == recipientId ||
-                 m.Conversation.UserBId == recipientId))
-            .OrderBy(m => m.SentAt)
-            .ThenBy(m => m.Id)
-            .ToListAsync();
+        var rows = await _context.VisibleMessages(recipientId).AsNoTracking()
+            .Include(m => m.Sender).Include(m => m.Attachments)
+            .Where(m => m.DeliveredAt == null && !m.IsDeliverySuppressed && m.SenderId != recipientId &&
+                !_context.UserConversationSettings.Any(s => s.UserId == recipientId &&
+                    s.ConversationId == m.ConversationId && s.IsLocked))
+            .OrderBy(m => m.SentAt).ThenBy(m => m.Id).ToListAsync();
+        var conversationIds = rows.Select(m => m.ConversationId).Distinct().ToList();
+        var settings = await _context.UserConversationSettings.AsNoTracking()
+            .Where(s => s.UserId == recipientId && conversationIds.Contains(s.ConversationId))
+            .ToDictionaryAsync(s => s.ConversationId);
         var messages = new List<MessageDto>();
         foreach (var row in rows)
-            messages.Add(await MapLoadedAsync(row, recipientId, _fields.UserName(row.Sender)));
+            messages.Add(await MapLoadedAsync(row, recipientId, _fields.UserName(row.Sender),
+                IncludeMedia(row, settings.GetValueOrDefault(row.ConversationId))));
 
         // SQL Server does not preserve DateTime.Kind.
         foreach (var message in messages)
@@ -454,9 +532,52 @@ public class ChatService : IChatService
                     message.ReadAt.Value,
                     DateTimeKind.Utc);
             }
+            if (message.EditedAt.HasValue)
+                message.EditedAt = DateTime.SpecifyKind(message.EditedAt.Value, DateTimeKind.Utc);
         }
 
         return messages;
+    }
+
+    private static bool IncludeMedia(Message message, UserConversationSettings? settings) =>
+        settings?.MediaClearedAt is not DateTime cutoff || message.SentAt > cutoff ||
+        (message.SentAt == cutoff && message.Id > settings.MediaClearedThroughMessageId);
+
+    public async Task ClearConversationAsync(int conversationId, Guid userId, bool mediaOnly)
+    {
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        var conversation = await _context.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId &&
+            (c.UserAId == userId || c.UserBId == userId));
+        if (conversation is null) throw new UnauthorizedAccessException("Invalid conversation.");
+
+        var otherId = conversation.UserAId == userId ? conversation.UserBId : conversation.UserAId;
+        // Sends and clears share this transaction-scoped pair lock, including incoming sends.
+        await _pairLock.AcquireAsync(userId, otherId);
+        var latest = await _context.Messages.Where(m => m.ConversationId == conversationId)
+            .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
+            .Select(m => new { m.Id, m.SentAt }).FirstOrDefaultAsync();
+        if (latest is null) { await tx.CommitAsync(); return; }
+
+        var settings = await _context.UserConversationSettings.SingleOrDefaultAsync(s =>
+            s.UserId == userId && s.ConversationId == conversationId);
+        if (settings is null)
+        {
+            settings = new UserConversationSettings { UserId = userId, ConversationId = conversationId, UpdatedAt = DateTime.UtcNow };
+            _context.UserConversationSettings.Add(settings);
+        }
+        if (mediaOnly)
+        {
+            settings.MediaClearedAt = latest.SentAt;
+            settings.MediaClearedThroughMessageId = latest.Id;
+        }
+        else
+        {
+            settings.MessagesClearedAt = latest.SentAt;
+            settings.MessagesClearedThroughMessageId = latest.Id;
+        }
+        settings.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        await tx.CommitAsync();
     }
 
 
