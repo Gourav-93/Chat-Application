@@ -16,6 +16,8 @@ The current migration sequence is:
 20261125111351_AddMessageLocation
 20261125120551_AddMessageEditedAt
 20261125170159_AddPerUserConversationClearCutoffs
+20261126061034_AddSensitiveDataProtection
+20261126061256_RemovePlaintextSensitiveData
 ```
 
 From the repository root, run these commands in PowerShell. Set `$databaseName` to your **verified local database**. The example uses `SandeshChat_DB`; replace it if your actual database is `RN_Chat_DB` or `RealTimeChat_DB`.
@@ -35,15 +37,20 @@ dotnet ef migrations list `
   --connection $connection
 ```
 
-A migration marked `(Pending)` has not been applied to this database. After confirming the database name and reviewing the pending migrations, apply them:
+A migration marked `(Pending)` has not been applied to this database. This branch also includes database hashing/encryption. For a fresh, plaintext or expanded database, use the [staged protection update guide](database-protection.md) to apply expansion, backfill and verification before plaintext removal. Do not run an unqualified update-to-latest command: it would attempt plaintext removal before conversion.
+
+If **both protection migrations are already applied** and only the earlier edit/clear migrations are pending, retain the database's keys and final schema mode (`DataProtection:LegacyColumnsPresent=false`). After backup and stopping writers, apply those missing additive migrations using the existing final target:
 
 ```powershell
-dotnet ef database update `
+dotnet ef database update 20261126061256_RemovePlaintextSensitiveData `
   --project Two-Way-Com.csproj `
   --startup-project Two-Way-Com.csproj `
   --context ChatDbContext `
   --connection $connection
+if ($LASTEXITCODE -ne 0) { throw 'Migration update failed.' }
 ```
+
+Do not target the older edit/clear migration on an already contracted database; that would request a downgrade. Run the protection verifier in the update guide after the schema update and before restarting the app. EF history inspection and application maintenance must use the same connection.
 
 Verify that the migrations are no longer pending:
 
