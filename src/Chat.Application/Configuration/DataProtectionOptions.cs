@@ -7,8 +7,8 @@ public sealed class DataProtectionOptions
     public string CurrentEncryptionKeyVersion { get; set; } = "v1";
     public Dictionary<string, string> EncryptionKeys { get; set; } = new();
     public string LookupHashKey { get; set; } = "";
-    // Switch to false only when deploying the separately approved contract migration.
-    public bool LegacyColumnsPresent { get; set; } = true;
+    // The migration snapshot represents the final schema.
+    public bool LegacyColumnsPresent { get; set; }
 
     public static bool IsValid(DataProtectionOptions options)
     {

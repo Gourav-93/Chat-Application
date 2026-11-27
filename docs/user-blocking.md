@@ -196,37 +196,7 @@ dotnet ef migrations list --no-connect --project Two-Way-Com.csproj --startup-pr
 dotnet build Two-Way-Com.csproj
 ```
 
-Read the existing connection from your own Development User Secrets without printing credentials. The known local database name is `RealTimeChat_DB`; the server depends on your installation (`localhost` for a default instance, `.\SQLEXPRESS` for a named Express instance, or `(localdb)\MSSQLLocalDB` for LocalDB). Keep a working connection. If it is missing, configure it using the [root connection examples](../README.md#2-configure-backend-user-secrets), then repeat this step.
-
-```powershell
-$env:ASPNETCORE_ENVIRONMENT = "Development"
-$env:DOTNET_ENVIRONMENT = "Development"
-$entry = @(dotnet user-secrets list --project Two-Way-Com.csproj | Where-Object { $_ -match '^ConnectionStrings:DefaultConnection\s*=' })
-if ($LASTEXITCODE -ne 0 -or $entry.Count -ne 1) { throw "Configure the local database connection first." }
-$developmentConnection = ($entry[0] -split '=', 2)[1].Trim()
-if ([string]::IsNullOrWhiteSpace($developmentConnection)) { throw "Local connection is empty." }
-$target = [System.Data.Common.DbConnectionStringBuilder]::new()
-$target.set_ConnectionString($developmentConnection)
-foreach ($key in @('Server', 'Data Source', 'Database', 'Initial Catalog')) {
-    if ($target.ContainsKey($key)) { Write-Output ($key + '=' + $target.get_Item($key)) }
-}
-```
-
-Confirm the displayed server/database is your own authorized local target, and check that `ConnectionStrings__DefaultConnection` or command-line overrides do not point the running backend elsewhere. The design factory uses `Sandesh_DesignOnly` and does not read runtime secrets, so the explicit EF `--connection` below is required. Inspect pending migrations before applying them:
-
-```powershell
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$developmentConnection"
-```
-
-Expected sequence: `20261120130000_InitialCreate`, `20261123180036_AddChatPrivacyAndArchive`, `20261124071343_AddMessageAttachments`, then `20261125063713_AddUserBlocking`. After target confirmation and migration review, apply the checked-in migration and verify nothing remains pending:
-
-```powershell
-dotnet ef database update --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$developmentConnection"
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$developmentConnection"
-Remove-Variable developmentConnection, entry, target
-```
-
-These commands are instructions for authorized local setup, not commands executed during implementation. Do not use them against production or the design-only placeholder. No new application secret is required. Preserve the JWT, OTP, privacy pepper, database and attachment settings described in the existing setup guides.
+Use the [current staged database procedure](database-protection.md) for every installation. Confirm the target and applied history before selecting a migration. An older feature target can request a downgrade on a newer database.
 
 The additive migration preserves existing data and conversation IDs. Do not create another `AddUserBlocking` migration, delete old migrations, recreate the database, or edit migration history to resolve an error. If you already applied `AddUserBlocking`, the Online/Last seen fix requires only the updated backend/client, with no further database update.
 
@@ -272,7 +242,7 @@ Use dedicated local accounts in separate browser profiles/private windows becaus
 | Symptom | Resolution |
 | --- | --- |
 | `Invalid object name 'UserBlocks'` or `Invalid column name 'IsDeliverySuppressed'` | Apply the checked-in migration to the confirmed runtime database with the explicit connection above, then restart the backend. |
-| EF targets `Sandesh_DesignOnly`, or LocalDB is missing on a default SQL Server installation | Use your configured runtime connection with `--connection`; do not change the design factory to point to a live database. |
+| Unexpected migration history | Compare the active environment and configured target with the database owner. |
 | SQL Server is unreachable | Check the installed instance name and service (`Get-Service *MSSQL*`). Use `sqllocaldb start MSSQLLocalDB` only if LocalDB is installed. |
 | Windows authentication reports SSPI/principal-name errors | Retry from the normal local terminal under the configured Windows identity and verify the SQL instance; ask the SQL administrator to check credentials/SPNs if it persists. |
 | Blocked viewer still sees old presence | Confirm the updated backend is running, both browser tabs loaded the new client, and both use that backend/database. No additional presence migration exists. |

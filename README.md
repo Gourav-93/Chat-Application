@@ -3,6 +3,7 @@
 Sandesh is a real-time, one-to-one chat application with mobile OTP sign-in, persistent message history, private image and document sharing, and a responsive React interface. The backend is one ASP.NET Core project, and the frontend is a separate Vite application.
 
 Database field protection now requires independent encryption/lookup keys and a staged database update before running this release. Follow the [protection deployment and teammate guide](docs/database-protection.md), including backup, expansion, explicit backfill and verification. Plaintext removal is a separate later migration; never apply latest implicitly.
+Sandesh also supports per-user hiding of the Locked Chats folder and temporary access through an exact Secret Code match while hiding is enabled.
 
 ## Features and status
 
@@ -17,6 +18,8 @@ Database field protection now requires independent encryption/lookup keys and a 
 - Persistent Block User / Unblock User controls and a blocked-users list in the profile menu. Messages accepted during a block stay visible only to their sender with a single tick, including after unblock. A blocked contact cannot see the blocker's Online or Last seen; unrelated contacts retain normal presence. Apply `AddUserBlocking` before starting the updated backend; see [user blocking and teammate setup](docs/user-blocking.md).
 - Responsive chat navigation, dark/light themes, and a profile menu.
 - Per-user PIN-protected Locked Chats and independent Archive, shown as chat-list folders only when nonempty. Locked Chats relock on section exit or five minutes of inactivity; direct interactions renew access while incoming messages do not. Configure the privacy pepper and manually apply the additive migration before use; see [Chat Privacy setup and verification](docs/chat-privacy.md).
+- A nonempty Locked Chats folder can be hidden per user. While hiding is enabled, an exact Secret Code match reveals the folder and issues a temporary privacy grant. With hiding disabled, the existing Privacy PIN opens Locked Chats.
+- PIN authorization is required for Secret Code settings changes and recovery. Disabling the code turns off hiding and preserves individual conversation locks, archive state, messages, and attachments. The feature requires the additive `AddSecretCodeToUserPrivacySettings` migration. Secret Code verification has no dedicated throttling or lockout. See [Hide Locked Chats and Secret Code](docs/hide-locked-chats.md).
 
 - Image and document sharing through the message composer's `+` menu, with separate Image and Document file pickers, optional captions, and authorized downloads. The current frontend testing implementation selects one file per message; the backend supports multiple attachments.
 - Private REST uploads/downloads, file size and content validation, attachment ownership, Locked Chat authorization, pending upload cancellation and expiry cleanup. SignalR carries attachment metadata rather than file bytes.
@@ -90,6 +93,7 @@ docs/
   user-blocking.md           Block/unblock setup, presence privacy, APIs and verification
   location-sharing.md        Location flow, message contract, migration and verification
   img-doc-setup-documention.md  Attachment setup, API contract and verification
+  hide-locked-chats.md      Secret Code setup, migration, APIs, and verification
   deployment.md             Canonical configuration reference and deployment
   system-overview.md
   otp-only-auth.md
@@ -122,6 +126,8 @@ git status --short
 ```
 
 Select the team's approved branch or release containing the attachment, user-blocking and location changes before setup. Check that it includes `20261125111351_AddMessageLocation` and the configuration files shown above. A local, uncommitted implementation becomes available to teammates only after normal team integration.
+
+To use Hide Locked Chats, select a team-approved branch or release that includes the Secret Code implementation and its checked-in migration. This applies to both a clone and a ZIP download.
 
 For a ZIP, select the approved branch/tag on GitHub, choose **Code > Download ZIP**, extract it, and open a terminal in the extracted directory containing `Two-Way-Com.csproj`. Skip Git commands when using a ZIP. The archive contains source and templates; create User Secrets on your own machine and install dependencies separately.
 
@@ -179,22 +185,9 @@ dotnet user-secrets set "Privacy:PepperKeys:v1" ([Convert]::ToBase64String($priv
 The default `Privacy:CurrentPepperVersion` is `v1`. Keep an existing pepper: replacing it prevents verification of PINs created with that key. If startup reports `Privacy requires a valid pepper key ring`, check that the selected version has a secret of at least 32 bytes. `.env.example` documents deployment variables; `dotnet run` does not load a `.env` file automatically. See [chat privacy configuration](docs/chat-privacy.md#configuration-and-hashing) for key rotation details.
 
 **After updating an existing checkout:** do not regenerate JWT, OTP, or privacy keys. If the privacy pepper is missing, use the [guarded terminal command for existing installations](docs/chat-privacy.md#existing-installation-after-updating). It preserves an existing `v1` User Secret and creates one only when absent. Restart the backend after configuring a missing secret.
+Hide Locked Chats and Secret Code reuse the existing privacy pepper. They require no additional Secret Code-specific User Secrets or backend packages. Keep the existing JWT, OTP, privacy pepper keys, and database configuration when updating. Saved Privacy PINs and Secret Codes depend on the pepper version recorded with each verifier. See [Secret Code configuration and hashing](docs/hide-locked-chats.md#configuration-and-hashing).
 
-Choose the SQL Server instance installed on your own machine. The verified local setup for this checkout uses the default SQL Server instance at `localhost` and database `RealTimeChat_DB`. Each teammate must select their own instance; copying the project does not install SQL Server or copy User Secrets.
-
-| Installed instance | `Server` value |
-| --- | --- |
-| Default SQL Server instance on this machine | `localhost` |
-| SQL Server Express named instance | `.\SQLEXPRESS` (confirm the installed name) |
-| Windows SQL Server Express LocalDB | `(localdb)\MSSQLLocalDB` |
-
-For a default local instance with Windows authentication, run the following from the repository root. Change only the server/database values to match your approved local target; preserve an existing working connection.
-
-```powershell
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=localhost;Database=RealTimeChat_DB;Integrated Security=True;Encrypt=True;TrustServerCertificate=True" --project Two-Way-Com.csproj
-```
-
-`TrustServerCertificate=True` is a local development convenience. Deployed SQL Server connections should use a trusted certificate with certificate validation enabled. For SQL authentication, supply your own approved credentials through local secret tooling. The [database guide](docs/database-setup.md) explains existing-database checks and authentication choices. Blocking requires no additional secrets, provider or feature flag.
+Keep an existing working SQL Server connection. On a new machine, configure your own approved target in Development User Secrets using the secure prompt in the [database protection guide](docs/database-protection.md#2-stop-writers-and-confirm-the-target-db).
 
 #### Configure image and document sharing
 
@@ -225,63 +218,11 @@ The local provider creates `private-uploads/` under the backend content root. Ke
 
 ### 3. Create or update your development database
 
-Start your SQL Server instance first. For LocalDB, run this command only if LocalDB is installed.
+Follow the [database protection guide](docs/database-protection.md) to confirm the target and migration history, select the matching schema stage, and verify with the original keys. The app, EF CLI and maintenance command use the same startup project and configuration providers. For a source-only check, run `dotnet ef migrations list --no-connect` from the project directory with your environment selected.
 
-```powershell
-sqllocaldb start MSSQLLocalDB
-```
+The Secret Code migration adds 11 columns to `UserPrivacySettings` and preserves existing records. Existing accounts start with hiding disabled and no configured Secret Code. See [Secret Code migration instructions](docs/hide-locked-chats.md#additive-migration-manual-execution) and [database schema details](docs/database-setup.md#secret-code-and-hide-locked-chats-migration).
 
-Before updating, confirm that your User Secrets connection points to the intended development server and database. For an existing team database, have the owner review its migration history first. This repository contains the squashed migration `20261120130000_InitialCreate`; an older database can have a different migration history.
-
-Run from the repository root with Development selected. Keep any pre-existing `DOTNET_ENVIRONMENT` consistent with this selection. For a default Windows SQL Server instance, check that it is running with `Get-Service *MSSQL*`.
-
-The design-time factory can use a separate `Sandesh_DesignOnly` LocalDB connection. Therefore, explicitly pass the verified local runtime connection to database-accessing EF commands. Do not rely on the design-time database name.
-
-```powershell
-$env:ASPNETCORE_ENVIRONMENT = "Development"
-$env:DOTNET_ENVIRONMENT = "Development"
-
-# Read the existing local connection without printing credentials.
-$entry = @(dotnet user-secrets list --project Two-Way-Com.csproj | Where-Object { $_ -match '^ConnectionStrings:DefaultConnection\s*=' })
-if ($LASTEXITCODE -ne 0 -or $entry.Count -ne 1) { throw "Configure the local database connection first." }
-$connection = ($entry[0] -split '=', 2)[1].Trim()
-if ([string]::IsNullOrWhiteSpace($connection)) { throw "Local connection is empty." }
-$target = [System.Data.Common.DbConnectionStringBuilder]::new()
-$target.set_ConnectionString($connection)
-# Inspect the server and database locally; do not print the full connection string.
-foreach ($key in @('Server', 'Data Source', 'Database', 'Initial Catalog')) {
-    if ($target.ContainsKey($key)) { Write-Output ($key + '=' + $target.get_Item($key)) }
-}
-```
-
-If the connection uses aliases such as `Data Source` or `Initial Catalog`, inspect those keys instead. Confirm that the target is your own development SQL Server and that no environment or command-line override points the runtime elsewhere. Do not proceed against a shared or production database. Back up existing data and review the migration history before applying updates.
-
-```powershell
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-```
-
-The expected migration sequence for this feature is:
-
-```text
-20261120130000_InitialCreate
-20261123180036_AddChatPrivacyAndArchive
-20261124071343_AddMessageAttachments
-20261125063713_AddUserBlocking
-20261125111351_AddMessageLocation
-20261126061034_AddSensitiveDataProtection
-20261126061256_RemovePlaintextSensitiveData (later, separately approved)
-```
-
-After reviewing the target and pending migrations, apply them manually:
-
-```powershell
-dotnet ef database update 20261126061034_AddSensitiveDataProtection --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-```
-
-`RemovePlaintextSensitiveData` should remain pending until the [explicit backfill, verification and later approval](docs/database-protection.md#manual-powershell-sequence) are complete. Configure the new protection keys and complete that sequence before starting the backend, including on a fresh empty database. The update can create the intended development database when the SQL identity has permission. Existing installations must not generate duplicate migrations, delete previous migrations or drop their database. Startup does not automatically migrate the database. These migrations are SQL Server-specific and must not be applied to company MySQL.
-
-`AddUserBlocking` adds `UserBlocks` and `Messages.IsDeliverySuppressed`, defaulting existing messages to `false`. It preserves existing users, history and conversation IDs. The Online/Last seen privacy fix uses that same block table and needs no additional migration once `AddUserBlocking` is applied. After inspecting the target, clear the temporary connection variables with `Remove-Variable connection, entry, target` when finished.
+On a database already past the Secret Code migration ID, compare its history and physical columns before choosing a migration target. Targeting an older ID can request a downgrade.
 
 ### 4. Configure and install the frontend
 
@@ -338,6 +279,10 @@ The hub URL is consumed by a SignalR client. The health endpoint confirms proces
 
 7. In an existing conversation, select `+`, choose Image or Document, select a supported file and send it with or without a caption. Check that the recipient receives the attachment, can view/download it and can retrieve it after refresh.
 8. Verify the attachment metadata in the actual local runtime database and the original binary file under `private-uploads/`. Use dedicated test data only.
+9. Configure the Privacy PIN on a dedicated test account and use it to lock a test conversation.
+10. Set and confirm a Secret Code and enable Hide Locked Chats. Verify that the folder stays hidden after entering an incorrect code and appears when you enter the exact code in chat search.
+11. Open the revealed folder and verify temporary access. Check that leaving Locked Chats or reaching five minutes of inactivity relocks it.
+12. Use the current Privacy PIN to recover from a forgotten code by disabling Secret Code. Verify that the restored folder still requires the PIN and that the existing chat locks and conversation history are preserved.
 
 9. After applying `AddMessageLocation` to the approved database, select **+ > Location**, allow browser permission, inspect the preview and send. Verify the recipient's Maps action and history after refresh. See the [location acceptance checklist](docs/location-sharing.md#verification) for permission failures, offline delivery and existing-feature regression checks.
 
@@ -368,6 +313,12 @@ Set-Location ..
 
 Restart both processes using steps 5–6. Refresh each open browser tab once to load the updated client. Subsequent block/unblock and presence changes synchronize without another page refresh. The [blocking update guide](docs/user-blocking.md#i-local-team-update-commands) provides the complete update sequence and two-account acceptance checklist; the [attachment guide](docs/img-doc-setup-documention.md#existing-installation-after-updating) covers storage settings.
 
+### Existing teammates after pulling the Hide Locked Chats feature
+
+Stop the running backend and frontend and obtain the approved update. Restore backend dependencies using [step 1](#1-restore-backend-dependencies-and-ef-tooling). Preserve your existing configuration and secrets, including the privacy pepper described in [step 2](#2-configure-backend-user-secrets).
+
+Use [step 3](#3-create-or-update-your-development-database) to verify your own development database connection, confirm a recoverable backup, review pending migrations, and apply the checked-in migration. If the checkout requires updated frontend dependencies, follow [step 4](#4-configure-and-install-the-frontend). Restart the [backend](#5-start-the-backend) and [frontend](#6-start-the-frontend), then follow [step 7](#7-sign-in-and-test-chat) with dedicated test accounts. The [Secret Code guide](docs/hide-locked-chats.md#existing-installation-after-updating) provides the feature-specific update procedure.
+
 ## Configuration and environments
 
 The canonical list of supported keys, defaults, and environment variable names is the [configuration reference](docs/deployment.md#configuration-reference). It retains `Jwt__Key`. The root [backend example](.env.example) is a deployment reference; the host must import its reviewed settings into the service environment.
@@ -395,6 +346,8 @@ Staging and Production currently register `UnconfiguredSmsSender`. Successful pu
 
 Production attachment release remains blocked until the company's MySQL provider/schema and migration history, persistent private storage, and approved malware scanner are validated. The current repository uses SQL Server; the company-reported MySQL environment has not been integrated. Keep new attachment uploads disabled outside Development until these requirements and deployment checks are satisfied. Existing attachments require their storage to remain available. Orphan-file reconciliation and per-file cleanup error isolation remain follow-up improvements.
 
+Use the checked-in Secret Code migration only on SQL Server. The company's MySQL environment requires a separate, reviewed migration procedure. Local verification does not establish production compatibility or readiness.
+
 Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/` or `obj/`. Review `git status` and `.gitignore` before pushing. User Secrets and local uploaded files are not transferred by Git pull.
 
 ## Common errors
@@ -407,7 +360,7 @@ Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/
 | Startup reports missing JWT, OTP, or database configuration | Run local User Secrets setup from this project under the same OS user. Check conflicting environment overrides. |
 | `dotnet ef` is unavailable | Install the matching global tool and reopen the terminal if PATH needs refreshing. |
 | SQL login, certificate, or connection failure | Confirm the instance is running, the database target is correct, and your identity has access. Use the local certificate exception only for the intended development instance. |
-| `Invalid object name 'UserBlocks'` or `Invalid column name 'IsDeliverySuppressed'` | Apply `20261125063713_AddUserBlocking` to the same confirmed local database used by the running backend, then restart it. Use step 3's explicit `--connection`; do not generate another migration. |
+| `Invalid object name 'UserBlocks'` or `Invalid column name 'IsDeliverySuppressed'` | Review the migration history with the owner using the database protection guide. |
 | `Cannot generate SSPI context` or `The target principal name is incorrect` | Windows integrated authentication failed. Verify the instance and Windows identity, and retry from your normal local PowerShell terminal if an isolated tool session failed. Have the SQL administrator check credentials/SPNs if the normal terminal also fails; connection retries do not repair authentication. |
 | A blocked contact still sees Online or Last seen | Restart the updated backend and refresh both clients once after installing this version. Confirm both use the same backend origin and that the block exists in its runtime database. The presence fix needs no migration beyond `AddUserBlocking`. |
 | Migration reports existing tables | Stop the update and review the squashed-baseline history with the database owner. |
@@ -419,7 +372,11 @@ Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/
 | OTP request returns 429 | Wait for the configured cooldown or rate-limit window. |
 | Protected API returns 401 or `SessionReplaced` arrives | The token expired, the account session was replaced, or logout revoked it. Sign in again. |
 | Messages, history, or typing fail | Inspect the hub connection, active session, and WebSocket routing. Check the contract version of the running backend. |
-| EF CLI targets `Sandesh_DesignOnly` or reports missing LocalDB runtime | Use the explicit verified local connection with `--connection` as shown in step 3. |
+| Secret Code does not reveal Locked Chats | Check that hiding is enabled and a code is configured. Enter the full code, including its case and spacing. A mismatch returns an empty `204`. |
+| Secret Code settings or chat lock removal returns `403` | Removing an existing lock requires a valid PIN-issued privacy grant. Changing Secret Code settings accepts that grant or the current Privacy PIN. |
+| SQL reports missing Secret Code columns | Check whether `20261125105245_AddSecretCodeToUserPrivacySettings` is applied to the actual runtime database. Follow [step 3](#3-create-or-update-your-development-database) to review and apply the checked-in migration. |
+| Secret Code verification returns `503 privacy_unavailable` | Check that the existing key ring includes the pepper version recorded with the credential and that the stored verifier metadata is supported. If a key is missing, restore its original value. See [Secret Code configuration and hashing](docs/hide-locked-chats.md#configuration-and-hashing). |
+| EF and the app appear to target different databases | Run both from the web project directory with the same environment and configuration overrides. |
 | `MessageAttachments` has no rows after sending | Confirm the runtime database matches the queried database; inspect the upload response and configured storage directory. |
 | Attachment upload returns 503 | Check the feature flag, scanner configuration and storage availability. Do not bypass production scanning. |
 | Swagger fails to generate the upload operation | Ensure the `IFormFile` parameter does not have an explicit `[FromForm]` attribute and the upload consumes `multipart/form-data`. |
@@ -462,12 +419,15 @@ Get-ChildItem .\private-uploads -Force
 
 Verify authorized downloads, rejection of unauthorized users and invalid files, captions, pending cancellation, offline delivery, refresh and backend restart persistence with dedicated test accounts. Local manual testing has been reported by the feature developer; broader regression, production and browser coverage should not be inferred from successful builds.
 
+For Secret Code backend verification, confirm the migration is applied to the intended development database. Use dedicated test accounts to check exact matching, grant expiry and revocation, PIN-authorized settings changes, and recovery. Follow the [Secret Code verification guide](docs/hide-locked-chats.md#verification) for REST and SignalR acceptance checks.
+
 - [Documentation index](docs/README.md)
 - [Current location sharing and migration](docs/location-sharing.md)
 - [Database setup and migration safety](docs/database-setup.md)
 - [Chat Privacy and Archive](docs/chat-privacy.md)
 - [User blocking and teammate setup](docs/user-blocking.md)
 - [Image and Document Sharing](docs/img-doc-setup-documention.md)
+- [Hide Locked Chats and Secret Code](docs/hide-locked-chats.md)
 - [Configuration reference and deployment](docs/deployment.md)
 - [Architecture, features, and contracts](docs/system-overview.md)
 - [Frontend development](frontend/README.md)

@@ -55,11 +55,7 @@ New-Item -ItemType Directory -Force artifacts | Out-Null
 dotnet ef migrations script InitialCreate AddChatPrivacyAndArchive --output artifacts/chat-privacy.sql
 ```
 
-After backup, target verification, and operator approval, apply manually:
-
-```powershell
-dotnet ef database update AddChatPrivacyAndArchive
-```
+Use the [current staged database procedure](database-protection.md) for every installation. Confirm the target and applied history before selecting a migration. An older feature target can request a downgrade on a newer database.
 
 Application startup and verification scripts never migrate a database. Rolling back to a backend that ignores stored locks would expose conversations; restore a compatible backend instead.
 

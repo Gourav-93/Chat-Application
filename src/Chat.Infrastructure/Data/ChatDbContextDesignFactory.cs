@@ -1,9 +1,19 @@
+using Chat.Application.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Microsoft.Extensions.Options;
+
 namespace Chat.Infrastructure.Data;
-// Model/migration tooling only. No application settings, secrets or live database are loaded.
+
 public sealed class ChatDbContextDesignFactory : IDesignTimeDbContextFactory<ChatDbContext>
 {
-    public ChatDbContext CreateDbContext(string[] args) => new(new DbContextOptionsBuilder<ChatDbContext>().UseSqlServer("Server=(localdb)\\MSSQLLocalDB;Database=Sandesh_DesignOnly;Integrated Security=true;TrustServerCertificate=true").Options,
-        Microsoft.Extensions.Options.Options.Create(new Chat.Application.Configuration.DataProtectionOptions { LegacyColumnsPresent = args.Contains("--expand") }));
+    public ChatDbContext CreateDbContext(string[] args)
+    {
+        var builder = ConfigurationRegistration.CreateBuilder(args.Where(arg => arg != "--expand").ToArray());
+        using var configuration = builder.Configuration;
+        var database = DatabaseOptions.Resolve(configuration, builder.Environment);
+        var expand = args.Contains("--expand") || configuration.GetValue<bool>("DataProtection:LegacyColumnsPresent");
+        var options = new DbContextOptionsBuilder<ChatDbContext>().UseSqlServer(database.DefaultConnection);
+        return new ChatDbContext(options.Options, Options.Create(new DataProtectionOptions { LegacyColumnsPresent = expand }));
+    }
 }

@@ -45,20 +45,8 @@ The additive migration is [20261125111351_AddMessageLocation](../src/Chat.Infras
 **The migration was generated and reviewed, but was not applied during implementation.** Apply it only after the database owner authorizes the target. The updated backend expects these columns even when reading older messages, so deploy the schema before starting it.
 
 1. Preserve local changes and secrets; use the [existing teammate update procedure](../README.md#existing-teammates-after-pulling-updates).
-2. Follow [root database setup](../README.md#3-create-or-update-your-development-database) to load and inspect the explicit runtime connection. EF's design-time factory uses `Sandesh_DesignOnly`; do not rely on it for updates.
-3. Review the migration SQL without connecting to a database:
-
-   ```powershell
-   dotnet ef migrations script AddUserBlocking AddMessageLocation --configuration Release
-   ```
-
-4. Only after target approval, use the `$connection` established by root database setup:
-
-   ```powershell
-   dotnet ef database update AddMessageLocation --project Two-Way-Com.csproj --context ChatDbContext --configuration Release --connection "$connection"
-   ```
-
-5. Restart the updated backend and frontend, and refresh open browser tabs. Do not generate a duplicate migration or recreate the database. Earlier migrations remain prerequisites; review baseline safety in the [database guide](database-setup.md).
+2. Use the [current staged database procedure](database-protection.md) for every installation. Confirm the target and applied history before selecting a migration. An older feature target can request a downgrade on a newer database.
+3. Restart the updated backend and frontend, and refresh open browser tabs. Do not generate a duplicate migration or recreate the database. Earlier migrations remain prerequisites; review baseline safety in the [database guide](database-setup.md).
 
 ## Verification
 

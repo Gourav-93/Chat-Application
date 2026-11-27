@@ -1,5 +1,7 @@
+// Coordinates privacy credentials, persisted attempt limits, grant revocation, and chat authorization.
 using System.Security.Claims;
 using Chat.Application.Configuration;
+using Chat.Application.DTOs;
 using Chat.Domain.Entities;
 using Chat.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -158,6 +160,97 @@ public sealed class PrivacyService(ChatDbContext db, PrivacyPinHasher hasher,
         return error;
     }
 
+    public async Task<ChatLockSettingsDto> GetChatLockSettingsAsync(Guid userId) =>
+        await db.UserPrivacySettings.AsNoTracking().Where(s => s.UserId == userId)
+            .Select(s => new ChatLockSettingsDto(s.SecretCodeHash != null, s.HideLockedChats))
+            .SingleOrDefaultAsync() ?? new ChatLockSettingsDto(false, false);
+
+    public Task<bool> SetSecretCodeAsync(Guid userId, Guid sessionId, string? token, string? currentPin,
+        string? secretCode, string? confirmation, bool? hideLockedChats) =>
+        UpdateChatLockSettingsAsync(userId, sessionId, token, currentPin, settings =>
+        {
+            hasher.SetConfirmedSecretCode(settings, secretCode, confirmation);
+            // Setup can save the code and enable hiding in the same security-version change.
+            if (hideLockedChats.HasValue) settings.HideLockedChats = hideLockedChats.Value;
+            return true;
+        });
+
+    public Task<bool> SetHideLockedChatsAsync(Guid userId, Guid sessionId, string? token, string? currentPin, bool enabled) =>
+        UpdateChatLockSettingsAsync(userId, sessionId, token, currentPin, settings =>
+        {
+            if (enabled && settings.SecretCodeHash is null)
+                throw new PrivacyException(409, "privacy_secret_code_required", "Set a secret code before hiding Locked Chats.");
+            if (settings.HideLockedChats == enabled) return false;
+            settings.HideLockedChats = enabled;
+            return true;
+        });
+
+    public Task<bool> DisableSecretCodeAsync(Guid userId, Guid sessionId, string? token, string? currentPin) =>
+        UpdateChatLockSettingsAsync(userId, sessionId, token, currentPin, settings =>
+        {
+            if (settings.SecretCodeHash is null && !settings.HideLockedChats) return false;
+            settings.HideLockedChats = false;
+            settings.SecretCodeHash = null;
+            settings.SecretCodeSalt = null;
+            settings.SecretCodeHashAlgorithm = null;
+            settings.SecretCodeHashVersion = null;
+            settings.SecretCodeIterations = null;
+            settings.SecretCodePepperKeyVersion = null;
+            return true;
+        });
+
+    private async Task<bool> UpdateChatLockSettingsAsync(Guid userId, Guid sessionId, string? token, string? currentPin,
+        Func<UserPrivacySettings, bool> update)
+    {
+        await using var transaction = await BeginAsync(userId);
+        if (!await db.Users.AsNoTracking().AnyAsync(u => u.Id == userId && u.ActiveSessionId == sessionId && u.SessionExpiresAt > Now))
+            throw new PrivacyException(401, "session_invalid", "Sign in again.");
+        var settings = await db.UserPrivacySettings.SingleOrDefaultAsync(s => s.UserId == userId);
+        if (settings == null)
+            throw new PrivacyException(409, "privacy_setup_required", "Configure your privacy PIN first.");
+
+        // A valid PIN grant can authorize settings. A secret-code grant cannot.
+        if (!access.ValidPin(token, userId, sessionId, settings.SecurityVersion))
+        {
+            if (currentPin == null)
+                throw new PrivacyException(403, "privacy_pin_required", "Verify your privacy PIN to change Chat Lock settings.");
+            var error = VerifyInsideTransaction(settings, currentPin);
+            if (error != null)
+            {
+                await db.SaveChangesAsync();
+                await transaction.CommitAsync();
+                throw error;
+            }
+        }
+
+        var changed = update(settings);
+        if (changed)
+        {
+            settings.SecurityVersion++;
+            settings.UpdatedAt = Now;
+        }
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        if (changed) access.Revoke(userId);
+        return changed;
+    }
+
+    public async Task<long?> MatchSecretCodeAsync(Guid userId, string? secretCode, CancellationToken cancellationToken)
+    {
+        string normalized;
+        try { normalized = PrivacyPinHasher.NormalizeSecretCode(secretCode); }
+        catch (PrivacyException error) when (error.Code == "privacy_secret_code_format") { return null; }
+
+        // Search matching is read-only, including misses. It never charges either credential counter.
+        var settings = await db.UserPrivacySettings.AsNoTracking()
+            .SingleOrDefaultAsync(s => s.UserId == userId, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (settings is not { HideLockedChats: true, SecretCodeHash: not null } ||
+            !hasher.VerifyNormalizedSecretCode(settings, normalized))
+            return null;
+        return settings.SecurityVersion;
+    }
+
     public async Task RevokeAsync(Guid userId)
     {
         await db.UserPrivacySettings.Where(s => s.UserId == userId).ExecuteUpdateAsync(setters => setters
@@ -170,9 +263,20 @@ public sealed class PrivacyService(ChatDbContext db, PrivacyPinHasher hasher,
     {
         await RequireMemberAsync(userId, conversationId);
         if (locked == true) await VerifyPinAsync(userId, pin ?? string.Empty);
-        else await RequireConversationAsync(userId, sessionId, conversationId, token);
         await using var transaction = await BeginAsync(userId);
         var settings = await db.UserConversationSettings.SingleOrDefaultAsync(s => s.UserId == userId && s.ConversationId == conversationId);
+        if (locked != true && settings?.IsLocked == true)
+        {
+            await RequireAccessAsync(userId, sessionId, token);
+            // A secret code opens private chats. Removing a lock still requires a PIN-issued grant.
+            if (locked == false)
+            {
+                var version = await db.UserPrivacySettings.AsNoTracking().Where(s => s.UserId == userId)
+                    .Select(s => s.SecurityVersion).SingleAsync();
+                if (!access.ValidPin(token, userId, sessionId, version))
+                    throw new PrivacyException(403, "privacy_pin_required", "Verify your privacy PIN to remove this chat lock.");
+            }
+        }
         if (settings == null)
         {
             settings = new UserConversationSettings { UserId = userId, ConversationId = conversationId };

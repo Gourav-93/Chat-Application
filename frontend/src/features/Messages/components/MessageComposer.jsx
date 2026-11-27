@@ -1,25 +1,83 @@
 /**
  * File: MessageComposer.jsx
  * Purpose: Presents the controlled, themed text, emoji, and attachment composer.
- * Responsibilities: Validate text, handle accessible keyboard submission, and
- * display sending or uncertain-send errors without owning a connection.
+ * Responsibilities: Handle emoji shortcode suggestions, accessible keyboard
+ * submission, text validation, and sending feedback without owning a connection.
  */
-import { useCallback, useContext, useEffect, useId, useRef, useState } from "react";
-import { LoaderCircle, Send, Plus, Image, FileText, X, Smile, MapPin } from "lucide-react";
-import { getAttachmentCapabilities, uploadAttachment } from "../services/attachmentService";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  LoaderCircle,
+  Send,
+  Plus,
+  Image,
+  FileText,
+  X,
+  Smile,
+  MapPin,
+} from "lucide-react";
+import {
+  getAttachmentCapabilities,
+  uploadAttachment,
+} from "../services/attachmentService";
 import { ThemeContext } from "../../../app/ThemeContext";
 import EmojiPickerPopover from "./EmojiPickerPopover";
 import MessageLocation from "./MessageLocation";
 import useLocationSelection from "../hooks/useLocationSelection";
+import EmojiShortcodeSuggestions from "./EmojiShortcodeSuggestions";
+import {
+  findShortcodeToken,
+  getEmojiShortcodeIndex,
+  getEmojiSuggestions,
+  loadEmojiShortcodes,
+  resolveEmojiShortcode,
+  suggestionReplacementEnd,
+} from "../lib/emojiShortcodes";
+
+function isTypedColon(event, isSingleInsertion = false) {
+  return (
+    !event.isComposing &&
+    (!event.inputType || event.inputType === "insertText") &&
+    (event.data === ":" || (event.data == null && isSingleInsertion))
+  );
+}
 
 export default function MessageComposer({
-  value, onChange, onSend, pending, disabled, error, onTypingInput, stopTyping, conversationId,
-  editing, onSaveEdit, onCancelEdit,
+  value,
+  onChange,
+  onSend,
+  pending,
+  disabled,
+  error,
+  onTypingInput,
+  stopTyping,
+  conversationId,
+  editing,
+  onSaveEdit,
+  onCancelEdit,
 }) {
   const theme = useContext(ThemeContext);
   const isDark = theme?.isDark ?? true;
   const id = useId();
   const pickerId = id + "-emoji-picker";
+  const suggestionsId = id + "-emoji-suggestions";
+  const [emojiIndex, setEmojiIndex] = useState(getEmojiShortcodeIndex);
+  const [shortcode, setShortcode] = useState(null);
+  const [suggestionsFit, setSuggestionsFit] = useState(true);
+  const loadingIndexRef = useRef("idle");
+  const pendingShortcodeRef = useRef(null);
+  const selectionRef = useRef(null);
+  const nativeEditRef = useRef(null);
+  const dismissedRef = useRef(null);
+  const compositionRef = useRef(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const composerRef = useRef(null);
   const textareaRef = useRef(null);
@@ -60,25 +118,44 @@ export default function MessageComposer({
   };
   useEffect(() => {
     const controller = new AbortController();
-    getAttachmentCapabilities(controller.signal).then(setCapabilities).catch(() => {});
-    return () => { controller.abort(); uploadRef.current?.abort(); };
+    getAttachmentCapabilities(controller.signal)
+      .then(setCapabilities)
+      .catch(() => {});
+    return () => {
+      controller.abort();
+      uploadRef.current?.abort();
+    };
   }, []);
   useEffect(() => {
     if (!menuOpen) return;
-    const close = (event) => { if (!menuRef.current?.contains(event.target)) setMenuOpen(false); };
-    const escape = (event) => { if (event.key === "Escape") setMenuOpen(false); };
+    const close = (event) => {
+      if (!menuRef.current?.contains(event.target)) setMenuOpen(false);
+    };
+    const escape = (event) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape);
+    };
   }, [menuOpen]);
   const choose = (event, kind) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const allowed = kind === "image" ? /\.(jpe?g|png|webp)$/i : /\.(pdf|docx|xlsx|pptx|txt)$/i;
-    const max = kind === "image" ? capabilities?.maxImageBytes : capabilities?.maxDocumentBytes;
+    const allowed =
+      kind === "image"
+        ? /\.(jpe?g|png|webp)$/i
+        : /\.(pdf|docx|xlsx|pptx|txt)$/i;
+    const max =
+      kind === "image"
+        ? capabilities?.maxImageBytes
+        : capabilities?.maxDocumentBytes;
     if (!allowed.test(file.name) || !file.size || file.size > max) {
-      setAttachmentError("Unsupported file or file exceeds the allowed size."); return;
+      setAttachmentError("Unsupported file or file exceeds the allowed size.");
+      return;
     }
     retryRef.current = null;
     setSelected(file); setAttachmentError("");
@@ -89,9 +166,268 @@ export default function MessageComposer({
   useEffect(() => {
     if (!value.trim()) stopTyping?.();
   }, [value, stopTyping]);
-  const updateDraft = (text) => {
-    onChange(text);
-    onTypingInput?.(text);
+  const updateDraft = useCallback(
+    (text) => {
+      onChange(text);
+      onTypingInput?.(text);
+    },
+    [onChange, onTypingInput],
+  );
+
+  const requestShortcodes = () => {
+    if (emojiIndex || loadingIndexRef.current !== "idle") return;
+    const textarea = textareaRef.current;
+    loadingIndexRef.current = "loading";
+    void loadEmojiShortcodes()
+      .then((index) => {
+        if (textareaRef.current === textarea) setEmojiIndex(index);
+      })
+      .catch(() => {
+        // The draft and the small set of built-in aliases remain usable if the chunk fails.
+        loadingIndexRef.current = "failed";
+        pendingShortcodeRef.current = null;
+      });
+  };
+
+  const dismissShortcodes = useCallback(() => {
+    pendingShortcodeRef.current = null;
+    setShortcode(null);
+  }, []);
+
+  const trackShortcode = (textarea) => {
+    if (nativeEditRef.current) return;
+    const text = textarea.value;
+    const end = textarea.selectionEnd;
+    const collapsed = textarea.selectionStart === end;
+    const pendingEdit = pendingShortcodeRef.current;
+    if (
+      pendingEdit &&
+      (text !== pendingEdit.text || end !== pendingEdit.token.end || !collapsed)
+    ) {
+      pendingShortcodeRef.current = null;
+    }
+    const ignored = dismissedRef.current;
+    const token =
+      !emojiOpen &&
+      !menuOpen &&
+      !compositionRef.current &&
+      collapsed &&
+      document.activeElement === textarea &&
+      !(ignored?.text === text && ignored.end === end)
+        ? findShortcodeToken(text, end)
+        : null;
+    if (token) requestShortcodes();
+    setShortcode((previous) => {
+      if (!token?.query) return null;
+      if (
+        previous?.text === text &&
+        previous.token.start === token.start &&
+        previous.token.end === end
+      )
+        return previous;
+      return { text, token, activeIndex: 0 };
+    });
+  };
+
+  const activeToken =
+    shortcode?.text === value && !emojiOpen && !menuOpen && !uploading
+      ? shortcode.token
+      : null;
+  const query = activeToken?.query;
+  const suggestions = useMemo(
+    () => getEmojiSuggestions(emojiIndex, query),
+    [emojiIndex, query],
+  );
+  const activeIndex = Math.min(
+    shortcode?.activeIndex ?? 0,
+    Math.max(0, suggestions.length - 1),
+  );
+  const suggestionsOpen = suggestionsFit && suggestions.length > 0;
+
+  // The value guard prevents a delayed caret update from moving a cursor in a newer draft.
+  useLayoutEffect(() => {
+    const saved = selectionRef.current;
+    if (!saved) return;
+    selectionRef.current = null;
+    if (
+      saved.text === value &&
+      document.activeElement === saved.textarea &&
+      saved.textarea.value === value
+    ) {
+      saved.textarea.setSelectionRange(saved.caret, saved.caret);
+    }
+  }, [value]);
+
+  const replaceNative = useCallback(
+    (textarea, start, end, emoji) => {
+      const text =
+        textarea.value.slice(0, start) + emoji + textarea.value.slice(end);
+      dismissShortcodes();
+      selectionRef.current = { textarea, text, caret: start + emoji.length };
+      const edit = { notified: false };
+      nativeEditRef.current = edit;
+      try {
+        textarea.setSelectionRange(start, end);
+        // Match picker insertion so the browser can record the replacement as an undoable edit.
+        document.execCommand?.("insertText", false, emoji);
+      } catch {
+        // setRangeText below covers browsers that reject native insertion.
+      } finally {
+        nativeEditRef.current = null;
+      }
+      if (!edit.notified) {
+        if (textarea.value !== text)
+          textarea.setRangeText(emoji, start, end, "end");
+        updateDraft(text);
+      }
+    },
+    [dismissShortcodes, updateDraft],
+  );
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return undefined;
+    const onBeforeInput = (event) => {
+      if (
+        !event.cancelable ||
+        nativeEditRef.current ||
+        compositionRef.current ||
+        emojiOpen ||
+        menuOpen ||
+        !isTypedColon(event)
+      )
+        return;
+      const token = findShortcodeToken(textarea.value, textarea.selectionStart);
+      const exact = resolveEmojiShortcode(emojiIndex, token?.query);
+      if (!exact) return;
+      event.preventDefault();
+      replaceNative(textarea, token.start, textarea.selectionEnd, exact.emoji);
+    };
+    textarea.addEventListener("beforeinput", onBeforeInput);
+    return () => textarea.removeEventListener("beforeinput", onBeforeInput);
+  }, [emojiIndex, emojiOpen, menuOpen, replaceNative]);
+
+  useEffect(() => {
+    const pendingEdit = pendingShortcodeRef.current;
+    if (!emojiIndex || !pendingEdit) return undefined;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active || pendingShortcodeRef.current !== pendingEdit) return;
+      pendingShortcodeRef.current = null;
+      const textarea = textareaRef.current;
+      const { token, text } = pendingEdit;
+      if (
+        textarea !== pendingEdit.textarea ||
+        document.activeElement !== textarea ||
+        pendingEdit.conversationId !== conversationId ||
+        text !== value ||
+        textarea.value !== text ||
+        compositionRef.current ||
+        textarea.selectionStart !== token.end ||
+        textarea.selectionEnd !== token.end
+      )
+        return;
+      const current = findShortcodeToken(text, token.end, true);
+      const exact = resolveEmojiShortcode(emojiIndex, current?.query);
+      if (
+        exact &&
+        current.start === token.start &&
+        current.query === token.query
+      ) {
+        replaceNative(textarea, token.start, token.end, exact.emoji);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [emojiIndex, value, conversationId, replaceNative]);
+
+  const handleTextChange = (event) => {
+    const textarea = event.currentTarget;
+    const text = textarea.value;
+    const nativeEdit = nativeEditRef.current;
+    if (nativeEdit) {
+      if (!nativeEdit.notified) {
+        nativeEdit.notified = true;
+        updateDraft(text);
+      }
+      return;
+    }
+
+    pendingShortcodeRef.current = null;
+    dismissedRef.current = null;
+    const end = textarea.selectionEnd;
+    const source = event.nativeEvent;
+    if (
+      compositionRef.current ||
+      source.isComposing ||
+      /^(?:insertFrom|insertComposition|insertReplacement|history)/.test(
+        source.inputType || "",
+      )
+    ) {
+      dismissedRef.current = { text, end };
+      setShortcode(null);
+    } else if (
+      !emojiOpen &&
+      !menuOpen &&
+      isTypedColon(
+        source,
+        text[end - 1] === ":" &&
+          text.slice(0, end - 1) + text.slice(end) === value,
+      )
+    ) {
+      const token = findShortcodeToken(text, end, true);
+      if (token) {
+        const exact = resolveEmojiShortcode(emojiIndex, token.query);
+        setShortcode(null);
+        if (exact) {
+          // A non-cancelable beforeinput still needs a single controlled draft update.
+          const next =
+            text.slice(0, token.start) + exact.emoji + text.slice(end);
+          selectionRef.current = {
+            textarea,
+            text: next,
+            caret: token.start + exact.emoji.length,
+          };
+          updateDraft(next);
+          return;
+        }
+        if (!emojiIndex && loadingIndexRef.current !== "failed") {
+          pendingShortcodeRef.current = {
+            textarea,
+            conversationId,
+            text,
+            token,
+          };
+          requestShortcodes();
+        }
+      } else {
+        trackShortcode(textarea);
+      }
+    } else {
+      trackShortcode(textarea);
+    }
+    updateDraft(text);
+  };
+
+  const chooseShortcode = (suggestion) => {
+    const textarea = textareaRef.current;
+    if (
+      !suggestionsOpen ||
+      !textarea ||
+      document.activeElement !== textarea ||
+      textarea.disabled ||
+      textarea.value !== value ||
+      textarea.selectionStart !== activeToken.end ||
+      textarea.selectionEnd !== activeToken.end
+    )
+      return;
+    replaceNative(
+      textarea,
+      activeToken.start,
+      suggestionReplacementEnd(value, activeToken.end),
+      suggestion.emoji,
+    );
   };
   const closeEmojiPicker = useCallback((restoreFocus = false) => {
     setEmojiOpen(false);
@@ -102,6 +438,7 @@ export default function MessageComposer({
       closeEmojiPicker(true);
       return;
     }
+    dismissShortcodes();
     setMenuOpen(false);
     setEmojiOpen(true);
   };
@@ -109,6 +446,7 @@ export default function MessageComposer({
     const textarea = textareaRef.current;
     if (!textarea || textarea.disabled || !emoji) return;
 
+    dismissShortcodes();
     const previousFocus = document.activeElement;
     const { selectionStart, selectionEnd } = textarea;
     textarea.focus({ preventScroll: true });
@@ -121,7 +459,11 @@ export default function MessageComposer({
     }
 
     // Keep keyboard users in the picker. Pointer users can continue typing immediately.
-    if (!fromPointer && previousFocus !== textarea && previousFocus?.isConnected) {
+    if (
+      !fromPointer &&
+      previousFocus !== textarea &&
+      previousFocus?.isConnected
+    ) {
       restoringPickerFocusRef.current = true;
       previousFocus.focus({ preventScroll: true });
       restoringPickerFocusRef.current = false;
@@ -131,6 +473,7 @@ export default function MessageComposer({
   const invalid = length > 5000;
   const submit = async (event) => {
     event.preventDefault();
+    dismissShortcodes();
     stopTyping?.();
     if (editing) {
       if (!disabled && !pending && !busyRef.current && length && !invalid) {
@@ -167,13 +510,18 @@ export default function MessageComposer({
     closeEmojiPicker();
     setMenuOpen(false);
     busyRef.current = true;
-    setUploading(true); setAttachmentError("");
+    setUploading(true);
+    setAttachmentError("");
     const controller = new AbortController();
     uploadRef.current = controller;
     try {
       let operation = retryRef.current;
       if (!operation) {
-        const attachment = await uploadAttachment(conversationId, selected, controller.signal);
+        const attachment = await uploadAttachment(
+          conversationId,
+          selected,
+          controller.signal,
+        );
         if (controller.signal.aborted) return;
         operation = { id: attachment.id, clientMessageId: crypto.randomUUID(), caption: value, location };
         retryRef.current = operation;
@@ -184,17 +532,100 @@ export default function MessageComposer({
         clearLocation();
       }
     } catch (err) {
-      if (!controller.signal.aborted) setAttachmentError(err.response?.data?.message || err.message || "Attachment upload failed.");
+      if (!controller.signal.aborted)
+        setAttachmentError(
+          err.response?.data?.message ||
+            err.message ||
+            "Attachment upload failed.",
+        );
     } finally {
       if (!controller.signal.aborted) setUploading(false);
       busyRef.current = false;
     }
   };
+  const handleComposerKeyDown = (event) => {
+    if (
+      compositionRef.current ||
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229
+    )
+      return;
+    if (
+      event.key === "Escape" &&
+      (activeToken || pendingShortcodeRef.current)
+    ) {
+      dismissedRef.current = {
+        text: event.currentTarget.value,
+        end: event.currentTarget.selectionEnd,
+      };
+      dismissShortcodes();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (
+      suggestionsOpen &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey
+    ) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        chooseShortcode(suggestions[activeIndex]);
+        return;
+      }
+      const direction =
+        event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : event.key === "ArrowRight" || event.key === "ArrowDown"
+            ? 1
+            : 0;
+      if (direction) {
+        event.preventDefault();
+        setShortcode(
+          (previous) =>
+            previous && {
+              ...previous,
+              activeIndex:
+                (activeIndex + direction + suggestions.length) %
+                suggestions.length,
+            },
+        );
+        return;
+      }
+    }
+     if (event.key === "Escape" && editing && !pending) {
+      event.preventDefault();
+      onCancelEdit();
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) submit(event);
+  };
+
   return (
     <div ref={composerRef} className="relative shrink-0">
+      {suggestions.length > 0 && (
+        <EmojiShortcodeSuggestions
+          id={suggestionsId}
+          isDark={isDark}
+          composerRef={composerRef}
+          items={suggestions}
+          activeIndex={activeIndex}
+          visible={suggestionsOpen}
+          onFitChange={setSuggestionsFit}
+          onChoose={chooseShortcode}
+        />
+      )}
       {emojiOpen && (
-        <EmojiPickerPopover id={pickerId} isDark={isDark} composerRef={composerRef}
-          triggerRef={emojiTriggerRef} onSelect={insertEmoji} onDismiss={closeEmojiPicker} />
+        <EmojiPickerPopover
+          id={pickerId}
+          isDark={isDark}
+          composerRef={composerRef}
+          triggerRef={emojiTriggerRef}
+          onSelect={insertEmoji}
+          onDismiss={closeEmojiPicker}
+        />
       )}
       <form onSubmit={submit} aria-busy={busy}
         className={"shrink-0 border-t px-3 py-2 sm:px-4 " +
@@ -227,10 +658,17 @@ export default function MessageComposer({
             <button type="button" aria-label="Add attachment" aria-expanded={menuOpen}
               disabled={disabled || busy || Boolean(editing)}
               onClick={() => {
+                dismissShortcodes();
                 closeEmojiPicker();
-                setMenuOpen(open => !open);
+                setMenuOpen((open) => !open);
               }}
-              className={"flex h-11 w-11 items-center justify-center rounded-xl border disabled:opacity-40 " + (isDark ? "border-[#293854] bg-[#080e1c] text-slate-300 hover:bg-[#1b2b45]" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100")}>
+              className={
+                "flex h-11 w-11 items-center justify-center rounded-xl border disabled:opacity-40 " +
+                (isDark
+                  ? "border-[#293854] bg-[#080e1c] text-slate-300 hover:bg-[#1b2b45]"
+                  : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100")
+              }
+            >
               <Plus size={23} />
             </button>
             {menuOpen && <div className={"absolute bottom-full left-0 z-30 mb-2 w-44 rounded-xl border p-1.5 shadow-xl " + (isDark ? "border-[#293854] bg-[#111d31] text-white" : "border-slate-200 bg-white text-slate-900")}>
@@ -242,24 +680,61 @@ export default function MessageComposer({
             <input ref={imageInput} type="file" accept=".jpg,.jpeg,.png,.webp" hidden onChange={event => choose(event, "image")} />
             <input ref={documentInput} type="file" accept=".pdf,.docx,.xlsx,.pptx,.txt" hidden onChange={event => choose(event, "document")} />
           </div>
-          <button type="button" ref={emojiTriggerRef} aria-label="Emoji picker"
-            aria-haspopup="dialog" aria-expanded={emojiOpen} disabled={uploading}
-            aria-controls={emojiOpen ? pickerId : undefined} onClick={toggleEmojiPicker}
-            className={"flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-40 " + (isDark
-              ? emojiOpen ? "bg-blue-400/15 text-blue-300" : "text-slate-300 hover:bg-white/10"
-              : emojiOpen ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100")}>
+          <button
+            type="button"
+            ref={emojiTriggerRef}
+            aria-label="Emoji picker"
+            aria-haspopup="dialog"
+            aria-expanded={emojiOpen}
+            disabled={uploading}
+            aria-controls={emojiOpen ? pickerId : undefined}
+            onClick={toggleEmojiPicker}
+            className={
+              "flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-40 " +
+              (isDark
+                ? emojiOpen
+                  ? "bg-blue-400/15 text-blue-300"
+                  : "text-slate-300 hover:bg-white/10"
+                : emojiOpen
+                  ? "bg-blue-50 text-blue-700"
+                  : "text-slate-600 hover:bg-slate-100")
+            }
+          >
             <Smile size={21} aria-hidden="true" />
           </button>
-          <textarea id={id} ref={textareaRef} rows={1} value={value} disabled={uploading || pending}
-            onChange={(event) => updateDraft(event.target.value)}
+          <textarea
+            id={id}
+            ref={textareaRef}
+            rows={1}
+            value={value}
+            disabled={uploading || pending}
+            onChange={handleTextChange}
+            onSelect={(event) => trackShortcode(event.currentTarget)}
             onBlur={() => {
+              dismissShortcodes();
+              selectionRef.current = null;
               if (!restoringPickerFocusRef.current) stopTyping?.();
             }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && editing && !pending) { event.preventDefault(); onCancelEdit(); }
-              if (event.key === "Enter" && !event.shiftKey &&
-                  !event.nativeEvent.isComposing && event.keyCode !== 229) submit(event);
+            onCompositionStart={() => {
+              compositionRef.current = true;
+              dismissShortcodes();
             }}
+            onCompositionEnd={() => {
+              const ending = {};
+              compositionRef.current = ending;
+              queueMicrotask(() => {
+                if (compositionRef.current === ending)
+                  compositionRef.current = null;
+              });
+            }}
+            onKeyDown={handleComposerKeyDown}
+            aria-autocomplete="list"
+            aria-controls={suggestionsOpen ? suggestionsId : undefined}
+            aria-activedescendant={
+              suggestionsOpen
+                ? suggestionsId + "-" + suggestions[activeIndex].unified
+                : undefined
+            }
             aria-invalid={invalid}
             aria-describedby={id + "-help" + (error ? " " + id + "-error" : "")}
             placeholder={editing ? "Edit message..." : "Write a message..."}
@@ -280,9 +755,23 @@ export default function MessageComposer({
           {invalid ? "Message must contain no more than 5,000 characters." :
             editing ? "Press Enter to save or Shift+Enter for a new line." : "Press Enter to send or Shift+Enter for a new line."}
         </p>
-        {attachmentError && <p role="alert" className="mt-2 text-sm text-red-400">{attachmentError}</p>}
-        {error && <p id={id + "-error"} role="alert"
-          className={"mt-2 text-sm leading-6 " + (isDark ? "text-red-300" : "text-red-600")}>{error}</p>}
+        {attachmentError && (
+          <p role="alert" className="mt-2 text-sm text-red-400">
+            {attachmentError}
+          </p>
+        )}
+        {error && (
+          <p
+            id={id + "-error"}
+            role="alert"
+            className={
+              "mt-2 text-sm leading-6 " +
+              (isDark ? "text-red-300" : "text-red-600")
+            }
+          >
+            {error}
+          </p>
+        )}
       </form>
     </div>
   );

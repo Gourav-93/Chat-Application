@@ -37,6 +37,16 @@ If `git pull --ff-only` fails, resolve the branch situation with your team befor
 
 Stop the backend (`Ctrl+C`), `dotnet watch`, IIS/service instances and other jobs writing to this database. Keep them stopped through step 8. A shared database needs an agreed maintenance window. Starting another backend between backfill and contract invalidates the maintenance assumptions.
 
+On a new machine only, enter your approved connection privately. This PowerShell command passes the value to the startup project's User Secrets through standard input. Keep a working connection as-is.
+
+```powershell
+$credential = Read-Host 'Approved SQL Server connection string' -AsSecureString
+$value = [System.Net.NetworkCredential]::new('', $credential).Password
+@{ 'ConnectionStrings:DefaultConnection' = $value } | ConvertTo-Json -Compress | dotnet user-secrets set --project Two-Way-Com.csproj
+Remove-Variable value, credential
+if ($LASTEXITCODE -ne 0) { throw 'Connection configuration failed.' }
+```
+
 Use the same PowerShell terminal for the remaining commands:
 
 ```powershell
@@ -55,20 +65,20 @@ if ([string]::IsNullOrWhiteSpace($databaseConnection)) {
 }
 if ([string]::IsNullOrWhiteSpace($databaseConnection)) { throw 'Database connection is missing.' }
 $dbTarget = New-Object System.Data.Common.DbConnectionStringBuilder
-$dbTarget.ConnectionString = $databaseConnection
+$dbTarget.set_ConnectionString($databaseConnection)
 foreach ($targetKey in @('Server', 'Data Source', 'Database', 'Initial Catalog')) {
-    if ($dbTarget.ContainsKey($targetKey)) { Write-Output ($targetKey + '=' + $dbTarget[$targetKey]) }
+    if ($dbTarget.ContainsKey($targetKey)) { Write-Output ($targetKey + '=' + $dbTarget.get_Item($targetKey)) }
 }
 ```
 
 Read the displayed server/database and confirm they are your intended target. `RealTimeChat_DB` is the existing project's development example; keep your own working server/database. Do not paste the full connection string into a team chat. Environment variables override User Secrets; remove unintended overrides in your own terminal before proceeding. These commands assume the normal project configuration, with no additional command-line connection override.
 
-The design-time context factory defaults to `Sandesh_DesignOnly`, not your runtime connection. Always pass `--connection "$databaseConnection"` to the EF database commands in this guide. Connection arguments may be visible to local process inspection; run them from a trusted operator terminal.
+Runtime, maintenance and EF resolve the same connection through the web startup assembly. Run from the project directory. Base JSON, environment JSON, Development User Secrets, environment variables and forwarded command-line settings are applied in increasing precedence. Keep credentials out of CLI arguments. EF accepts forwarded settings after `--`. For model inspection, `-- --expand` selects the historical expansion mapping. The snapshot represents final mode. For applying checked-in migrations, the commands below explicitly select the snapshot model for EF only. This does not change the runtime phase or the target migration.
 
 ## 3. Inspect migration history and take a backup
 
 ```powershell
-dotnet ef migrations list --project Two-Way-Com.csproj --context ChatDbContext --no-build --connection "$databaseConnection"
+dotnet ef migrations list --project Two-Way-Com.csproj --context ChatDbContext --no-build
 if ($LASTEXITCODE -ne 0) { throw 'Could not inspect target migrations.' }
 ```
 
@@ -78,6 +88,10 @@ In SSMS, connected to that same database, inspect applied migrations:
 SELECT DB_NAME() AS TargetDatabase;
 SELECT MigrationId FROM dbo.__EFMigrationsHistory ORDER BY MigrationId;
 ```
+
+Startup and maintenance check every locally required migration ID (removal is optional during expansion), read the migration history and count the expected five legacy and seven protected columns before serving traffic or processing rows. If history is missing, permissions restrict metadata visibility, or the columns disagree, stop and have the owner reconcile the evidence. Changing a phase flag cannot repair schema drift. A valid final database uses false (the checked-in default). An expanded database must explicitly use true. SQL error 51004 requires a successful backfill and verification with the original keys before retrying removal.
+
+Compare every applied ID with this checkout. A cached newer V2 branch adds 20261125105245_AddSecretCodeToUserPrivacySettings with an earlier timestamp. Before integrating that branch, review its generated SQL and the actual privacy columns with the owner, including on a final database. Keep existing IDs and never target an earlier migration to fill a gap. The historical protection migration designers predate the edit/clear merge and omit those fields. On local V2 the current snapshot includes them. Inspect the individual edit/clear migration IDs and columns on databases that crossed those branches.
 
 Expected order in the current checkout:
 
@@ -123,12 +137,12 @@ $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
 try {
     $rng.GetBytes($encryptionBytes)
     $rng.GetBytes($lookupBytes)
-    dotnet user-secrets set 'DataProtection:EncryptionKeys:v1' ([Convert]::ToBase64String($encryptionBytes)) --project Two-Way-Com.csproj
-    if ($LASTEXITCODE -ne 0) { throw 'Encryption key setup failed.' }
-    dotnet user-secrets set 'DataProtection:LookupHashKey' ([Convert]::ToBase64String($lookupBytes)) --project Two-Way-Com.csproj
-    if ($LASTEXITCODE -ne 0) { throw 'Lookup key setup failed; preserve the encryption key already written.' }
-    dotnet user-secrets set 'DataProtection:CurrentEncryptionKeyVersion' 'v1' --project Two-Way-Com.csproj
-    if ($LASTEXITCODE -ne 0) { throw 'Key version setup failed.' }
+    @{
+        'DataProtection:EncryptionKeys:v1' = [Convert]::ToBase64String($encryptionBytes)
+        'DataProtection:LookupHashKey' = [Convert]::ToBase64String($lookupBytes)
+        'DataProtection:CurrentEncryptionKeyVersion' = 'v1'
+    } | ConvertTo-Json -Compress | dotnet user-secrets set --project Two-Way-Com.csproj
+    if ($LASTEXITCODE -ne 0) { throw 'Protection configuration failed. Inspect existing configuration before retry.' }
 } finally {
     $rng.Dispose()
     [Array]::Clear($encryptionBytes, 0, $encryptionBytes.Length)
@@ -138,6 +152,26 @@ try {
 ```
 
 If key provisioning is interrupted, preserve the values already written and securely complete the missing configuration. Do not delete the stored key and regenerate everything. Back up the key ring and lookup key securely, separately from the database backup. User Secrets are local development storage, not encrypted production secret management. Do not commit them or publish `dotnet user-secrets list` output.
+
+For a new teammate joining a protected database, obtain the original ring, current version and lookup key from the owner. On the new machine, repeat the following import for each existing version. Preserve any locally configured keys. Enter the lookup key once using the same procedure with the name `DataProtection:LookupHashKey`. Set the current version to the owner's value.
+
+```powershell
+$version = Read-Host 'Existing encryption key version'
+$name = "DataProtection:EncryptionKeys:$version"
+$secret = Read-Host "Existing value for $name" -AsSecureString
+@{ $name = [System.Net.NetworkCredential]::new('', $secret).Password } | ConvertTo-Json -Compress | dotnet user-secrets set --project Two-Way-Com.csproj
+Remove-Variable secret
+if ($LASTEXITCODE -ne 0) { throw 'Key import failed.' }
+```
+
+```powershell
+$secret = Read-Host 'Original lookup key' -AsSecureString
+@{ 'DataProtection:LookupHashKey' = [System.Net.NetworkCredential]::new('', $secret).Password } | ConvertTo-Json -Compress | dotnet user-secrets set --project Two-Way-Com.csproj
+Remove-Variable secret
+if ($LASTEXITCODE -ne 0) { throw 'Lookup key import failed.' }
+$current = Read-Host 'Current encryption version from the database owner'
+dotnet user-secrets set 'DataProtection:CurrentEncryptionKeyVersion' $current --project Two-Way-Com.csproj
+```
 
 For both new and existing key configurations, check that the current version exists in the ring, each key is base64 of 32 bytes, and the lookup key differs from every encryption key. Existing JWT, OTP hashing, privacy pepper and framework browser-protection keys have separate purposes and must be retained.
 
@@ -150,7 +184,7 @@ For a database before expansion, run:
 ```powershell
 dotnet user-secrets set 'DataProtection:LegacyColumnsPresent' 'true' --project Two-Way-Com.csproj
 if ($LASTEXITCODE -ne 0) { throw 'Schema-mode configuration failed.' }
-dotnet ef database update 20261126061034_AddSensitiveDataProtection --project Two-Way-Com.csproj --context ChatDbContext --no-build --connection "$databaseConnection"
+dotnet ef database update 20261126061034_AddSensitiveDataProtection --project Two-Way-Com.csproj --context ChatDbContext --no-build -- --DataProtection:LegacyColumnsPresent=false
 if ($LASTEXITCODE -ne 0) { throw 'Expansion failed. Do not start backfill.' }
 ```
 
@@ -214,7 +248,7 @@ An empty DB has zero counts. Use the verifier to check contents rather than trea
 For your independent local DB, after steps 6–7 succeed, take another backup with matching keys and apply the final migration. For a shared DB, its owner coordinates this step after confirming every deployed binary supports final mode. Keep writers stopped.
 
 ```powershell
-dotnet ef database update 20261126061256_RemovePlaintextSensitiveData --project Two-Way-Com.csproj --context ChatDbContext --no-build --connection "$databaseConnection"
+dotnet ef database update 20261126061256_RemovePlaintextSensitiveData --project Two-Way-Com.csproj --context ChatDbContext --no-build -- --DataProtection:LegacyColumnsPresent=false
 if ($LASTEXITCODE -ne 0) { throw 'Column removal failed. Keep writers stopped.' }
 dotnet user-secrets set 'DataProtection:LegacyColumnsPresent' 'false' --project Two-Way-Com.csproj
 if ($LASTEXITCODE -ne 0) { throw 'Final schema-mode configuration failed.' }
@@ -270,7 +304,7 @@ After finishing the operator commands, clear the terminal's connection variable 
 | Existing protected users cannot be found by mobile | Check the original lookup key and the `+91` plus ten digits input rule; a different lookup key produces different hashes. |
 | Contract guard refuses column removal | Backfill and application verification have not fully succeeded. Keep expansion mode and resolve the failure before retrying. |
 | SSMS reports invalid column name for old plaintext columns | On the final schema this is expected. Use the protected columns and application verifier. |
-| EF attempts to use `Sandesh_DesignOnly` | Include the explicit `--connection "$databaseConnection"` argument. |
+| EF reports missing or unexpected configuration | Use the same project directory, environment and configuration overrides as the API. Confirm the effective server and database in step 2. |
 | Tables already exist / history differs | Reconcile the existing migration baseline with the owner. Do not drop tables, delete history or generate replacement feature migrations. |
 | SQL login, Windows authentication or database connection error | Confirm your SQL Server instance is running and your OS/login has permission for this target. Run as the same normal OS user that owns the local secrets. |
 | Need to roll back | Both migration `Down` methods deliberately refuse automatic rollback. Use a coordinated DB/key/application backup or a reviewed forward fix. An older binary alone cannot read the final schema. |

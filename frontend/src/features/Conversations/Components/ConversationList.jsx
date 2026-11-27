@@ -7,6 +7,7 @@
  * 3. Keep cached rows and unread counts visible across outages and show access errors quietly.
  * 4. Keep list scrolling independent of the dashboard header and search input.
  * 5. Notify the parent of successful unfiltered list changes and restore focus.
+ * 6. Hide the private folder and reveal it only for an exact Secret Code match.
  */
 
 import {
@@ -31,6 +32,7 @@ import {
 import { ThemeContext } from "../../../app/ThemeContext";
 import { AuthContext } from "../../../app/AuthContext";
 import useConversations from "../Hooks/useConversations";
+import useSecretCodeSearch from "../Hooks/useSecretCodeSearch";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
 
 // Shared by the list and chat header. Native popovers escape scroll clipping
@@ -184,6 +186,8 @@ export default function ConversationList({
   onAction,
   sections,
   onSectionOpen,
+  chatLockSettings,
+  onOpenRevealed,
   actionBusy = false,
   pendingConversationId,
   sectionsError = "",
@@ -204,6 +208,20 @@ export default function ConversationList({
     loadMore,
   } = useConversations(refreshKey, section);
   const [query, setQuery] = useState("");
+  const [composing, setComposing] = useState(false);
+  const resultsRef = useRef(null);
+  const { revealAvailable, takeGrant } = useSecretCodeSearch(
+    query,
+    section === "normal" &&
+      !!userId &&
+      !backendUnavailable &&
+      chatLockSettings?.hideLockedChats === true &&
+      sections?.hasLockedChats === true,
+    composing,
+  );
+  useLayoutEffect(() => {
+    if (revealAvailable && resultsRef.current) resultsRef.current.scrollTop = 0;
+  }, [revealAvailable]);
   const searchId = useId();
   const listId = useId();
   const containerRef = useRef(null);
@@ -249,9 +267,11 @@ export default function ConversationList({
   }, [focusRequest]);
 
   const muted = isDark ? "text-slate-400" : "text-slate-500";
+  const showLockedFolder =
+    sections?.hasLockedChats && chatLockSettings?.hideLockedChats === false;
   const mainHasFolders =
     section === "normal" &&
-    (sections?.hasArchivedChats || sections?.hasLockedChats);
+    (sections?.hasArchivedChats || showLockedFolder || revealAvailable);
   const searchQuery = query.trim().toLocaleLowerCase();
   const filtered = conversations.filter(
     (conversation) =>
@@ -281,7 +301,7 @@ export default function ConversationList({
         Loading conversations...
       </div>
     );
-  } else if (conversations.length === 0 && hasSnapshot) {
+  } else if (conversations.length === 0 && hasSnapshot && !revealAvailable) {
     content = (
       <div
         role="status"
@@ -312,7 +332,11 @@ export default function ConversationList({
         </p>
       </div>
     );
-  } else if (conversations.length > 0 && filtered.length === 0) {
+  } else if (
+    conversations.length > 0 &&
+    filtered.length === 0 &&
+    !revealAvailable
+  ) {
     content = (
       <div
         role="status"
@@ -469,7 +493,15 @@ export default function ConversationList({
             type="text"
             role="searchbox"
             value={query}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
             onChange={(event) => setQuery(event.target.value)}
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={(event) => {
+              setQuery(event.currentTarget.value);
+              setComposing(false);
+            }}
             aria-controls={listId}
             placeholder={
               section === "locked"
@@ -530,6 +562,7 @@ export default function ConversationList({
       )}
       <div
         id={listId}
+        ref={resultsRef}
         role="region"
         aria-label="Conversation results"
         aria-busy={isLoading || isRefreshing}
@@ -539,15 +572,26 @@ export default function ConversationList({
         {section === "normal" && (
           <div className="px-2">
             {[
+              ["revealed", "Locked Chats", LockKeyhole, revealAvailable],
               ["archived", "Archived", Archive, sections?.hasArchivedChats],
-              ["locked", "Locked Chats", LockKeyhole, sections?.hasLockedChats],
+              ["locked", "Locked Chats", LockKeyhole, showLockedFolder],
             ]
               .filter(([, , , visible]) => visible)
               .map(([value, label, Icon]) => (
                 <button
                   key={value}
                   type="button"
-                  onClick={() => onSectionOpen?.(value)}
+                  onClick={() => {
+                    if (value !== "revealed") {
+                      onSectionOpen?.(value);
+                      return;
+                    }
+                    const grant = takeGrant();
+                    if (grant) {
+                      setQuery("");
+                      onOpenRevealed(grant);
+                    }
+                  }}
                   disabled={backendUnavailable || actionBusy}
                   className={`flex min-h-14 w-full min-w-0 items-center gap-3 rounded-xl px-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-50 ${isDark ? "hover:bg-white/5" : "hover:bg-slate-50"}`}
                 >

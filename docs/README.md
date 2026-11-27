@@ -14,6 +14,7 @@ Start with the [root README](../README.md) to configure and run Sandesh from a c
 | [Database setup](database-setup.md) | SQL Server identity, shared connection source, the current migration baseline, and existing-database safety. |
 | [Chat Privacy and Archive](chat-privacy.md) | Privacy pepper, manual migration, PIN security, APIs, recovery proposal, and verification. |
 | [User blocking](user-blocking.md) | Teammate update commands, blocking migration, permanent message suppression, Online/Last seen privacy, APIs and two-account verification. |
+| [Hide Locked Chats and Secret Code](hide-locked-chats.md) | Secret Code hashing, existing-installation setup, manual database migration, privacy APIs, access authorization, recovery, security limitations, and verification. |
 | [Image and Document Sharing](img-doc-setup-documention.md) | Attachment User Secrets, team setup commands, manual database migration, private file storage, upload/download APIs, SignalR integration, security, verification, and production requirements. |
 | [Configuration and deployment](deployment.md) | Canonical configuration reference, environment differences, publishing, hosting, and release checks. |
 | [System overview](system-overview.md) | Architecture, feature behavior, REST/SignalR contracts, and implementation limits. |
@@ -34,6 +35,8 @@ For a new development machine, follow [root local setup](../README.md#local-setu
 The User Blocking guide owns the block/unblock APIs, permanent sender-only message behavior, directional Online/Last seen privacy, regression-test scope and feature-specific update procedure. Its schema migration is `20261125063713_AddUserBlocking`; the later presence fix requires no additional migration.
 
 The Image and Document Sharing guide owns attachment-specific User Secrets setup, existing-installation update commands, manual database migration instructions, private file storage behavior, attachment security, and verification procedures. Production MySQL compatibility, persistent storage configuration, and approved malware scanner integration remain pending.
+
+The Hide Locked Chats and Secret Code guide owns Secret Code hashing, existing-installation update instructions, manual database migration procedures, privacy API contracts, access authorization, recovery, and backend verification. Secret Code-specific throttling and lockout remain unimplemented.
 
 Historical observations identify their scope and source version. Validate a current checkout through its source, scripts, and the applicable guide before applying old instructions. Review the backend contract/version difference described in the frontend test notes before running the opt-in messaging baseline.
 

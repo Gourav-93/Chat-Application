@@ -17,7 +17,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Microsoft.Extensions.Options;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = ConfigurationRegistration.CreateBuilder(args);
 
 // Explicit CLI only: no web host, background workers, migrations or automatic backfill.
 if (args.Contains("--sensitive-data"))
@@ -141,7 +141,7 @@ builder.Services.AddSingleton<IPresenceService, PresenceService>();
 
 // 4. Database. Never default to a development connection string in production.
 builder.Services.AddDbContext<ChatDbContext>((services, options) =>
-    options.UseSqlServer(services.GetRequiredService<IOptions<DatabaseOptions>>().Value.DefaultConnection));
+    options.UseSqlServer(services.GetRequiredService<DatabaseOptions>().DefaultConnection));
 
 // 5. JWT configuration, preserving session validation and SignalR token support.
 builder.Services
@@ -301,6 +301,12 @@ builder.Services.AddOptions<Microsoft.AspNetCore.Cors.Infrastructure.CorsOptions
 });
 
 var app = builder.Build();
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<ChatDbContext>();
+    await ProtectionSchema.VerifyAsync(db);
+}
+
 if (app.Services.GetRequiredService<IOptions<AttachmentOptions>>().Value.Enabled ||
     attachmentMaintenanceEnabled)
 {
