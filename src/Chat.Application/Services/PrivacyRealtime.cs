@@ -7,6 +7,8 @@ using Chat.Application.Interfaces;
 
 namespace Chat.Application.Services;
 
+public sealed record MessageDeletionEvent(int MessageId, int ConversationId);
+
 public sealed class PrivacyRealtime(PrivacyAccessStore access, PrivacyService privacy,
     ActiveSessionValidator sessions, IHubContext<ChatHub> hub, ChatDbContext db,
     IUserBlockService blocks, IUserPairLock pairLock)
@@ -29,12 +31,8 @@ public sealed class PrivacyRealtime(PrivacyAccessStore access, PrivacyService pr
         // idempotent send retries after unblock. Never trust a public DTO for visibility.
         if (eventName is "ReceiveMessage" or "MessageEdited" && payload is MessageDto incoming)
         {
-            if (!await db.Messages.AsNoTracking().AnyAsync(m => m.Id == incoming.Id &&
-                m.ConversationId == conversationId && (m.SenderId == userId || !m.IsDeliverySuppressed) &&
-                (m.Conversation.UserAId == userId || m.Conversation.UserBId == userId) &&
-                !db.UserConversationSettings.Any(s => s.UserId == userId && s.ConversationId == conversationId &&
-                    s.MessagesClearedAt != null && (m.SentAt < s.MessagesClearedAt ||
-                    (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))) return;
+            if (!await db.VisibleMessages(userId).AsNoTracking().AnyAsync(m =>
+                m.Id == incoming.Id && m.ConversationId == conversationId && !m.IsDeletedForEveryone)) return;
 
             var mediaCleared = await db.UserConversationSettings.AsNoTracking().AnyAsync(s =>
                 s.UserId == userId && s.ConversationId == conversationId && s.MediaClearedAt != null &&
@@ -51,6 +49,9 @@ public sealed class PrivacyRealtime(PrivacyAccessStore access, PrivacyService pr
                 EditedAt = incoming.EditedAt
             };
         }
+        if (eventName == "MessageDeletedForEveryone" && payload is MessageDeletionEvent deletion &&
+            !await db.VisibleMessages(userId).AsNoTracking().AnyAsync(m => m.Id == deletion.MessageId &&
+                m.ConversationId == conversationId)) return;
         using var lease = gateAlreadyHeld ? null : await access.EnterAsync(userId);
         // Take privacy before pair locks everywhere. Never hold a sender privacy
         // gate or a pair lock while waiting for the recipient's privacy gate.

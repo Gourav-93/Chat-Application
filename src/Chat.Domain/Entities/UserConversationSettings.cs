@@ -11,5 +11,7 @@ public sealed class UserConversationSettings
     public int? MessagesClearedThroughMessageId { get; set; }
     public DateTime? MediaClearedAt { get; set; }
     public int? MediaClearedThroughMessageId { get; set; }
+    public DateTime? ChatDeletedAt { get; set; }
+    public int? ChatDeletedThroughMessageId { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }

@@ -64,11 +64,19 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.Property<int>("ConversationId")
                         .HasColumnType("int");
 
+                    b.Property<DateTime?>("DeletedForEveryoneAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<DateTime?>("DeliveredAt")
                         .HasColumnType("datetime2");
 
                     b.Property<DateTime?>("EditedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeletedForEveryone")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
 
                     b.Property<bool>("IsDeliverySuppressed")
                         .ValueGeneratedOnAdd()
@@ -174,6 +182,24 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                     b.HasIndex("UploadedBy", "MessageId", "ExpiresAt");
 
                     b.ToTable("MessageAttachments");
+                });
+
+            modelBuilder.Entity("Chat.Domain.Entities.MessageDeletion", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("MessageId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("UserId", "MessageId");
+
+                    b.HasIndex("MessageId", "UserId");
+
+                    b.ToTable("MessageDeletions");
                 });
 
             modelBuilder.Entity("Chat.Domain.Entities.OtpVerification", b =>
@@ -314,6 +340,12 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<int>("ConversationId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ChatDeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("ChatDeletedThroughMessageId")
                         .HasColumnType("int");
 
                     b.Property<bool>("IsArchived")
@@ -515,6 +547,21 @@ namespace Two_Way_Com.src.Chat.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Message");
+                });
+
+            modelBuilder.Entity("Chat.Domain.Entities.MessageDeletion", b =>
+                {
+                    b.HasOne("Chat.Domain.Entities.Message", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chat.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Chat.Domain.Entities.UserBlock", b =>

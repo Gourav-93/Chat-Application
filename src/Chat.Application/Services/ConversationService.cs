@@ -129,6 +129,8 @@ public class ConversationService : IConversationService
             .Where(c =>
                 c.UserAId == currentUserId ||
                 c.UserBId == currentUserId)
+            .Where(c => !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id &&
+                s.ChatDeletedAt != null && !visibleMessages.Any(m => m.ConversationId == c.Id)))
             .Where(c => section == "locked"
                 ? _context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsLocked)
                 : !_context.UserConversationSettings.Any(s => s.UserId == currentUserId && s.ConversationId == c.Id && s.IsLocked) &&
@@ -154,7 +156,8 @@ public class ConversationService : IConversationService
 
         var conversations = rows.Select(row =>
         {
-            var text = row.Last is null ? null : _fields.Text(row.Last);
+            var text = row.Last is null ? null : row.Last.IsDeletedForEveryone
+                ? "This message was deleted" : _fields.Text(row.Last);
             return new ConversationHistoryDto
             {
                 ConversationId = row.Id, IsLocked = row.IsLocked, IsArchived = row.IsArchived,

@@ -27,6 +27,9 @@ public class Message
 
     public DateTime? EditedAt { get; set; }
 
+    public bool IsDeletedForEveryone { get; set; }
+    public DateTime? DeletedForEveryoneAt { get; set; }
+
     // Navigation properties
     public Conversation Conversation { get; set; } = null!; // Navigation property for the conversation to which the message belongs
 

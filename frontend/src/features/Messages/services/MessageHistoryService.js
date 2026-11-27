@@ -85,6 +85,11 @@ export function mergeMessageReceipts(previous, incoming) {
 }
 
 export function mergeMessageContent(previous, incoming) {
+  if (previous?.isDeletedForEveryone || incoming?.isDeletedForEveryone) {
+    const deleted = incoming?.isDeletedForEveryone ? incoming : previous;
+    return { ...deleted, text: "This message was deleted", location: null,
+      attachments: [], editedAt: null, isDeletedForEveryone: true };
+  }
   const previousEdit = Date.parse(previous?.editedAt || "");
   const incomingEdit = Date.parse(incoming?.editedAt || "");
   const newer = Number.isFinite(previousEdit) &&
@@ -107,6 +112,7 @@ export function createMessageHistoryService(
     onSessionReplaced,
     onConversationsInvalidated,
     onVisibilityChanged,
+    onMessageDeleted,
     onUserBlocksChanged,
   } = {},
 ) {
@@ -167,6 +173,8 @@ export function createMessageHistoryService(
     record.connection.off("ReceiveMessage", record.receiveHandler);
     record.connection.off("MessageEdited", record.editedHandler);
     record.connection.off("ConversationVisibilityChanged", record.visibilityHandler);
+    record.connection.off("MessageDeletedForMe", record.deletedForMeHandler);
+    record.connection.off("MessageDeletedForEveryone", record.deletedForEveryoneHandler);
     record.connection.off("ConversationUnreadChanged", record.unreadHandler);
     record.connection.off("PendingMessages", record.pendingHandler);
     record.connection.off("PrivacyStateChanged", record.privacyHandler);
@@ -471,7 +479,16 @@ export function createMessageHistoryService(
         onVisibilityChanged?.(event);
         invalidateConversations(record);
       };
+      const deleted = (event) => {
+        if (!liveRecord() || !Number.isSafeInteger(event?.conversationId) || !Number.isSafeInteger(event?.messageId)) return;
+        onMessageDeleted?.(event);
+        invalidateConversations(record);
+      };
+      record.deletedForMeHandler = (event) => deleted({ ...event, everyone: false });
+      record.deletedForEveryoneHandler = (event) => deleted({ ...event, everyone: true });
       connection.on("ConversationVisibilityChanged", record.visibilityHandler);
+      connection.on("MessageDeletedForMe", record.deletedForMeHandler);
+      connection.on("MessageDeletedForEveryone", record.deletedForEveryoneHandler);
       connection.on("PendingMessages", record.pendingHandler);
       record.privacyHandler = (event) => {
         if (!liveRecord()) return;
@@ -940,6 +957,18 @@ export function createMessageHistoryService(
       } finally {
         finishForegroundWork();
       }
+    },
+
+    async deleteMessageForMe(messageId) {
+      checkSession();
+      if (!current || current.retired || current.connection.state !== HubConnectionState.Connected) throw new Error("Chat is disconnected.");
+      return current.connection.invoke("DeleteMessageForMe", messageId);
+    },
+
+    async deleteMessageForEveryone(messageId) {
+      checkSession();
+      if (!current || current.retired || current.connection.state !== HubConnectionState.Connected) throw new Error("Chat is disconnected.");
+      return current.connection.invoke("DeleteMessageForEveryone", messageId);
     },
 
     request(conversationId, page, pageSize, isCurrent) {

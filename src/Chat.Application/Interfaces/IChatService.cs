@@ -11,6 +11,10 @@ public interface IChatService
 
     Task<MessageDto> EditMessageAsync(int messageId, string? text, Guid senderId);
 
+    Task<MessageDto> DeleteMessageForEveryoneAsync(int messageId, Guid senderId);
+
+    Task DeleteMessageForMeAsync(int messageId, Guid userId);
+
     Task<IReadOnlyList<MessageDto>> GetMessageAsync(
         int conversationId,
         Guid userId,
@@ -34,5 +38,7 @@ public interface IChatService
     Guid recipientId);
 
     Task ClearConversationAsync(int conversationId, Guid userId, bool mediaOnly);
+
+    Task DeleteConversationForMeAsync(int conversationId, Guid userId);
 
 }

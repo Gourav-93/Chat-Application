@@ -286,7 +286,10 @@ public sealed class AttachmentService(
                          c => c.Id == a.ConversationId &&
                               (c.UserAId == user ||
                                c.UserBId == user)) &&
-                     ((a.MessageId != null && (!a.Message!.IsDeliverySuppressed || a.Message.SenderId == user) &&
+                    ((a.MessageId != null && !a.Message!.IsDeletedForEveryone && (!a.Message.IsDeliverySuppressed || a.Message.SenderId == user) &&
+                       !db.MessageDeletions.Any(d => d.UserId == user && d.MessageId == a.MessageId) &&
+                       !db.UserConversationSettings.Any(s => s.UserId == user && s.ConversationId == a.ConversationId && s.ChatDeletedAt != null &&
+                         (a.Message.SentAt < s.ChatDeletedAt || (a.Message.SentAt == s.ChatDeletedAt && (s.ChatDeletedThroughMessageId == null || a.Message.Id <= s.ChatDeletedThroughMessageId)))) &&
                        !db.UserConversationSettings.Any(s => s.UserId == user && s.ConversationId == a.ConversationId &&
                          ((s.MediaClearedAt != null && (a.Message.SentAt < s.MediaClearedAt || (a.Message.SentAt == s.MediaClearedAt && a.Message.Id <= s.MediaClearedThroughMessageId))) ||
                           (s.MessagesClearedAt != null && (a.Message.SentAt < s.MessagesClearedAt || (a.Message.SentAt == s.MessagesClearedAt && a.Message.Id <= s.MessagesClearedThroughMessageId)))))) ||
