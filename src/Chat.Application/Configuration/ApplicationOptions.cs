@@ -8,6 +8,18 @@ public sealed class DatabaseOptions
 {
     public string DefaultConnection { get; set; } = string.Empty;
 
+    public static DatabaseOptions Resolve(IConfiguration configuration, IHostEnvironment environment)
+    {
+        if (!environment.IsDevelopment() &&
+            string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")))
+            throw new InvalidOperationException("Set ConnectionStrings__DefaultConnection in the deployment environment.");
+
+        var options = configuration.GetSection("ConnectionStrings").Get<DatabaseOptions>() ?? new();
+        if (!IsValid(options))
+            throw new InvalidOperationException("Set ConnectionStrings:DefaultConnection to a SQL Server connection with Server and Database in Development User Secrets or hosting configuration.");
+        return options;
+    }
+
     public static bool IsValid(DatabaseOptions options)
     {
         try

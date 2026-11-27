@@ -13,10 +13,10 @@ public class ChatDbContext : DbContext
     private readonly ProtectedFields? _protection;
     public bool LegacyColumnsPresent { get; }
     public ChatDbContext(DbContextOptions<ChatDbContext> options,
-        IOptions<DataProtectionOptions>? protectionOptions = null, ProtectedFields? protection = null)
+        IOptions<DataProtectionOptions> protectionOptions, ProtectedFields? protection = null)
         : base(options)
     {
-        LegacyColumnsPresent = protectionOptions?.Value.LegacyColumnsPresent ?? false;
+        LegacyColumnsPresent = protectionOptions.Value.LegacyColumnsPresent;
         _protection = protection;
     }
 

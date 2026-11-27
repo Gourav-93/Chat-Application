@@ -20,17 +20,14 @@ public static class SensitiveDataMaintenance
         try
         {
             var options = builder.Configuration.GetSection("DataProtection").Get<DataProtectionOptions>() ?? new();
-            var database = builder.Configuration.GetSection("ConnectionStrings").Get<DatabaseOptions>() ?? new();
-            if (!DataProtectionOptions.IsValid(options) || !DatabaseOptions.IsValid(database))
+            var database = DatabaseOptions.Resolve(builder.Configuration, builder.Environment);
+            if (!DataProtectionOptions.IsValid(options))
                 throw new SensitiveDataMaintenanceException("Valid database and protection configuration is required.");
             var settings = Options.Create(options);
             var fields = new ProtectedFields(new DataEncryptionService(settings), new DataHashingService(settings), settings);
             await using var db = new ChatDbContext(new DbContextOptionsBuilder<ChatDbContext>()
                 .UseSqlServer(database.DefaultConnection).Options, settings, fields);
-            var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToList();
-            if (!migrations.Any(m => m.EndsWith("_AddSensitiveDataProtection")) ||
-                options.LegacyColumnsPresent == migrations.Any(m => m.EndsWith("_RemovePlaintextSensitiveData")))
-                throw new SensitiveDataMaintenanceException("Schema phase does not match DataProtection:LegacyColumnsPresent.");
+            await ProtectionSchema.VerifyAsync(db);
             await new SensitiveDataBackfillService(db, fields).RunAsync(command == "backfill");
             return 0;
         }

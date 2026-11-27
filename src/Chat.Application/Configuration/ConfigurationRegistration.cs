@@ -4,6 +4,13 @@ namespace Chat.Application.Configuration;
 
 public static class ConfigurationRegistration
 {
+    public static WebApplicationBuilder CreateBuilder(string[] args) =>
+        WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            Args = args,
+            ApplicationName = typeof(ConfigurationRegistration).Assembly.GetName().Name
+        });
+
     public static void AddSandeshConfiguration(
         this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
@@ -13,7 +20,7 @@ public static class ConfigurationRegistration
         {
             foreach (var name in new[]
             {
-                "ConnectionStrings__DefaultConnection", "Jwt__Key", "Otp__HashingKey"
+                "Jwt__Key", "Otp__HashingKey"
             })
             {
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name)))
@@ -27,11 +34,7 @@ public static class ConfigurationRegistration
                 "DataProtection requires independent base64 32-byte encryption and lookup keys and a valid current version.")
             .ValidateOnStart();
 
-        services.AddOptions<DatabaseOptions>()
-            .Bind(configuration.GetSection("ConnectionStrings"))
-            .Validate(DatabaseOptions.IsValid,
-                "ConnectionStrings:DefaultConnection must be a valid SQL Server connection string with Server and Database.")
-            .ValidateOnStart();
+        services.AddSingleton(DatabaseOptions.Resolve(configuration, environment));
 
         services.AddOptions<PrivacyOptions>()
             .Bind(configuration.GetSection("Privacy"))

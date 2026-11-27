@@ -187,21 +187,7 @@ The default `Privacy:CurrentPepperVersion` is `v1`. Keep an existing pepper: rep
 **After updating an existing checkout:** do not regenerate JWT, OTP, or privacy keys. If the privacy pepper is missing, use the [guarded terminal command for existing installations](docs/chat-privacy.md#existing-installation-after-updating). It preserves an existing `v1` User Secret and creates one only when absent. Restart the backend after configuring a missing secret.
 Hide Locked Chats and Secret Code reuse the existing privacy pepper. They require no additional Secret Code-specific User Secrets or backend packages. Keep the existing JWT, OTP, privacy pepper keys, and database configuration when updating. Saved Privacy PINs and Secret Codes depend on the pepper version recorded with each verifier. See [Secret Code configuration and hashing](docs/hide-locked-chats.md#configuration-and-hashing).
 
-Choose the SQL Server instance installed on your own machine. The verified local setup for this checkout uses the default SQL Server instance at `localhost` and database `RealTimeChat_DB`. Each teammate must select their own instance; copying the project does not install SQL Server or copy User Secrets.
-
-| Installed instance | `Server` value |
-| --- | --- |
-| Default SQL Server instance on this machine | `localhost` |
-| SQL Server Express named instance | `.\SQLEXPRESS` (confirm the installed name) |
-| Windows SQL Server Express LocalDB | `(localdb)\MSSQLLocalDB` |
-
-For a default local instance with Windows authentication, run the following from the repository root. Change only the server/database values to match your approved local target; preserve an existing working connection.
-
-```powershell
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=localhost;Database=RealTimeChat_DB;Integrated Security=True;Encrypt=True;TrustServerCertificate=True" --project Two-Way-Com.csproj
-```
-
-`TrustServerCertificate=True` is a local development convenience. Deployed SQL Server connections should use a trusted certificate with certificate validation enabled. For SQL authentication, supply your own approved credentials through local secret tooling. The [database guide](docs/database-setup.md) explains existing-database checks and authentication choices. Blocking requires no additional secrets, provider or feature flag.
+Keep an existing working SQL Server connection. On a new machine, configure your own approved target in Development User Secrets using the secure prompt in the [database protection guide](docs/database-protection.md#2-stop-writers-and-confirm-the-target-db).
 
 #### Configure image and document sharing
 
@@ -232,66 +218,11 @@ The local provider creates `private-uploads/` under the backend content root. Ke
 
 ### 3. Create or update your development database
 
-Start your SQL Server instance first. For LocalDB, run this command only if LocalDB is installed.
-
-```powershell
-sqllocaldb start MSSQLLocalDB
-```
-
-Before updating, confirm that your User Secrets connection points to the intended development server and database. For an existing team database, have the owner review its migration history first. This repository contains the squashed migration `20261120130000_InitialCreate`; an older database can have a different migration history.
-
-Run from the repository root with Development selected. Keep any pre-existing `DOTNET_ENVIRONMENT` consistent with this selection. For a default Windows SQL Server instance, check that it is running with `Get-Service *MSSQL*`.
-
-The design-time factory can use a separate `Sandesh_DesignOnly` LocalDB connection. Therefore, explicitly pass the verified local runtime connection to database-accessing EF commands. Do not rely on the design-time database name.
-
-```powershell
-$env:ASPNETCORE_ENVIRONMENT = "Development"
-$env:DOTNET_ENVIRONMENT = "Development"
-
-# Read the existing local connection without printing credentials.
-$entry = @(dotnet user-secrets list --project Two-Way-Com.csproj | Where-Object { $_ -match '^ConnectionStrings:DefaultConnection\s*=' })
-if ($LASTEXITCODE -ne 0 -or $entry.Count -ne 1) { throw "Configure the local database connection first." }
-$connection = ($entry[0] -split '=', 2)[1].Trim()
-if ([string]::IsNullOrWhiteSpace($connection)) { throw "Local connection is empty." }
-$target = [System.Data.Common.DbConnectionStringBuilder]::new()
-$target.set_ConnectionString($connection)
-# Inspect the server and database locally; do not print the full connection string.
-foreach ($key in @('Server', 'Data Source', 'Database', 'Initial Catalog')) {
-    if ($target.ContainsKey($key)) { Write-Output ($key + '=' + $target.get_Item($key)) }
-}
-```
-
-If the connection uses aliases such as `Data Source` or `Initial Catalog`, inspect those keys instead. Confirm that the target is your own development SQL Server and that no environment or command-line override points the runtime elsewhere. Do not proceed against a shared or production database. Back up existing data and review the migration history before applying updates.
-
-```powershell
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-```
-
-The expected migration sequence for this feature is:
-
-```text
-20261120130000_InitialCreate
-20261123180036_AddChatPrivacyAndArchive
-20261124071343_AddMessageAttachments
-20261125063713_AddUserBlocking
-20261125111351_AddMessageLocation
-20261126061034_AddSensitiveDataProtection
-20261126061256_RemovePlaintextSensitiveData (later, separately approved)
-20261125105245_AddSecretCodeToUserPrivacySettings
-```
+Follow the [database protection guide](docs/database-protection.md) to confirm the target and migration history, select the matching schema stage, and verify with the original keys. The app, EF CLI and maintenance command use the same startup project and configuration providers. For a source-only check, run `dotnet ef migrations list --no-connect` from the project directory with your environment selected.
 
 The Secret Code migration adds 11 columns to `UserPrivacySettings` and preserves existing records. Existing accounts start with hiding disabled and no configured Secret Code. See [Secret Code migration instructions](docs/hide-locked-chats.md#additive-migration-manual-execution) and [database schema details](docs/database-setup.md#secret-code-and-hide-locked-chats-migration).
 
-After reviewing the target and pending migrations, apply them manually:
-
-```powershell
-dotnet ef database update 20261126061034_AddSensitiveDataProtection --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-```
-
-`RemovePlaintextSensitiveData` should remain pending until the [explicit backfill, verification and later approval](docs/database-protection.md#manual-powershell-sequence) are complete. Configure the new protection keys and complete that sequence before starting the backend, including on a fresh empty database. The update can create the intended development database when the SQL identity has permission. Existing installations must not generate duplicate migrations, delete previous migrations or drop their database. Startup does not automatically migrate the database. These migrations are SQL Server-specific and must not be applied to company MySQL.
-
-`AddUserBlocking` adds `UserBlocks` and `Messages.IsDeliverySuppressed`, defaulting existing messages to `false`. It preserves existing users, history and conversation IDs. The Online/Last seen privacy fix uses that same block table and needs no additional migration once `AddUserBlocking` is applied. After inspecting the target, clear the temporary connection variables with `Remove-Variable connection, entry, target` when finished.
+On a database already past the Secret Code migration ID, compare its history and physical columns before choosing a migration target. Targeting an older ID can request a downgrade.
 
 ### 4. Configure and install the frontend
 
@@ -429,7 +360,7 @@ Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/
 | Startup reports missing JWT, OTP, or database configuration | Run local User Secrets setup from this project under the same OS user. Check conflicting environment overrides. |
 | `dotnet ef` is unavailable | Install the matching global tool and reopen the terminal if PATH needs refreshing. |
 | SQL login, certificate, or connection failure | Confirm the instance is running, the database target is correct, and your identity has access. Use the local certificate exception only for the intended development instance. |
-| `Invalid object name 'UserBlocks'` or `Invalid column name 'IsDeliverySuppressed'` | Apply `20261125063713_AddUserBlocking` to the same confirmed local database used by the running backend, then restart it. Use step 3's explicit `--connection`; do not generate another migration. |
+| `Invalid object name 'UserBlocks'` or `Invalid column name 'IsDeliverySuppressed'` | Review the migration history with the owner using the database protection guide. |
 | `Cannot generate SSPI context` or `The target principal name is incorrect` | Windows integrated authentication failed. Verify the instance and Windows identity, and retry from your normal local PowerShell terminal if an isolated tool session failed. Have the SQL administrator check credentials/SPNs if the normal terminal also fails; connection retries do not repair authentication. |
 | A blocked contact still sees Online or Last seen | Restart the updated backend and refresh both clients once after installing this version. Confirm both use the same backend origin and that the block exists in its runtime database. The presence fix needs no migration beyond `AddUserBlocking`. |
 | Migration reports existing tables | Stop the update and review the squashed-baseline history with the database owner. |
@@ -445,7 +376,7 @@ Never commit `private-uploads/`, uploaded files, secrets, `node_modules/`, `bin/
 | Secret Code settings or chat lock removal returns `403` | Removing an existing lock requires a valid PIN-issued privacy grant. Changing Secret Code settings accepts that grant or the current Privacy PIN. |
 | SQL reports missing Secret Code columns | Check whether `20261125105245_AddSecretCodeToUserPrivacySettings` is applied to the actual runtime database. Follow [step 3](#3-create-or-update-your-development-database) to review and apply the checked-in migration. |
 | Secret Code verification returns `503 privacy_unavailable` | Check that the existing key ring includes the pepper version recorded with the credential and that the stored verifier metadata is supported. If a key is missing, restore its original value. See [Secret Code configuration and hashing](docs/hide-locked-chats.md#configuration-and-hashing). |
-| EF CLI targets `Sandesh_DesignOnly` or reports missing LocalDB runtime | Use the explicit verified local connection with `--connection` as shown in step 3. |
+| EF and the app appear to target different databases | Run both from the web project directory with the same environment and configuration overrides. |
 | `MessageAttachments` has no rows after sending | Confirm the runtime database matches the queried database; inspect the upload response and configured storage directory. |
 | Attachment upload returns 503 | Check the feature flag, scanner configuration and storage availability. Do not bypass production scanning. |
 | Swagger fails to generate the upload operation | Ensure the `IFormFile` parameter does not have an explicit `[FromForm]` attribute and the upload consumes `multipart/form-data`. |

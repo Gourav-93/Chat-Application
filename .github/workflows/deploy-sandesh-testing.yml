@@ -43,16 +43,11 @@ jobs:
 
       - name: Generate migration script
         env:
-          ConnectionStrings__DefaultConnection: Server=localhost;Database=SandeshTesting;User Id=ci;Password=ci;TrustServerCertificate=True
-          Jwt__Issuer: ci
-          Jwt__Audience: ci
+          ConnectionStrings__DefaultConnection: ${{ secrets.EF_SCRIPT_CONNECTION }}
         run: |
-          # Dummy random secrets: only needed so the app can be created at design time.
-          export Jwt__Key=$(openssl rand -hex 32)
-          export Otp__HashingKey=$(openssl rand -hex 32)
-          export Privacy__PepperKeys__v1=$(openssl rand -hex 32)
           dotnet restore Two-Way-Com.csproj
-          dotnet tool install --global dotnet-ef --version "10.*"
+          dotnet tool install --global dotnet-ef --version 10.0.14
+          dotnet ef migrations script 0 20261126061034_AddSensitiveDataProtection --idempotent -o migrate_expand.sql
           dotnet ef migrations script --idempotent -o migrate.sql
 
       - name: Publish backend (self-contained linux-x64)
@@ -65,7 +60,7 @@ jobs:
           mkdir release
           cp -r publish release/publish
           cp -r frontend/dist release/dist
-          cp migrate.sql release/migrate.sql
+          cp migrate.sql migrate_expand.sql release/
           tar -czf release.tar.gz -C release .
 
       - name: Upload and deploy

@@ -70,51 +70,7 @@ The migration is SQL Server-specific. Follow [database setup](database-setup.md)
 
 ### Verify the local target
 
-The design-time factory uses `Sandesh_DesignOnly` on `(localdb)\MSSQLLocalDB`; it is not necessarily the runtime database. Use an explicit connection for migration listing and application. This avoids LocalDB runtime errors and accidentally updating `ChatDb` when the application actually uses `RealTimeChat_DB`.
-
-```powershell
-Get-Service *MSSQL*
-dotnet ef --version
-# Inspect privately; this command can display credentials.
-dotnet user-secrets list --project Two-Way-Com.csproj | Select-String '^ConnectionStrings:DefaultConnection\s*='
-```
-
-Also check whether an environment override is present without printing its value:
-
-```powershell
-if ($env:ConnectionStrings__DefaultConnection) { Write-Host "Connection string environment override is present; verify the effective local target before proceeding." }
-```
-
-Set a PowerShell variable to your own verified local SQL Server connection. The example below matches the tested developer setup; change the instance and database name if necessary. Do not use a company/live connection string. This variable does not modify runtime User Secrets.
-
-```powershell
-$connection = "Server=localhost;Database=RealTimeChat_DB;Integrated Security=True;Encrypt=True;TrustServerCertificate=True;"
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-```
-
-Expected migration sequence:
-
-```text
-20261120130000_InitialCreate
-20261123180036_AddChatPrivacyAndArchive
-20261124071343_AddMessageAttachments
-```
-
-Existing installations may have either or both of the last two migrations pending. If migration history does not match the squashed baseline or the existing schema, stop and resolve it using the database setup guide. For an installation already at `AddChatPrivacyAndArchive`, generate/review the attachment migration SQL:
-
-```powershell
-New-Item -ItemType Directory -Force artifacts | Out-Null
-dotnet ef migrations script AddChatPrivacyAndArchive AddMessageAttachments --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --output artifacts/message-attachments.sql
-```
-
-If an earlier migration is pending, review that migration too. After verifying the target, backing up any important local data and reviewing the schema changes, apply pending migrations manually:
-
-```powershell
-dotnet ef database update AddMessageAttachments --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-dotnet ef migrations list --project Two-Way-Com.csproj --startup-project Two-Way-Com.csproj --context ChatDbContext --connection "$connection"
-```
-
-All three migrations should now be applied. Do not continue if database access or migration application fails. Startup does not automatically migrate the database. The rollback migration drops attachment metadata and the new message columns; do not use it as a routine feature-disable operation.
+Use the [current staged database procedure](database-protection.md) for every installation. Confirm the target and applied history before selecting a migration. An older feature target can request a downgrade on a newer database. Attachment storage requires `20261124071343_AddMessageAttachments`, included in the expansion target.
 
 ## Run the application
 
