@@ -60,6 +60,7 @@ public class ChatDbContext : DbContext
     public DbSet<PendingRegistration> PendingRegistrations { get; set; }
     public DbSet<UserPrivacySettings> UserPrivacySettings { get; set; }
     public DbSet<UserConversationSettings> UserConversationSettings { get; set; }
+    public DbSet<MessageDeletion> MessageDeletions { get; set; }
 
 
     // Configure the relationships and constraints between entities
@@ -77,6 +78,7 @@ public class ChatDbContext : DbContext
             entity.ToTable(t => t.HasCheckConstraint("CK_UserBlocks_NoSelfBlock", "[BlockerId] <> [BlockedUserId]"));
         });
         modelBuilder.Entity<Message>().Property(m => m.IsDeliverySuppressed).HasDefaultValue(false);
+        modelBuilder.Entity<Message>().Property(m => m.IsDeletedForEveryone).HasDefaultValue(false);
         modelBuilder.Entity<Message>().ToTable(t => t.HasCheckConstraint(
             "CK_Messages_Location", "([Latitude] IS NULL AND [Longitude] IS NULL AND [Type] <> 4) OR " +
             "([Latitude] IS NOT NULL AND [Longitude] IS NOT NULL AND [Latitude] BETWEEN -90 AND 90 AND [Longitude] BETWEEN -180 AND 180 AND [Type] = 4)"));
@@ -123,6 +125,13 @@ public class ChatDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(s => new { s.UserId, s.IsLocked, s.IsArchived, s.ConversationId });
             entity.Property(s => s.RowVersion).IsRowVersion();
+        });
+        modelBuilder.Entity<MessageDeletion>(entity =>
+        {
+            entity.HasKey(x => new { x.UserId, x.MessageId });
+            entity.HasIndex(x => new { x.MessageId, x.UserId });
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Message>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Cascade);
         });
 
         // Conversation – UserA Relationship

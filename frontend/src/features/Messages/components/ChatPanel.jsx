@@ -8,8 +8,8 @@
  * 4. Preserve scroll position and keyboard focus during older-message pagination.
  */
 
-import { Fragment, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, CheckCheck, LoaderCircle, MessageCircleMore, Pencil, UserRound } from "lucide-react";
+import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Check, CheckCheck, EllipsisVertical, LoaderCircle, MessageCircleMore, Pencil, UserRound } from "lucide-react";
 import { ThemeContext } from "../../../app/ThemeContext";
 import emojiRegex from "emoji-regex";
 import { getDisplayName } from "../../../shared/lib/displayIdentity";
@@ -91,6 +91,28 @@ export default function ChatPanel({
   const [editText, setEditText] = useState("");
   const [editError, setEditError] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const deleteRequestRef = useRef(false);
+  const [deleteError, setDeleteError] = useState("");
+  const deleteDialogRef = useRef(null);
+  const deleteCancelRef = useRef(null);
+  const closeDelete = useCallback(() => {
+    const focus = deleteDialog?.returnFocus;
+    setDeleteDialog(null);
+    window.requestAnimationFrame(() => focus?.focus?.({ preventScroll: true }));
+  }, [deleteDialog]);
+  useEffect(() => {
+    if (!deleteDialog) return undefined;
+    (deleteBusy ? deleteDialogRef.current : deleteCancelRef.current)?.focus({ preventScroll: true });
+    const onKeyDown = (event) => {
+      if (event.key === "Escape" && !deleteBusy) {
+        event.preventDefault(); closeDelete();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [deleteDialog, deleteBusy, closeDelete]);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
@@ -134,6 +156,24 @@ export default function ChatPanel({
     if (editBusy) return;
     setEditing(null);
     setEditError("");
+  };
+  const requestDelete = (message, everyone) => {
+    setDeleteError("");
+    setDeleteDialog({ message, everyone, returnFocus: document.activeElement });
+  };
+  const confirmDelete = async () => {
+    if (!deleteDialog || deleteRequestRef.current) return;
+    deleteRequestRef.current = true;
+    setDeleteBusy(true); setDeleteError("");
+    try {
+      if (deleteDialog.everyone) await session.deleteMessageForEveryone(deleteDialog.message.id);
+      else await session.deleteMessageForMe(deleteDialog.message.id);
+      if (editing?.message?.id === deleteDialog.message.id) cancelEdit();
+      session.applyMessageDeletion(deleteDialog.message, deleteDialog.everyone);
+      closeDelete();
+    } catch (error) {
+      setDeleteError(error?.message || "Unable to delete this message. Try again.");
+    } finally { deleteRequestRef.current = false; setDeleteBusy(false); }
   };
   const saveEdit = async () => {
     if (!activeEdit || editBusy) return;
@@ -515,6 +555,13 @@ export default function ChatPanel({
                       </p>}
                     </div>
                     <div className={"mt-1 flex min-w-0 flex-wrap items-center justify-end gap-1 px-1 text-[11px] " + muted}>
+                      {!message.isDeletedForEveryone && <details className="relative mr-auto group">
+                        <summary className="flex min-h-8 min-w-8 cursor-pointer list-none items-center justify-center rounded-lg hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500" aria-label="Message actions"><EllipsisVertical size={15} aria-hidden="true" /></summary>
+                        <div className={`absolute bottom-8 left-0 z-10 w-44 rounded-xl border p-1 shadow-xl ${isDark ? "border-[#293854] bg-[#111d31] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>
+                          <button type="button" className="min-h-11 w-full rounded-lg px-3 text-left text-sm hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500" onClick={() => requestDelete(message, false)}>Delete for me</button>
+                          {own && currentTime <= Date.parse(message.sentAt) + 48 * 60 * 60 * 1000 && <button type="button" className="min-h-11 w-full rounded-lg px-3 text-left text-sm hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500" onClick={() => requestDelete(message, true)}>Delete for everyone</button>}
+                        </div>
+                      </details>}
                       {message.editedAt && <span className="mr-auto">Edited</span>}
                       {own && message.type === 0 && !message.attachments?.length &&
                         currentTime <= Date.parse(message.sentAt) + 15 * 60 * 1000 && (
@@ -575,6 +622,22 @@ export default function ChatPanel({
         disabled={blocks?.loading || blocks?.busy || session.status !== "connected" || session.requiresSignIn || busy || Boolean(history.error)}
         error={activeEdit ? editError : session.sending?.conversationId === conversation.conversationId ? session.sending.error : ""} />}
       {blocks?.error && <p role="alert" className="px-4 py-2 text-sm">{blocks.error} <button type="button" className="min-h-11 underline" onClick={blocks.retry}>Retry</button></p>}
+      {deleteDialog && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="presentation">
+        <div ref={deleteDialogRef} role="dialog" tabIndex={-1} aria-modal="true" aria-labelledby="delete-message-title"
+          onKeyDown={(event) => {
+            if (event.key !== "Tab") return;
+            const controls = [...deleteDialogRef.current.querySelectorAll("button:not(:disabled)")];
+            if (!controls.length) { event.preventDefault(); deleteDialogRef.current.focus(); return; }
+            if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls.at(-1)?.focus(); }
+            else if (!event.shiftKey && document.activeElement === controls.at(-1)) { event.preventDefault(); controls[0]?.focus(); }
+          }}
+          className={`w-full max-w-sm rounded-2xl border p-5 shadow-2xl ${isDark ? "border-[#293854] bg-[#111d31] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+          <h2 id="delete-message-title" className="text-lg font-semibold">{deleteDialog.everyone ? "Delete for everyone?" : "Delete for me?"}</h2>
+          <p className="mt-3 text-sm leading-6 opacity-80">{deleteDialog.everyone ? "This message and its attachments will be replaced by a deletion notice for both participants." : "This message and its attachments will disappear from your view only. The other participant will keep them."}</p>
+          {deleteError && <p role="alert" className="mt-3 text-sm text-red-500">{deleteError}</p>}
+          <div className="mt-5 flex justify-end gap-2"><button ref={deleteCancelRef} type="button" disabled={deleteBusy} onClick={closeDelete} className="min-h-11 rounded-xl px-4 text-sm focus-visible:outline-2 focus-visible:outline-blue-500">Cancel</button><button type="button" disabled={deleteBusy} onClick={confirmDelete} className="min-h-11 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-60">{deleteBusy ? "Deleting…" : "Delete"}</button></div>
+        </div>
+      </div>}
     </section>
   );
 }

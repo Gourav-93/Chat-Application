@@ -136,6 +136,22 @@ public class ConversationsController : ControllerBase
     [HttpPost("{id:int}/clear-media")]
     public Task<IActionResult> ClearMedia(int id) => Clear(id, true);
 
+    [HttpPost("{id:int}/delete-for-me")]
+    public Task<IActionResult> DeleteChatForMe(int id) => DeleteChat(id);
+
+    private async Task<IActionResult> DeleteChat(int id)
+    {
+        var (userId, sessionId) = PrivacyService.Identity(User);
+        await _privacy.RequireConversationAsync(userId, sessionId, id, PrivacyToken);
+        try
+        {
+            await _chatService.DeleteConversationForMeAsync(id, userId);
+            await _privateEvents.SendWhileUserGateHeldAsync(userId, id, "ConversationVisibilityChanged", new { conversationId = id, deletedForMe = true });
+            return Ok(new { conversationId = id, deletedForMe = true });
+        }
+        catch (UnauthorizedAccessException) { return NotFound(new { message = "Conversation unavailable." }); }
+    }
+
     private async Task<IActionResult> Clear(int id, bool mediaOnly)
     {
         var (userId, sessionId) = PrivacyService.Identity(User);

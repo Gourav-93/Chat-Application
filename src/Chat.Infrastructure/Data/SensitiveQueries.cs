@@ -16,10 +16,14 @@ public static class SensitiveQueries
         return db.Messages.Where(m =>
             (m.Conversation.UserAId == user || m.Conversation.UserBId == user) &&
             (!m.IsDeliverySuppressed || m.SenderId == user) &&
+            !db.MessageDeletions.Any(d => d.UserId == user && d.MessageId == m.Id) &&
+            !db.UserConversationSettings.Any(s => s.UserId == user && s.ConversationId == m.ConversationId &&
+                s.ChatDeletedAt != null && (m.SentAt < s.ChatDeletedAt ||
+                    (m.SentAt == s.ChatDeletedAt && (s.ChatDeletedThroughMessageId == null || m.Id <= s.ChatDeletedThroughMessageId)))) &&
             !db.UserConversationSettings.Any(s => s.UserId == user && s.ConversationId == m.ConversationId &&
                 s.MessagesClearedAt != null && (m.SentAt < s.MessagesClearedAt ||
                 (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))) &&
-            (withText.Any(t => t.Id == m.Id) || m.Type == MessageType.Location ||
+            (m.IsDeletedForEveryone || withText.Any(t => t.Id == m.Id) || m.Type == MessageType.Location ||
                 m.Attachments.Any() && !db.UserConversationSettings.Any(s =>
                     s.UserId == user && s.ConversationId == m.ConversationId &&
                     s.MediaClearedAt != null && (m.SentAt < s.MediaClearedAt ||

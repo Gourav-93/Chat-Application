@@ -25,6 +25,19 @@ function applyVisibility(previous, { conversationId, mediaOnly }) {
     revision: previous.revision + 1 };
 }
 
+export function applyMessageDeleted(previous, { messageId, conversationId, everyone }) {
+  const messages = new Map(previous.messages);
+  const deleted = new Map(previous.deleted);
+  const prior = messages.get(messageId);
+  const deletion = deleted.get(messageId) === "me" || !everyone ? "me" : "everyone";
+  deleted.set(messageId, deletion);
+  if (deletion === "me") messages.delete(messageId);
+  else if (prior) messages.set(messageId, { ...prior, text: "This message was deleted",
+    location: null, attachments: [], editedAt: null, type: 0, isDeletedForEveryone: true });
+  return { ...previous, messages, deleted, revision: previous.revision + 1,
+    visibility: { conversationId, version: (previous.visibility?.version || 0) + 1 } };
+}
+
 export default function useChatSession() {
   const privacy = useSyncExternalStore(subscribePrivacy, getPrivacySnapshot);
   const auth = useContext(AuthContext);
@@ -224,6 +237,7 @@ export default function useChatSession() {
         ...previous, revision: previous.revision + 1,
       })),
       onVisibilityChanged: (event) => update((previous) => applyVisibility(previous, event)),
+      onMessageDeleted: (event) => update((previous) => applyMessageDeleted(previous, event)),
       onSessionReplaced: (message) => {
         if (!active) return;
         stopRecovery();
@@ -244,6 +258,8 @@ export default function useChatSession() {
         update((previous) => ({
           ...previous, status, failure: status === "connecting" ? previous.failure : failure,
           error: keepPreviousError ? (previous.error || error) : error,
+          messages: status === "connected" ? new Map() : previous.messages,
+          historyEpoch: status === "connected" ? (previous.historyEpoch || 0) + 1 : previous.historyEpoch,
           presence: status === "connected" ? previous.presence : new Map(),
         }));
         if (status === "connected") {
@@ -303,6 +319,7 @@ export default function useChatSession() {
           const id = userId.toLowerCase();
           if (message.senderId.toLowerCase() !== id &&
               message.receiverId.toLowerCase() !== id) continue;
+          if (previous.deleted.has(message.id)) continue;
           if (JSON.stringify(messages.get(message.id)) === JSON.stringify(message)) continue;
           messages.set(message.id, { ...mergeMessageContent(messages.get(message.id), message),
             ...mergeMessageReceipts(messages.get(message.id), message) });
@@ -334,7 +351,7 @@ export default function useChatSession() {
     // StrictMode's discarded owner cannot publish or start a transport.
     Promise.resolve().then(() => {
       if (!active) return;
-      setState({ owner, messages: new Map(), receipts: new Map(), presence: new Map(),
+      setState({ owner, messages: new Map(), deleted: new Map(), receipts: new Map(), presence: new Map(), historyEpoch: 0,
         receiptError: "", revision: 0, blockRevision: 0, status: "connecting", error: "", failure: null, expired: false });
       checkExpiry();
       startConnection();
@@ -403,6 +420,23 @@ export default function useChatSession() {
       ? applyVisibility(previous, { conversationId, mediaOnly }) : previous);
   }, [owner, requiresSignIn]);
 
+  const deleteMessageForMe = useCallback(async (messageId) => {
+    if (!owner || requiresSignIn) throw new Error("Your session is unavailable.");
+    await owner.service.deleteMessageForMe(messageId);
+  }, [owner, requiresSignIn]);
+
+  const deleteMessageForEveryone = useCallback(async (messageId) => {
+    if (!owner || requiresSignIn) throw new Error("Your session is unavailable.");
+    await owner.service.deleteMessageForEveryone(messageId);
+  }, [owner, requiresSignIn]);
+
+  const applyMessageDeletion = useCallback((message, everyone) => {
+    if (!owner || requiresSignIn) return;
+    setState((previous) => previous?.owner === owner
+      ? applyMessageDeleted(previous, { messageId: message.id, conversationId: message.conversationId, everyone })
+      : previous);
+  }, [owner, requiresSignIn]);
+
   // A selection guard is required so pending typing cannot target an old chat.
   const setTyping = useCallback((conversationId, isTyping, isCurrent) => {
     if (!owner || requiresSignIn) return false;
@@ -415,7 +449,7 @@ export default function useChatSession() {
   }, [owner, requiresSignIn]);
 
   return {
-    owner, userId, requiresSignIn, send, editMessage, start, retryReceipts, setTyping, subscribeTyping, clearCachedVisibility,
+    owner, userId, requiresSignIn, send, editMessage, deleteMessageForMe, deleteMessageForEveryone, applyMessageDeletion, start, retryReceipts, setTyping, subscribeTyping, clearCachedVisibility,
     receipts: current && !requiresSignIn ? state.receipts : EMPTY_MESSAGES,
     presence: current && !requiresSignIn && state.status === "connected" ? state.presence : EMPTY_MESSAGES,
     receiptError: current ? state.receiptError : "",
@@ -426,6 +460,8 @@ export default function useChatSession() {
     blockRevision: current ? state.blockRevision : 0,
     presenceRevision: current ? state.presenceRevision || 0 : 0,
     messages: current && !requiresSignIn ? state.messages : EMPTY_MESSAGES,
+    deleted: current && !requiresSignIn ? state.deleted : EMPTY_MESSAGES,
+    historyEpoch: current ? state.historyEpoch : 0,
     visibility: current ? state.visibility : null,
     sending: sending?.owner === owner ? sending : null,
   };

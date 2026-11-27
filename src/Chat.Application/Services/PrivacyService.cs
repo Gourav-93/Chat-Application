@@ -33,15 +33,16 @@ public sealed class PrivacyService(ChatDbContext db, PrivacyPinHasher hasher,
         .Where(c => (c.UserAId == userId && c.UserBId == otherId) || (c.UserBId == userId && c.UserAId == otherId))
         .Select(c => c.Id).SingleAsync();
 
-    public Task<List<int>> PendingLockedIdsAsync(Guid userId) => db.Messages.AsNoTracking()
-        .Where(m => !m.IsDeliverySuppressed && m.SenderId != userId && m.DeliveredAt == null &&
+    public Task<List<int>> PendingLockedIdsAsync(Guid userId) => db.VisibleMessages(userId).AsNoTracking()
+        .Where(m => !m.IsDeliverySuppressed && !m.IsDeletedForEveryone && m.SenderId != userId && m.DeliveredAt == null &&
+            !db.MessageDeletions.Any(d => d.UserId == userId && d.MessageId == m.Id) &&
             (m.Conversation.UserAId == userId || m.Conversation.UserBId == userId) &&
             db.UserConversationSettings.Any(s => s.UserId == userId && s.ConversationId == m.ConversationId && s.IsLocked))
         .OrderBy(m => m.Id).Select(m => m.Id).Take(Options.MaximumDeliveryAcknowledgements).ToListAsync();
 
     public async Task<int> MessageConversationAsync(int messageId, Guid userId)
     {
-        var id = await db.Messages.Where(m => m.Id == messageId && (!m.IsDeliverySuppressed || m.SenderId == userId) &&
+        var id = await db.Messages.Where(m => m.Id == messageId &&
             (m.Conversation.UserAId == userId || m.Conversation.UserBId == userId))
             .Select(m => (int?)m.ConversationId).SingleOrDefaultAsync();
         return id ?? throw new PrivacyException(404, "conversation_unavailable", "Conversation unavailable.");

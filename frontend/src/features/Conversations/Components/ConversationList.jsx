@@ -144,6 +144,7 @@ export function ChatActions({ conversation, onAction, onClose, onBlock, isBlocke
         {onBlock && <button type="button" disabled={actionBusy || blockBusy} onClick={() => { close(); onBlock(); }} className={itemClass}>{isBlocked ? "Unblock User" : "Block User"}</button>}
         <button type="button" disabled={actionBusy} onClick={() => act("clear-messages")} className={itemClass}>Clear messages</button>
         <button type="button" disabled={actionBusy} onClick={() => act("clear-media")} className={itemClass}>Clear media</button>
+        <button type="button" disabled={actionBusy} onClick={() => act("delete-chat")} className={itemClass}>Delete chat</button>
         {onClose && <button type="button" onClick={() => { close(); onClose(); }} className={itemClass}>Close chat</button>}
       </div>
     </div>

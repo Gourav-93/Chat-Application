@@ -53,7 +53,6 @@ export function setHideLockedChats(settings, signal) {
   return api.put("/privacy/hide-locked-chats", settings, { signal });
 }
 
-// A request-specific transform runs after the shared interceptor adds its grant.
 export function withPrivacyToken(token, signal) {
   return {
     signal,
@@ -83,6 +82,23 @@ export async function verifySecretCode(secretCode, signal) {
     { signal },
   );
   return status === 200 ? data : null;
+}
+
+export async function deleteConversationForMe(conversationId, signal) {
+  const { data } = await api.post(
+    `/conversations/${conversationId}/delete-for-me`,
+    null,
+    { signal },
+  );
+
+  if (
+    data?.conversationId !== conversationId ||
+    data?.deletedForMe !== true
+  ) {
+    throw new Error("Unexpected delete chat response.");
+  }
+
+  return data;
 }
 
 export async function getConversations(

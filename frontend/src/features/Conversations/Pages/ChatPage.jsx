@@ -53,6 +53,7 @@ import ConversationList from "../Components/ConversationList";
 import NewChatDialog from "../Components/NewChatDialog";
 import {
   clearConversation,
+  deleteConversationForMe,
   disableSecretCode,
   getChatLockSettings,
   getConversations,
@@ -191,6 +192,7 @@ function ClearConversationDialog({ kind, isDark, busy, error, onCancel, onConfir
     return () => document.removeEventListener("keydown", onKey);
   }, [busy, onCancel]);
   const media = kind === "media";
+  const chat = kind === "chat";
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="presentation">
     <div ref={dialogRef} role="dialog" tabIndex={-1} aria-modal="true" aria-labelledby="clear-dialog-title"
       onKeyDown={(event) => {
@@ -201,10 +203,10 @@ function ClearConversationDialog({ kind, isDark, busy, error, onCancel, onConfir
         else if (!event.shiftKey && document.activeElement === controls.at(-1)) { event.preventDefault(); controls[0]?.focus(); }
       }}
       className={`w-full max-w-sm rounded-2xl border p-5 shadow-2xl ${isDark ? "border-[#293854] bg-[#111d31] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
-      <h2 id="clear-dialog-title" className="text-lg font-semibold">{media ? "Clear media?" : "Clear messages?"}</h2>
-      <p className="mt-3 text-sm leading-6 opacity-80">{media ? "Existing shared images and files will be removed from your view only. Text messages will stay visible. The other participant keeps their attachments." : "Existing messages will be removed from your view only. The conversation and the other participant’s messages are not affected."}</p>
+      <h2 id="clear-dialog-title" className="text-lg font-semibold">{chat ? "Delete chat?" : media ? "Clear media?" : "Clear messages?"}</h2>
+      <p className="mt-3 text-sm leading-6 opacity-80">{chat ? "This chat and its existing history will disappear from your view only. The other participant keeps the conversation. A new message will make it appear again." : media ? "Existing shared images and files will be removed from your view only. Text messages will stay visible. The other participant keeps their attachments." : "Existing messages will be removed from your view only. The conversation and the other participant’s messages are not affected."}</p>
       {error && <p role="alert" className="mt-3 text-sm text-red-500">{error}</p>}
-      <div className="mt-5 flex justify-end gap-2"><button ref={cancelRef} type="button" disabled={busy} onClick={onCancel} className="min-h-11 rounded-xl px-4 text-sm hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500">Cancel</button><button type="button" disabled={busy} onClick={onConfirm} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-wait disabled:opacity-60">{busy ? "Clearing…" : media ? "Clear media" : "Clear messages"}</button></div>
+      <div className="mt-5 flex justify-end gap-2"><button ref={cancelRef} type="button" disabled={busy} onClick={onCancel} className="min-h-11 rounded-xl px-4 text-sm hover:bg-slate-500/10 focus-visible:outline-2 focus-visible:outline-blue-500">Cancel</button><button type="button" disabled={busy} onClick={onConfirm} className={`min-h-11 rounded-xl px-4 text-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-wait disabled:opacity-60 ${chat ? "bg-red-600" : "bg-blue-600"}`}>{busy ? "Working…" : chat ? "Delete chat" : media ? "Clear media" : "Clear messages"}</button></div>
     </div>
   </div>;
 }
@@ -890,8 +892,8 @@ const activity = useConversationActivity(
 
   async function conversationAction(action, conversation) {
     if (action === "block") { if (!blocks.busy) setBlockDialog({ contact: conversation }); return; }
-    if (action === "clear-messages" || action === "clear-media") {
-      if (!actionRequestRef.current) setClearDialog({ kind: action === "clear-media" ? "media" : "messages", conversation, returnFocus: document.activeElement });
+    if (action === "clear-messages" || action === "clear-media" || action === "delete-chat") {
+      if (!actionRequestRef.current) setClearDialog({ kind: action === "clear-media" ? "media" : action === "delete-chat" ? "chat" : "messages", conversation, returnFocus: document.activeElement });
       return;
     }
     if (actionRequestRef.current || pinDialog) return;
@@ -989,14 +991,18 @@ const activity = useConversationActivity(
     actionRequestRef.current = controller;
     setActionBusy(true); setPendingConversationId(dialog.conversation.conversationId); setActionMessage(null);
     try {
-      await clearConversation(dialog.conversation.conversationId, dialog.kind, controller.signal);
+      if (dialog.kind === "chat") await deleteConversationForMe(dialog.conversation.conversationId, controller.signal);
+      else await clearConversation(dialog.conversation.conversationId, dialog.kind, controller.signal);
       if (controller.signal.aborted) return;
       session.clearCachedVisibility(dialog.conversation.conversationId, dialog.kind === "media");
       setClearDialog(null);
       window.requestAnimationFrame(() => dialog.returnFocus?.focus?.({ preventScroll: true }));
-      setActionMessage({ text: dialog.kind === "media" ? "Media cleared from your view" : "Messages cleared from your view", error: false });
+      setActionMessage({ text: dialog.kind === "chat" ? "Chat deleted from your view" : dialog.kind === "media" ? "Media cleared from your view" : "Messages cleared from your view", error: false });
       setSelection((previous) => previous.conversation?.conversationId === dialog.conversation.conversationId
-        ? { ...previous, generation: previous.generation + 1 } : previous);
+        ? { ...previous, conversation: dialog.kind === "chat" ? null : previous.conversation,
+            generation: previous.generation + 1, focusRequest: dialog.kind === "chat"
+              ? { conversationId: dialog.conversation.conversationId, generation: previous.generation + 1 }
+              : previous.focusRequest } : previous);
       refreshConversations();
     } catch (error) {
       if (!controller.signal.aborted) setActionMessage({ text: error?.response?.data?.message || "Unable to clear this chat. Try again.", error: true });

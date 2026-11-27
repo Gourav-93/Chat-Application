@@ -164,6 +164,49 @@ ILogger<ChatHub> logger)
         catch (InvalidOperationException ex) { throw new HubException(ex.Message); }
     }
 
+    public async Task DeleteMessageForMe(int messageId)
+    {
+        if (!Guid.TryParse(Context.UserIdentifier, out var userId)) throw new HubException("User identity not found.");
+        try
+        {
+            int conversationId;
+            using (await _privacyAccess.EnterAsync(userId, Context.ConnectionAborted))
+            {
+                conversationId = await _privacy.MessageConversationAsync(messageId, userId);
+                await RequirePrivacyAsync(conversationId);
+                await _chatService.DeleteMessageForMeAsync(messageId, userId);
+            }
+            try { await _privateEvents.SendAsync(userId, conversationId, "MessageDeletedForMe", new { messageId, conversationId }); }
+            catch (Exception ex) { _logger.LogError(ex, "Message {MessageId} was deleted for one user but notification failed", messageId); }
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException || ex is KeyNotFoundException)
+        { throw new HubException("Message unavailable."); }
+    }
+
+    public async Task DeleteMessageForEveryone(int messageId)
+    {
+        if (!Guid.TryParse(Context.UserIdentifier, out var senderId)) throw new HubException("User identity not found.");
+        try
+        {
+            MessageDto message;
+            using (await _privacyAccess.EnterAsync(senderId, Context.ConnectionAborted))
+            {
+                var conversationId = await _privacy.MessageConversationAsync(messageId, senderId);
+                await RequirePrivacyAsync(conversationId);
+                message = await _chatService.DeleteMessageForEveryoneAsync(messageId, senderId);
+            }
+            var eventData = new MessageDeletionEvent(message.Id, message.ConversationId);
+            foreach (var user in new[] { message.SenderId, message.ReceiverId })
+            {
+                try { await _privateEvents.SendAsync(user, message.ConversationId, "MessageDeletedForEveryone", eventData); }
+                catch (Exception ex) { _logger.LogError(ex, "Message {MessageId} was deleted for everyone but notification failed for a participant", messageId); }
+            }
+        }
+        catch (ArgumentException ex) { throw new HubException(ex.Message); }
+        catch (UnauthorizedAccessException ex) { throw new HubException(ex.Message); }
+        catch (KeyNotFoundException ex) { throw new HubException(ex.Message); }
+    }
+
 
     public async Task GetMessages(
         int conversationId,

@@ -27,6 +27,7 @@ export default function useMessageHistory(selection, session) {
   const selectionKey = conversationId
     ? conversationId + ":" + (selection.generation ?? 0) + ":" +
       (session.visibility?.conversationId === conversationId ? session.visibility.version : 0)
+      + ":" + session.historyEpoch
     : null;
   const ticketMatches = ownerReady &&
     ticket?.owner === owner && ticket.selectionKey === selectionKey;
@@ -106,13 +107,19 @@ export default function useMessageHistory(selection, session) {
   const pageMessages = sameSelection && !expired ? result.messages : EMPTY_MESSAGES;
   const messages = useMemo(() => {
     if (!ownerReady || !conversationId) return EMPTY_MESSAGES;
-    const unique = new Map(pageMessages.map((message) => [message.id,
+    const unique = new Map(pageMessages.filter((message) => session.deleted.get(message.id) !== "me").map((message) => [message.id,
       { ...mergeMessageContent(null, message), ...mergeMessageReceipts(null, message) }]));
     for (const message of session.messages.values()) {
-      if (message.conversationId === conversationId) {
+      if (message.conversationId === conversationId && session.deleted.get(message.id) !== "me") {
         unique.set(message.id, { ...mergeMessageContent(unique.get(message.id), message),
           ...mergeMessageReceipts(unique.get(message.id), message) });
       }
+    }
+    for (const [id, deletion] of session.deleted) {
+      if (deletion !== "everyone") continue;
+      const message = unique.get(id);
+      if (message) unique.set(id, { ...message, text: "This message was deleted", location: null,
+        attachments: [], editedAt: null, type: 0, isDeletedForEveryone: true });
     }
     // Receipts may arrive before their message. Apply the session cache last,
     // matching participant and conversation identity before merging timestamps.
@@ -126,7 +133,7 @@ export default function useMessageHistory(selection, session) {
     }
     return [...unique.values()].sort((a, b) =>
       Date.parse(a.sentAt) - Date.parse(b.sentAt) || a.id - b.id);
-  }, [ownerReady, conversationId, pageMessages, session.messages, session.receipts]);
+  }, [ownerReady, conversationId, pageMessages, session.messages, session.receipts, session.deleted]);
   const error = !validSession
     ? "Your session could not be authorized. Please sign in again."
     : expired

@@ -15,4 +15,5 @@ public class MessageDto
   public DateTime? DeliveredAt { get; set; }
   public DateTime? ReadAt { get; set; }
   public DateTime? EditedAt { get; set; }
+    public bool IsDeletedForEveryone { get; set; }
 }

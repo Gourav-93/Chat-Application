@@ -14,10 +14,12 @@ public class ChatService : IChatService
     private readonly IUserBlockService _blocks;
     private readonly IUserPairLock _pairLock;
     private readonly IFileStorageService _storage;
+    private readonly TimeProvider _clock;
 
     private readonly Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> _attachments;
     public ChatService(ChatDbContext context, Microsoft.Extensions.Options.IOptions<Chat.Application.Configuration.AttachmentOptions> attachments,
-        IUserBlockService blocks, IUserPairLock pairLock, ProtectedFields fields, IFileStorageService storage)
+        IUserBlockService blocks, IUserPairLock pairLock, ProtectedFields fields, IFileStorageService storage,
+        TimeProvider clock)
     {
         _context = context;
         _fields = fields;
@@ -25,6 +27,7 @@ public class ChatService : IChatService
         _blocks = blocks;
         _pairLock = pairLock;
         _storage = storage;
+        _clock = clock;
     }
 
     public async Task<MessageDto> SendMessageAsync(
@@ -102,6 +105,8 @@ public class ChatService : IChatService
 
             if (previous != null)
             {
+                if (previous.IsDeletedForEveryone)
+                    throw new ArgumentException("This message was deleted and cannot be sent again.");
                 if (previous.ConversationId != dto.ConversationId ||
                     _fields.Text(previous) != text ||
                     previous.Latitude != location?.Latitude ||
@@ -209,6 +214,8 @@ public class ChatService : IChatService
             .SingleOrDefaultAsync(m => m.Id == messageId);
         if (message is null)
             throw new KeyNotFoundException("Message not found.");
+        if (message.IsDeletedForEveryone)
+            throw new KeyNotFoundException("Message not found.");
         if (message.SenderId != senderId)
             throw new UnauthorizedAccessException("You can edit only your own messages.");
         if (message.Type != MessageType.Text || message.Attachments.Count != 0)
@@ -246,6 +253,7 @@ public class ChatService : IChatService
         var candidates = _context.Messages
             .Where(m => m.Id == messageId && m.SenderId == senderId &&
                 m.ConversationId == message.ConversationId && m.Type == MessageType.Text &&
+                !m.IsDeletedForEveryone &&
                 !m.Attachments.Any() && m.SentAt >= now.AddMinutes(-15) &&
                 m.TextCiphertext == expectedCiphertext && m.EditedAt == expectedEditedAt);
         // ExecuteUpdate bypasses SaveChanges protection. Encrypt explicitly and
@@ -275,6 +283,18 @@ public class ChatService : IChatService
 
     private async Task<MessageDto> MapLoadedAsync(Message message, Guid receiverId, string senderName, bool includeMedia = true)
     {
+        if (message.IsDeletedForEveryone)
+        {
+            return new MessageDto
+            {
+                Id = message.Id, ConversationId = message.ConversationId,
+                SenderId = message.SenderId, SenderName = senderName,
+                ReceiverId = receiverId, Text = "This message was deleted",
+                Type = (int)MessageType.Text,
+                SentAt = DateTime.SpecifyKind(message.SentAt, DateTimeKind.Utc),
+                IsDeletedForEveryone = true, Attachments = []
+            };
+        }
         var attachments = new List<AttachmentDto>();
         if (includeMedia)
             foreach (var attachment in message.Attachments)
@@ -300,8 +320,81 @@ public class ChatService : IChatService
         EditedAt = message.EditedAt.HasValue
             ? DateTime.SpecifyKind(message.EditedAt.Value, DateTimeKind.Utc)
             : null,
-        Attachments = attachments
+        Attachments = attachments,
+        IsDeletedForEveryone = false
         };
+    }
+
+    public async Task DeleteMessageForMeAsync(int messageId, Guid userId)
+    {
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        // Serialize retries from the same account before checking the unique tombstone key.
+        await _context.Users.Where(u => u.Id == userId)
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.IsMobileVerified, u => u.IsMobileVerified));
+        var message = await _context.Messages.Include(m => m.Conversation)
+            .SingleOrDefaultAsync(m => m.Id == messageId);
+        if (message is null || (message.Conversation.UserAId != userId && message.Conversation.UserBId != userId))
+            throw new UnauthorizedAccessException("Message unavailable.");
+
+        if (!await _context.MessageDeletions.AnyAsync(d => d.UserId == userId && d.MessageId == messageId))
+        {
+            _context.MessageDeletions.Add(new MessageDeletion { UserId = userId, MessageId = messageId });
+            await _context.SaveChangesAsync();
+        }
+        await tx.CommitAsync();
+    }
+
+    public async Task<MessageDto> DeleteMessageForEveryoneAsync(int messageId, Guid senderId)
+    {
+        var message = await _context.Messages.Include(m => m.Conversation).SingleOrDefaultAsync(m => m.Id == messageId);
+        if (message is null || message.SenderId != senderId ||
+            (message.Conversation.UserAId != senderId && message.Conversation.UserBId != senderId))
+            throw new UnauthorizedAccessException("You can delete only your own messages.");
+        if (message.IsDeletedForEveryone)
+            return await MapAsync(message, message.Conversation);
+
+        var otherId = message.Conversation.UserAId == senderId ? message.Conversation.UserBId : message.Conversation.UserAId;
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        await _pairLock.AcquireAsync(senderId, otherId);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        if (message.SentAt < now.AddHours(-48))
+            throw new ArgumentException("Messages can be deleted for everyone for 48 hours after sending.");
+
+        var candidates = _context.Messages.Where(m => m.Id == messageId && !m.IsDeletedForEveryone);
+        var updated = _context.LegacyColumnsPresent
+            ? await candidates.ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.IsDeletedForEveryone, true)
+                .SetProperty(m => m.DeletedForEveryoneAt, now)
+                .SetProperty(m => m.Text, (string?)null)
+                .SetProperty(m => m.TextCiphertext, (string?)null)
+                .SetProperty(m => m.Type, MessageType.Text)
+                .SetProperty(m => m.Latitude, (double?)null)
+                .SetProperty(m => m.Longitude, (double?)null)
+                .SetProperty(m => m.EditedAt, (DateTime?)null))
+            : await candidates.ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.IsDeletedForEveryone, true)
+                .SetProperty(m => m.DeletedForEveryoneAt, now)
+                .SetProperty(m => m.TextCiphertext, (string?)null)
+                .SetProperty(m => m.Type, MessageType.Text)
+                .SetProperty(m => m.Latitude, (double?)null)
+                .SetProperty(m => m.Longitude, (double?)null)
+                .SetProperty(m => m.EditedAt, (DateTime?)null));
+        if (updated != 1)
+        {
+            await tx.CommitAsync();
+            await _context.Entry(message).ReloadAsync();
+            return await MapAsync(message, message.Conversation);
+        }
+        message.IsDeletedForEveryone = true;
+        message.DeletedForEveryoneAt = now;
+        message.Text = null;
+        message.TextCiphertext = null;
+        message.Type = MessageType.Text;
+        message.Latitude = null;
+        message.Longitude = null;
+        message.EditedAt = null;
+        await tx.CommitAsync();
+        return await MapAsync(message, message.Conversation);
     }
 
 
@@ -387,9 +480,10 @@ public class ChatService : IChatService
         int messageId,
         Guid recipientId)
     {
-        var message = await _context.Messages
+        var message = await _context.VisibleMessages(recipientId)
             .Include(m => m.Conversation)
             .FirstOrDefaultAsync(m => m.Id == messageId && !m.IsDeliverySuppressed &&
+                !m.IsDeletedForEveryone &&
                 !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.MessagesClearedAt != null &&
                     (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))));
 
@@ -454,11 +548,12 @@ public class ChatService : IChatService
         }
 
         // Find unread messages sent by the other participant.
-        var unreadMessages = await _context.Messages
+        var unreadMessages = await _context.VisibleMessages(recipientId)
             .Where(m =>
                 m.ConversationId == conversationId &&
                 m.SenderId != recipientId &&
                 !m.IsDeliverySuppressed &&
+                !m.IsDeletedForEveryone &&
                 m.ReadAt == null &&
                 !_context.UserConversationSettings.Any(s => s.UserId == recipientId && s.ConversationId == m.ConversationId && s.MessagesClearedAt != null &&
                     (m.SentAt < s.MessagesClearedAt || (m.SentAt == s.MessagesClearedAt && m.Id <= s.MessagesClearedThroughMessageId))))
@@ -575,6 +670,30 @@ public class ChatService : IChatService
             settings.MessagesClearedAt = latest.SentAt;
             settings.MessagesClearedThroughMessageId = latest.Id;
         }
+        settings.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        await tx.CommitAsync();
+    }
+
+    public async Task DeleteConversationForMeAsync(int conversationId, Guid userId)
+    {
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        var conversation = await _context.Conversations.SingleOrDefaultAsync(c => c.Id == conversationId &&
+            (c.UserAId == userId || c.UserBId == userId));
+        if (conversation is null) throw new UnauthorizedAccessException("Invalid conversation.");
+        var otherId = conversation.UserAId == userId ? conversation.UserBId : conversation.UserAId;
+        await _pairLock.AcquireAsync(userId, otherId);
+        var latest = await _context.Messages.Where(m => m.ConversationId == conversationId)
+            .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
+            .Select(m => new { m.Id, m.SentAt }).FirstOrDefaultAsync();
+        var settings = await _context.UserConversationSettings.SingleOrDefaultAsync(s => s.UserId == userId && s.ConversationId == conversationId);
+        if (settings is null)
+        {
+            settings = new UserConversationSettings { UserId = userId, ConversationId = conversationId };
+            _context.UserConversationSettings.Add(settings);
+        }
+        settings.ChatDeletedAt = latest?.SentAt ?? DateTime.UtcNow;
+        settings.ChatDeletedThroughMessageId = latest?.Id;
         settings.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
         await tx.CommitAsync();
