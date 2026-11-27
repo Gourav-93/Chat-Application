@@ -41,15 +41,20 @@ jobs:
           npm ci
           npm run build
 
-      - name: Generate migration script
+      - name: Generate migration scripts
         env:
-          ConnectionStrings__DefaultConnection: ${{ secrets.EF_SCRIPT_CONNECTION }}
+          # Offline script generation: nothing connects to this DB, any valid-format string works.
+          ConnectionStrings__DefaultConnection: Server=localhost;Database=SandeshTesting;User Id=ci;Password=ci;TrustServerCertificate=True
         run: |
           dotnet restore Two-Way-Com.csproj
           dotnet tool install --global dotnet-ef --version 10.0.14
+          # 3 parts, because the plaintext-removal migration cannot be re-run once the columns are gone:
+          # 1) everything up to the protection expansion
           dotnet ef migrations script 0 20261126061034_AddSensitiveDataProtection --idempotent -o migrate_expand.sql
-          dotnet ef migrations script --idempotent -o migrate.sql
-          dotnet ef migrations script 0 20261126061034_AddSensitiveDataProtection --idempotent -o migrate_expand.sql
+          # 2) the plaintext removal itself (applied only after backfill + verify)
+          dotnet ef migrations script 20261126061034_AddSensitiveDataProtection 20261126061256_RemovePlaintextSensitiveData --idempotent -o migrate_remove.sql
+          # 3) every migration after the removal (new features)
+          dotnet ef migrations script 20261126061256_RemovePlaintextSensitiveData --idempotent -o migrate_post.sql
 
       - name: Publish backend (self-contained linux-x64)
         run: |
@@ -61,7 +66,7 @@ jobs:
           mkdir release
           cp -r publish release/publish
           cp -r frontend/dist release/dist
-          cp migrate.sql migrate_expand.sql release/
+          cp migrate_expand.sql migrate_remove.sql migrate_post.sql release/
           tar -czf release.tar.gz -C release .
 
       - name: Upload and deploy
