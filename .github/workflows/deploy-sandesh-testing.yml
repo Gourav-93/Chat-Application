@@ -49,6 +49,7 @@ jobs:
           dotnet tool install --global dotnet-ef --version 10.0.14
           dotnet ef migrations script 0 20261126061034_AddSensitiveDataProtection --idempotent -o migrate_expand.sql
           dotnet ef migrations script --idempotent -o migrate.sql
+          dotnet ef migrations script 0 20261126061034_AddSensitiveDataProtection --idempotent -o migrate_expand.sql
 
       - name: Publish backend (self-contained linux-x64)
         run: |
